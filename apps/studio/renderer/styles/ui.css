@@ -1,0 +1,27 @@
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import './9ui-theme.css';
+@import './studio-theme.css';
+@import '../components/ui/registry.css';
+@import '@xyflow/react/dist/style.css' layer(base);
+@source '../';
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@layer base {
+  :where(.authoring-shell, #studio-portals) :where(*):not(:where(.galcraft-player, .galcraft-player *)) { box-sizing: border-box; border-color: var(--border); }
+  :where([data-slot]) { border-style: solid; border-width: 0; }
+  :where([data-slot="button"], [data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"]) { font: inherit; }
+  :where([data-slot="button"], [data-slot="dialog-close"], [data-slot="menubar-trigger"]) { background: transparent; color: inherit; }
+}
+
+/* Studio-owned controls. Player, Monaco and plugin DOM retain their own styles. */
+:is(#app.authoring-shell, #app .authoring-shell, #studio-portals) :is(input,textarea,select):not(:where(.galcraft-player *, .monaco-editor *, .studio-plugin-contribution *, [data-slot], [type="checkbox"], [type="radio"], [type="range"], [type="color"])) {
+  color:var(--foreground); background-color:var(--input); border-color:var(--control-border);
+}
+:where(.authoring-shell, #studio-portals) :is(input,textarea):not(:where(.galcraft-player *, .monaco-editor *, .studio-plugin-contribution *))::placeholder { color:var(--foreground-tertiary); opacity:1; }
+.authoring-shell input[type="checkbox"]:not(:where(.galcraft-player *, .studio-plugin-contribution *)):not(:focus-visible) { outline:1px solid var(--control-border);outline-offset:0;border-radius:3px; }
+:where(.authoring-shell,#studio-portals) :is([data-slot="input"],[data-slot="textarea"],[data-slot="select-trigger"]) { border-color:var(--control-border); }
+:where(.authoring-shell, #studio-portals) [data-slot="button"][data-variant="default"] { background:var(--primary); color:var(--primary-foreground); }
+:where(.authoring-shell, #studio-portals) [data-slot="button"][data-variant="default"]:hover { background:var(--primary-hover); }
+:where(.authoring-shell, #studio-portals) [data-slot="button"][data-variant="default"]:active { background:var(--primary-pressed); }

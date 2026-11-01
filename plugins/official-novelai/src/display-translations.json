@@ -1,0 +1,66 @@
+{
+  "Structured prompt": [
+    "结构化提示词",
+    "構造化プロンプト"
+  ],
+  "Generation settings": [
+    "生成设置",
+    "生成設定"
+  ],
+  "Reference parameters": [
+    "参考参数",
+    "参照パラメーター"
+  ],
+  "Image request": [
+    "图像要求",
+    "画像の要望"
+  ],
+  "Width": [
+    "宽度",
+    "幅"
+  ],
+  "Height": [
+    "高度",
+    "高さ"
+  ],
+  "Candidate count": [
+    "候选数量",
+    "候補数"
+  ],
+  "Seed": [
+    "随机种子",
+    "シード"
+  ],
+  "Asset usage": [
+    "素材用途",
+    "素材の用途"
+  ],
+  "NovelAI structured prompt": [
+    "NovelAI 结构化提示词",
+    "NovelAI 構造化プロンプト"
+  ],
+  "NovelAI native image": [
+    "NovelAI 原生图像",
+    "NovelAI ネイティブ画像"
+  ],
+  "NovelAI structured prompt preparation": [
+    "NovelAI 结构化提示准备",
+    "NovelAI 構造化プロンプトの準備"
+  ],
+  "Prepare a structured character prompt through a compatible text connection. Edit the candidate before transferring it to image generation.": [
+    "通过兼容的文字连接准备结构化角色提示，编辑候选后再转入图像生成。",
+    "対応するテキスト接続で構造化キャラクタープロンプトを準備します。候補を編集してから画像生成に引き継ぎます。"
+  ],
+  "Send structured prompts, character negatives and positions, quality settings and exact reference parameters. v45-full supports up to 6 character blocks; v5-full and v5-curated support up to 22. Image-to-image requires exactly one image. Precise Reference is supported only for v45-full; use the declared reference schema. Local abort does not confirm remote cancellation or billing.": [
+    "发送结构化提示、角色负面提示和位置、质量设置及精确参考参数。v45-full 最多支持 6 个角色块；v5-full 和 v5-curated 最多支持 22 个。图生图需要且仅需一张图片。Precise Reference 仅支持 v45-full，参数须符合参考 schema。本地中止无法确认远端取消或计费。",
+    "構造化プロンプト、キャラクターの除外プロンプトと位置、品質設定、正確な参照設定を送信します。v45-full は最大6、v5-full と v5-curated は最大22のキャラクターブロックに対応します。画像からの生成には画像が1枚必要です。Precise Reference は v45-full のみ対応し、公開された参照スキーマに従います。ローカル中止ではリモートの取消や課金は確認できません。"
+  ],
+  "Prepare base and per-character prompts with a text model.": [
+    "用文字模型准备基础提示和各角色提示。",
+    "テキストモデルで基本プロンプトと各キャラクターのプロンプトを準備します。"
+  ],
+  "Generate image candidates from a structured prompt.": [
+    "根据结构化提示生成图像候选。",
+    "構造化プロンプトから画像候補を生成します。"
+  ]
+}

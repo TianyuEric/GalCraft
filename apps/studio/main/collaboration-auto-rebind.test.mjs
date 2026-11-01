@@ -1,0 +1,67 @@
+import { afterEach, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ProjectSession } from '@galcraft/documents';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { StudioCollaboration } from './collaboration-providers.mjs';
+
+let owner, client, project, directory;
+afterEach(async()=>{
+  await client?.close();client=null;
+  await owner?.close();owner=null;
+  await project?.dispose('discard');project=null;
+  if(directory)await rm(directory,{recursive:true,force:true});
+});
+const document=(documentId,path)=>({documentId,revision:1,format:path.endsWith('scene.json')?'dsl':'json',files:{[path]:JSON.stringify({schemaVersion:1,documentId,revision:1,data:{name:documentId}}),...(path.endsWith('scene.json')?{[path.replace('scene.json','script.gal')]:'// Scoped scene\n'}:{})}});
+const version=document=>({ref:{kind:'document',id:document.documentId},revision:document.revision});
+const edit=patches=>({label:'Scoped collaboration edit',origin:'field',expected:[],patches,preparedAssets:[],requiredRefs:[]});
+
+it('explicitly reconnects only surviving authorized created documents through real M02 reopen and MCP, preserving pause and quota facts',async()=>{
+  directory=await mkdtemp(join(tmpdir(),'galcraft-auto-rebind-'));
+  const root=join(directory,'project');let writeSessionId='Write1';
+  project=await ProjectSession.createProject(root,'Proj01',[document('Allow1','allowed.json'),document('Other1','outside.json'),document('Gone01','removed-explicit.json')]);
+  const projects={get currentSession(){return project;},get currentSessionId(){return writeSessionId;},currentRoot:root};
+  owner=new StudioCollaboration({userData:join(directory,'profile'),projects,production:{generationProviders:{operations:async()=>[]},connections:{list:async()=>[]}},assets:{},plugins:{externalTools:async()=>[]}});
+  await owner.ready;
+  const scope={mode:'restricted',documents:['Allow1','Gone01'],createKinds:['scene','character'],tools:['galcraft_edit'],operations:['Op0001'],connectionIds:['Conn01'],models:['Model1'],workflowIds:['Flow01'],maxGenerations:2};
+  const source=await owner.core.create({projectId:'Proj01',writeSessionId,projectRoot:root,projectName:'Automatic rebind',goal:'Continue the scoped scene',harness:'codex',scope});
+  client=new Client({name:'automatic-rebind-regression',version:'0.1.0'},{versionNegotiation:{mode:'auto'}});
+  await client.connect(new StreamableHTTPClientTransport(new URL((await owner.mcp.start()).endpoint)));
+  const call=async(name,args)=>{const response=await client.callTool({name,arguments:{projectId:'Proj01',...(name==='galcraft_capabilities'?{}:{view:'full'}),...args}});expect(response.isError,JSON.stringify(response)).not.toBe(true);return response.structuredContent;};
+  const created=[document('Scene1','scenes/created/scene.json'),document('Char01','characters/created.json'),document('Gone02','scenes/removed/scene.json')];
+  const createInput={edit:edit(created.map(after=>({kind:'document',op:'create',documentId:after.documentId,before:null,after})))};
+  const createdCall=await call('galcraft_edit',{sessionId:source.id,callId:'create-documents',input:createInput});
+  expect(createdCall.state,JSON.stringify(createdCall)).toBe('completed');
+  const removed=['Gone01','Gone02'].map(id=>project.readDocument(id));
+  const removeInput=edit(removed.map(before=>({kind:'document',op:'delete',documentId:before.documentId,before,after:null})));
+  removeInput.expected=removed.map(version);
+  expect((await owner.core.invoke('galcraft_edit',{edit:removeInput},source.id,'remove-documents')).state).toBe('completed');
+  const context={sessionId:source.id,projectId:'Proj01',writeSessionId,scopeRevision:1,callId:'original-request',toolKey:'galcraft_edit'};
+  await owner.core.authorize(context,'galcraft_edit',{effects:['edit'],documents:['Scene1']},'OriginalRequest');
+  const narrowed=await owner.core.update({id:source.id,expectedRevision:1,scope:{...scope,createKinds:['scene']},paused:true});
+  const save=project.planSave({kind:'all'});expect(save.ok,JSON.stringify(save)).toBe(true);expect((await project.save(save.value.planId)).ok).toBe(true);
+  await project.dispose('discard');project=await ProjectSession.open(root,'Proj01');writeSessionId='Write2';
+  expect(project.externalDocuments(source.id)).toEqual(['Scene1','Char01','Gone02']);
+
+  expect(owner.core.list()).toHaveLength(1);await owner.ensureCurrentSession();const rebound=(await call('galcraft_capabilities',{sessionId:owner.core.active('Proj01').id})).result.session;
+  expect(rebound.sessionId).not.toBe(source.id);expect(rebound.writeSessionId).toBe(writeSessionId);
+  expect(rebound.scope).toEqual({...narrowed.scope,documents:['Allow1','Scene1']});
+  expect(owner.core.get(rebound.sessionId)).toMatchObject({reboundFrom:source.id,paused:true,generations:1,sentRequests:['OriginalRequest']});
+  const currentContext={...context,sessionId:rebound.sessionId,writeSessionId,scopeRevision:rebound.scopeRevision};
+  expect(()=>owner.core.check(currentContext,'galcraft_edit',{effects:['read'],documents:['Scene1']})).not.toThrow();
+  for(const id of ['Char01','Gone02','Other1'])expect(()=>owner.core.check(currentContext,'galcraft_edit',{effects:['read'],documents:[id]})).toThrow(expect.objectContaining({code:'DOCUMENT_SCOPE'}));
+  expect(()=>owner.core.check(currentContext,'galcraft_edit',{effects:['edit'],documents:['Scene1']})).toThrow(expect.objectContaining({code:'SESSION_PAUSED'}));
+  expect((await owner.core.query(source.id,'create-documents')).result).toEqual(createdCall.result);
+  await expect(owner.core.invoke('galcraft_edit',createInput,source.id,'expired-identity')).rejects.toMatchObject({code:'BINDING_STALE'});
+  await owner.core.update({id:rebound.sessionId,expectedRevision:rebound.scopeRevision,paused:false});
+  const scene=project.readDocument('Scene1'),change=edit([{kind:'json',documentId:scene.documentId,changes:[{path:'/data/name',op:'set',before:'Scene1',after:'Continued scene'}]}]);change.expected=[version(scene)];
+  const continued=await call('galcraft_edit',{sessionId:rebound.sessionId,callId:'continue-created-scene',input:{edit:change}});
+  expect(continued.state,JSON.stringify(continued)).toBe('completed');expect(continued.sessionId).toBe(rebound.sessionId);
+  expect(JSON.parse(project.readDocument(scene.documentId).files['scenes/created/scene.json']).data.name).toBe('Continued scene');
+  const saved=project.planSave({kind:'all'});expect(saved.ok).toBe(true);expect((await project.save(saved.value.planId)).ok).toBe(true);
+  await project.dispose('discard');project=await ProjectSession.open(root,'Proj01');writeSessionId='Write3';
+  const next=await owner.ensureCurrentSession();
+  expect(next.scope.documents).toEqual(['Allow1','Scene1']);expect(next).toMatchObject({reboundFrom:rebound.sessionId,generations:1,sentRequests:['OriginalRequest'],paused:false});
+  expect(()=>owner.core.check({...currentContext,sessionId:next.id,writeSessionId,scopeRevision:next.scopeRevision},'galcraft_edit',{effects:['edit'],documents:['Scene1']})).not.toThrow();
+},15000);

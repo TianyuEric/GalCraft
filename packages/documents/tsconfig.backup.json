@@ -1,0 +1,1 @@
+{ "extends": "../../tsconfig.base.json", "compilerOptions": { "rootDir": "backup", "outDir": "dist/backup", "types": ["node"] }, "include": ["backup/**/*.ts"], "exclude": ["backup/**/*.test.ts"] }

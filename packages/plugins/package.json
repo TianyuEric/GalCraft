@@ -1,0 +1,61 @@
+{
+  "name": "@galcraft/plugins",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MPL-2.0",
+  "files": ["dist", "README.md"],
+  "bin": { "galcraft-plugin": "./dist/development/cli.js" },
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./react": { "types": "./dist/contracts/react.d.ts", "default": "./dist/contracts/react.js" },
+    "./pixi": { "types": "./dist/contracts/pixi.d.ts", "default": "./dist/contracts/pixi.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts/index.d.ts",
+      "default": "./dist/contracts/index.js"
+    },
+    "./registry": {
+      "types": "./dist/registry/index.d.ts",
+      "default": "./dist/registry/index.js"
+    },
+    "./host": {
+      "types": "./dist/registry/host.d.ts",
+      "default": "./dist/registry/host.js"
+    },
+    "./development": {
+      "types": "./dist/development/index.d.ts",
+      "default": "./dist/development/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run contracts registry development"
+  },
+  "dependencies": {
+    "@galcraft/contracts": "workspace:*",
+    "fflate": "0.8.2",
+    "es-module-lexer": "2.3.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "pixi.js": "8.12.0",
+    "semver": "7.8.5",
+    "zod": "4.6.5",
+    "vite": "8.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/semver": "7.7.1"
+  },
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "packages/plugins"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme",
+  "publishConfig": {"access": "public"}
+}

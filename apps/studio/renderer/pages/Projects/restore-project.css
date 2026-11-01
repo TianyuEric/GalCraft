@@ -1,0 +1,31 @@
+.project-restore { max-width:920px; display:grid; gap:20px; padding-block:16px; font-size:14px; }
+.project-restore > header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+.project-restore h2 { display:flex; align-items:center; gap:8px; font-size:18px; font-weight:600; margin:0 0 8px; }
+.project-restore h3 { font-size:16px; font-weight:600; margin:0 0 12px; }
+.project-restore p { margin:0; line-height:1.6; color:var(--muted-foreground); }
+.restore-inputs { display:grid; gap:12px; }
+.restore-file-choice { display:flex; gap:12px; align-items:center; justify-content:space-between; min-width:0; }
+.restore-file-choice > span { overflow-wrap:anywhere; min-width:0; }
+.restore-file-choice > button { flex-shrink:0; }
+.restore-identity { display:grid; gap:12px; padding:0; border:0; margin:0; }
+.restore-identity legend { font-weight:600; margin-bottom:12px; }
+.restore-identity label { display:flex; align-items:flex-start; gap:8px; cursor:pointer; }
+.restore-identity input { margin-top:4px; accent-color:var(--primary); }
+.restore-identity strong { display:block; font-weight:500; }
+.restore-identity small { display:block; color:var(--muted-foreground); margin-top:4px; line-height:1.6; }
+.restore-report { display:grid; gap:12px; padding-block:16px; border-block:1px solid var(--border); }
+.restore-report dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 16px; margin:0; }
+.restore-report dt { color:var(--muted-foreground); }
+.restore-report dd { margin:0; overflow-wrap:anywhere; }
+.restore-report summary { box-sizing:border-box; min-height:32px; padding-block:6px; line-height:20px; cursor:pointer; font-weight:500; border-radius:4px; }
+.restore-report summary:hover { color:var(--primary); }
+.restore-report summary:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.restore-dependencies { list-style:none; padding:0; margin:8px 0 0; }
+.restore-dependencies li { display:flex; gap:12px; justify-content:space-between; padding-block:12px; border-bottom:1px solid var(--border); }
+.restore-dependencies li > div:first-child { min-width:0; display:grid; gap:4px; overflow-wrap:anywhere; }
+.restore-dependencies strong { font-weight:500; }
+.restore-dependencies small, .restore-dependencies span { color:var(--muted-foreground); }
+.restore-readiness { display:grid; list-style:none; gap:8px; margin:0; padding:0; }
+.restore-readiness li, .restore-progress { display:flex; gap:8px; align-items:center; }
+.project-restore > footer { position:sticky; bottom:0; background:var(--workbench-editor,var(--background)); padding-block:12px; display:grid; gap:8px; }
+@media (max-width:700px) { .project-restore > header, .restore-dependencies li { flex-direction:column; } .restore-file-choice { align-items:flex-start; flex-direction:column; } }

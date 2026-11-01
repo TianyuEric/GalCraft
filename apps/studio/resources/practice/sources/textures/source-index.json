@@ -1,0 +1,14 @@
+{
+  "provider": "OpenWebGAL/WebGAL_Terre",
+  "repository": "https://github.com/OpenWebGAL/WebGAL_Terre",
+  "revision": "40242b8ca504c0e210d8ced5371b635947655c86",
+  "license": "MPL-2.0",
+  "licenseFile": "licenses/WebGAL_Terre-MPL-2.0.txt",
+  "retrievedAt": "2026-10-20",
+  "modified": false,
+  "files": [
+    { "upstream": "packages/terre2/assets/templates/WebGAL_Template/game/tex/cherryBlossoms.webp", "distributed": "textures/cherryBlossoms.webp" },
+    { "upstream": "packages/terre2/assets/templates/WebGAL_Template/game/tex/rain.png", "distributed": "textures/rain.png" },
+    { "upstream": "packages/terre2/assets/templates/WebGAL_Template/game/tex/snow.png", "distributed": "textures/snow.png" }
+  ]
+}

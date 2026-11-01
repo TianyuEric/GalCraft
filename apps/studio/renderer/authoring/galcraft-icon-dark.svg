@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="GalCraft icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#141B3A"/>
+      <stop offset="0.55" stop-color="#252A5A"/>
+      <stop offset="1" stop-color="#6B4D7D"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2E3C78"/>
+      <stop offset="0.5" stop-color="#6D6298"/>
+      <stop offset="1" stop-color="#F1A6A1"/>
+    </linearGradient>
+    <linearGradient id="bookL" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF8E8"/>
+      <stop offset="1" stop-color="#F4C9D4"/>
+    </linearGradient>
+    <linearGradient id="bookR" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFF9EA"/>
+      <stop offset="1" stop-color="#F2B9CB"/>
+    </linearGradient>
+    <linearGradient id="feather" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF4DE"/>
+      <stop offset="0.48" stop-color="#F6CAD5"/>
+      <stop offset="1" stop-color="#B69BE0"/>
+    </linearGradient>
+    <linearGradient id="arch" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFE4CD"/>
+      <stop offset="1" stop-color="#E9AFC5"/>
+    </linearGradient>
+    <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#0A0E28" flood-opacity=".45"/>
+    </filter>
+    <clipPath id="windowClip">
+      <path d="M304 545V322c0-118 93-213 208-213s208 95 208 213v223Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- rounded app tile -->
+  <rect x="40" y="40" width="944" height="944" rx="206" fill="url(#bg)"/>
+
+  <!-- distant glow -->
+  <circle cx="512" cy="555" r="300" fill="#F6B0A8" opacity=".08"/>
+  <circle cx="512" cy="445" r="240" fill="#8A8FD2" opacity=".09"/>
+
+  <!-- arched window -->
+  <path d="M284 560V318C284 188 386 84 512 84s228 104 228 234v242"
+        fill="none" stroke="url(#arch)" stroke-width="26" stroke-linecap="round" opacity=".96"/>
+  <path d="M326 548V325c0-104 83-188 186-188s186 84 186 188v223Z"
+        fill="url(#sky)" opacity=".88" clip-path="url(#windowClip)"/>
+
+  <!-- window inner lines -->
+  <path d="M365 202v339M659 202v339M327 397h112M585 397h113"
+        stroke="#F7D7D0" stroke-width="11" stroke-linecap="round" opacity=".75"/>
+
+  <!-- horizon haze -->
+  <path d="M324 505c76-64 145-72 207-43 70-45 136-35 177 18v78H324Z"
+        fill="#4A456D" opacity=".56"/>
+
+  <!-- shooting arc -->
+  <path d="M358 460C470 351 594 305 720 276"
+        fill="none" stroke="#F7D7CF" stroke-width="6" stroke-linecap="round" opacity=".8"/>
+
+  <!-- central star -->
+  <g filter="url(#softGlow)">
+    <path d="M512 258c9 52 23 68 69 78-46 10-60 26-69 78-9-52-23-68-69-78 46-10 60-26 69-78Z"
+          fill="#FFF2D8"/>
+  </g>
+
+  <!-- small stars -->
+  <g fill="#FFF1DE" opacity=".92">
+    <circle cx="421" cy="228" r="5"/><circle cx="611" cy="214" r="4"/>
+    <circle cx="381" cy="322" r="4"/><circle cx="665" cy="339" r="5"/>
+    <circle cx="585" cy="420" r="3.6"/><circle cx="453" cy="442" r="3.4"/>
+    <circle cx="736" cy="223" r="4"/><circle cx="284" cy="244" r="3.5"/>
+  </g>
+
+  <!-- petals -->
+  <g fill="#F5A9B9">
+    <path d="M191 368c34-15 63 6 75 39-35 9-61-6-75-39Z"/>
+    <path d="M220 516c39-10 70 14 75 48-38 6-65-12-75-48Z"/>
+    <path d="M801 548c34-20 68-2 79 31-33 15-65 2-79-31Z"/>
+    <path d="M760 811c36-18 67-4 79 28-34 14-64 3-79-28Z"/>
+  </g>
+
+  <!-- open book shadow -->
+  <g filter="url(#shadow)">
+    <!-- left page -->
+    <path d="M144 770c80-130 197-190 349-143 22 7 37 17 52 32v189
+             c-90-73-230-96-382-31-22 9-42 19-62 31 13-28 27-53 43-78Z"
+          fill="url(#bookL)"/>
+    <!-- right page -->
+    <path d="M880 770c-80-130-197-190-349-143-22 7-37 17-52 32v189
+             c90-73 230-96 382-31 22 9 42 19 62 31-13-28-27-53-43-78Z"
+          fill="url(#bookR)"/>
+
+    <!-- page folds -->
+    <path d="M478 673c-77-49-184-49-290 6 110-25 202-6 290 49Z"
+          fill="#F5D9DC" opacity=".75"/>
+    <path d="M546 673c77-49 184-49 290 6-110-25-202-6-290 49Z"
+          fill="#F5D9DC" opacity=".75"/>
+
+    <path d="M505 657c-6 50-8 113 6 188" fill="none" stroke="#E7B2C5" stroke-width="8" opacity=".75"/>
+  </g>
+
+  <!-- quill -->
+  <g transform="translate(0,-6)">
+    <path d="M538 766C628 565 706 415 854 294
+             C806 381 754 441 699 482
+             C758 457 804 427 842 394
+             C808 489 731 560 642 620
+             C692 604 731 585 765 558
+             C728 644 645 711 553 774Z"
+          fill="url(#feather)" stroke="#F7E8E1" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M551 768C633 596 718 449 841 315"
+          fill="none" stroke="#5B4C84" stroke-width="9" stroke-linecap="round" opacity=".92"/>
+  </g>
+
+  <!-- book spine -->
+  <path d="M486 844c14-12 38-12 52 0 11 10 11 28 0 38-14 12-38 12-52 0-11-10-11-28 0-38Z"
+        fill="#6F5A9D"/>
+
+  <!-- subtle border -->
+  <rect x="52" y="52" width="920" height="920" rx="192"
+        fill="none" stroke="#B9B6E1" stroke-width="3" opacity=".14"/>
+</svg>

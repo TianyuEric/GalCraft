@@ -1,0 +1,42 @@
+{
+  "name": "@galcraft/assets",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/core/index.js",
+  "types": "./dist/core/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
+    "./processing": {
+      "types": "./dist/processing/index.d.ts",
+      "default": "./dist/processing/index.js"
+    },
+    "./naming": {
+      "types": "./dist/core/naming.d.ts",
+      "default": "./dist/core/naming.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "pnpm build && vitest run core processing --exclude '**/dist/**'"
+  },
+  "dependencies": {
+    "@galcraft/contracts": "workspace:*",
+    "@galcraft/media-tools": "workspace:*",
+    "@galcraft/plugins": "workspace:*",
+    "fflate": "0.8.2",
+    "saxes": "6.0.0",
+    "sharp": "0.35.4"
+  },
+  "devDependencies": {
+    "@galcraft/documents": "workspace:*",
+    "@types/node": "24.13.6"
+  },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "packages/assets"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

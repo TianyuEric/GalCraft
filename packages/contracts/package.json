@@ -1,0 +1,31 @@
+{
+  "name": "@galcraft/contracts",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MPL-2.0",
+  "files": ["dist", "README.md", "LICENSE"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./fixtures": {
+      "types": "./dist/fixtures.d.ts",
+      "default": "./dist/fixtures.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "packages/contracts"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme",
+  "publishConfig": {"access": "public"}
+}

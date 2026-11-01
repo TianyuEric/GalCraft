@@ -1,0 +1,22 @@
+/* Studio adaptations for the MIT-licensed 9ui registry components. */
+#studio-portals [data-slot='alert-dialog-overlay'] { position:fixed; inset:0; z-index:1300; background:color-mix(in srgb,var(--foreground) 28%,transparent); }
+.gc-wb-message[data-slot='alert-dialog-content'] { translate:0; scale:1; display:block; }
+.gc-object-menu-positioner { z-index:1400; }
+:where(#app,#studio-portals) :is([data-slot='dropdown-menu-content'],[data-slot='context-menu-content']) { max-height:var(--available-height); overflow:auto; }
+:where(#app,#studio-portals) :is([data-slot='dropdown-menu-item'],[data-slot='context-menu-item'])[data-highlighted] { background:var(--secondary); }
+.workbench-command-center [data-slot='command-list'] { max-height:46vh; }
+.workbench-command-center [data-slot='command-item'] { justify-content:space-between; gap:12px; padding:10px; }
+.workbench-command-center [data-slot='command-item'] > span:first-child { display:grid; gap:3px; min-width:0; }
+.workbench-command-center [data-slot='command-item'] small { white-space:normal; color:var(--muted-foreground); }
+.studio-popover-content { max-width:calc(100vw - 24px); max-height:min(500px,var(--available-height)); overflow:auto; }
+.studio-content-popover[data-slot='popover-content'] { position:relative; width:min(480px,calc(100vw - 24px)); }
+.gc-dom-dialog-surface { top:50%; left:50%; translate:-50% -50%; transform:none; width:min(920px,calc(100vw - 40px)); max-height:calc(100dvh - 48px); padding:0; gap:0; display:flex; flex-direction:column; z-index:1001; }
+.gc-dom-dialog-surface > .gc-owned-dom { min-height:0; overflow:auto; }
+:is(#app,#studio-portals) .gc-owned-dialog[open] { position:relative; inset:auto; translate:0 0; transform:none; width:100%; max-width:none; max-height:calc(100dvh - 48px); margin:0; box-shadow:none; border:0; }
+.gc-wb-document-tabs { display:contents; }
+.gc-wb-document-list.gc-tabs-list { padding:0; gap:0; border-radius:0; background:transparent; }
+.gc-wb-document-list > .gc-tabs-indicator, .gc-wb-panel-tabs > .gc-tabs-indicator { display:none; }
+.gc-wb-panel-navigation { display:flex; flex-direction:column; min-height:0; }
+.gc-wb-panel-tabs.gc-tabs-list { width:auto; padding:0; border-radius:0; background:var(--workbench-editor); }
+.gc-wb-toolbar[role='toolbar'] { margin:0; border:0; border-bottom:1px solid var(--border); border-radius:0; box-shadow:none; outline:none; background:var(--workbench-editor); }
+.gc-object-menu [role='menuitem'] { align-items:stretch; text-align:left; }

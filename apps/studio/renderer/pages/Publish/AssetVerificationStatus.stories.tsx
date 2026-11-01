@@ -1,0 +1,14 @@
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { FixtureIds } from '@galcraft/contracts/fixtures';
+import { AssetVerificationStatus } from './AssetVerificationStatus.js';
+import './publish.css';
+import '../../components/controls.css';
+import '../../authoring/workspace.css';
+const meta = { title: 'Product/Studio/Publish/Asset verification progress', component: AssetVerificationStatus, args: { locale: 'zh-CN', progress: { operationId: FixtureIds.statements[0]!, projectId: FixtureIds.projectA, sessionId: 'storybook', target: 'web', phase: 'checking', completed: 2, total: 5, issueCount: 1, name: '长名称的角色动画与固定引用版本' } }, decorators: [Story => <div className="authoring-shell" style={{ padding: 24, width: 'min(100%,600px)' }}><Story/></div>] } satisfies Meta<typeof AssetVerificationStatus>;
+export default meta;
+type Story = StoryObj<typeof meta>;
+export const Checking: Story = {};
+export const Preparing: Story = { args: { progress: { ...meta.args.progress, phase: 'preparing', total: null, completed: 0 } } };
+export const Applying: Story = { args: { progress: { ...meta.args.progress, phase: 'applying', completed: 5 } } };
+export const Failed: Story = { args: { progress: { ...meta.args.progress, phase: 'failed', message: '索引修改已变化，请重新验证；已检查数量继续保留。' } } };
+export const Empty: Story = { args: { progress: { ...meta.args.progress, phase: 'complete', completed: 0, total: 0, issueCount: 0 } } };

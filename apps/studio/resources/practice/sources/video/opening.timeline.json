@@ -1,0 +1,28 @@
+{
+  "key": "opening",
+  "title": "今晚，让春天亮起来",
+  "subtitle": "一场放映，三份留给明天的约定",
+  "music": "../../../../assets/generated/practice/music/originals/spring-01.wav",
+  "shots": [
+    "backgrounds/spring-street.png",
+    "backgrounds/spring-shop.png",
+    "backgrounds/spring-town.png",
+    "backgrounds/spring-sunset.png"
+  ],
+  "shotSeconds": 5,
+  "fadeSeconds": 0.5,
+  "duration": 18.5,
+  "fps": 30,
+  "size": [
+    1920,
+    1080
+  ],
+  "motion": "缓慢推拉和横移，0.5秒画面交叠",
+  "subtitles": "opening.ass",
+  "audio": {
+    "startSec": 8,
+    "volume": 0.85,
+    "fadeInSec": 0.5,
+    "fadeOutSec": 1
+  }
+}

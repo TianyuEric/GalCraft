@@ -1,0 +1,8 @@
+.reading-styles-editor { display: grid; gap: 16px; min-width: 0; }
+.authoring-shell .reading-styles-editor fieldset { display: grid; gap: 12px; min-width: 0; padding: 0; margin: 0; border: 0; }
+.authoring-shell .reading-styles-editor legend { margin-bottom: 12px; font-size: 14px; font-weight: 600; color: var(--foreground); }
+.authoring-shell .reading-styles-help { margin: 0; color: var(--muted-foreground); font-size: 13px; line-height: 1.5; }
+.reading-styles-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.authoring-shell .reading-style-feedback { position: sticky; top: 0; z-index: 1; background: var(--workbench-inspector); padding-block: 4px; }
+.authoring-shell .reading-style-feedback p { margin: 0; font-size: 13px; line-height: 1.5; }
+.authoring-shell .reading-style-specimen { margin: 0; padding: 12px; border-radius: 6px; line-height: 1.6; overflow-wrap: anywhere; }

@@ -1,0 +1,86 @@
+[
+  {
+    "id": "org.galcraft.android",
+    "version": "0.1.0",
+    "directory": "official-android/package",
+    "buildPackage": "@galcraft/official-android",
+    "studioService": true
+  },
+  {
+    "id": "org.galcraft.ios",
+    "version": "0.1.0",
+    "directory": "official-ios/package",
+    "buildPackage": "@galcraft/official-ios",
+    "studioService": true
+  },
+  {
+    "id": "org.galcraft.motion-canvas",
+    "version": "0.1.0",
+    "directory": "motion-canvas/package",
+    "buildPackage": "@galcraft/motion-canvas"
+  },
+  {
+    "id": "org.galcraft.animation-generation",
+    "version": "0.1.0",
+    "directory": "animation-generation/package",
+    "buildPackage": "@galcraft/animation-generation"
+  },
+  {
+    "id": "org.galcraft.steam",
+    "version": "0.1.0",
+    "directory": "official-steam/package",
+    "buildPackage": "@galcraft/official-steam"
+  },
+  {
+    "id": "org.galcraft.ai-epilogue",
+    "version": "0.1.0",
+    "directory": "ai-epilogue/package",
+    "buildPackage": "@galcraft/ai-epilogue"
+  },
+  {
+    "id": "org.galcraft.live2d",
+    "version": "0.1.0",
+    "directory": "official-live2d/package",
+    "buildPackage": "@galcraft/official-live2d"
+  },
+  {
+    "id": "org.galcraft.voice-comfy",
+    "version": "0.1.0",
+    "directory": "official-voice-comfy/package",
+    "buildPackage": "@galcraft/official-voice-comfy"
+  },
+  {
+    "id": "org.galcraft.music-composition",
+    "version": "0.1.0",
+    "directory": "music-composition/package",
+    "buildPackage": "@galcraft/music-composition"
+  },
+  {
+    "id": "org.galcraft.generation-services",
+    "version": "0.1.0",
+    "directory": "official-generation-services/package",
+    "buildPackage": "@galcraft/official-generation-services",
+    "studioService": true
+  },
+  {
+    "id": "org.galcraft.comfyui",
+    "version": "0.1.0",
+    "directory": "official-comfyui/package",
+    "buildPackage": "@galcraft/official-comfyui",
+    "studioService": true
+  },
+  {
+    "id": "org.galcraft.novelai",
+    "version": "0.1.0",
+    "directory": "official-novelai/package",
+    "buildPackage": "@galcraft/official-novelai",
+    "studioService": true
+  },
+  {
+    "id": "org.galcraft.voicestudio",
+    "version": "0.1.0",
+    "directory": "official-voicestudio/package",
+    "buildPackage": "@galcraft/official-voicestudio",
+    "studioService": true
+  }
+]

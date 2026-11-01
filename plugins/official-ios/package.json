@@ -1,0 +1,9 @@
+{
+  "name": "@galcraft/official-ios", "version": "0.1.0", "private": true, "type": "module",
+  "main": "./index.mjs", "exports": { ".": "./index.mjs" },
+  "files": ["index.mjs", "package", "README.md"],
+  "scripts": { "build": "node build.mjs", "typecheck": "node --check src/services.mjs", "test": "node --test src/mobile.test.mjs" },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "plugins/official-ios"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

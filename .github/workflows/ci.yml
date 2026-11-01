@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: CI
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+      - name: Select affected packages and consumers
+        id: plan
+        env:
+          GALCRAFT_CI_BASE: ${{ github.event.pull_request.base.sha }}
+          GALCRAFT_CI_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: node tools/ci-plan.mjs
+      - uses: pnpm/action-setup@v4
+        if: steps.plan.outputs.install == 'true'
+        with:
+          version: 12.3.4
+          run_install: false
+      - name: Locate pnpm store
+        if: steps.plan.outputs.install == 'true'
+        id: store
+        shell: pwsh
+        run: '"path=$(pnpm store path --silent)" >> $env:GITHUB_OUTPUT'
+      - uses: actions/cache@v4
+        if: steps.plan.outputs.install == 'true'
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: windows-node24-pnpm12-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: windows-node24-pnpm12-
+      - name: Install exact dependencies
+        if: steps.plan.outputs.install == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Run selected checks
+        if: steps.plan.outputs.install == 'true'
+        run: pnpm exec node tools/ci-checks.mjs
+      - name: Documentation result
+        if: steps.plan.outputs.install == 'false'
+        run: Write-Output 'Documentation scope selected. The PR author and maintainer review the changed content, examples and links.'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ci-failure-summary
+          path: test-results/latest/ci/checks.json
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,11 @@
+.production-create-popup.studio-popover-content { width:360px; max-width:calc(100vw - 24px); padding:0; border-radius:8px; }
+.production-create-popup [data-slot=command] { border:0; border-radius:8px; }
+.production-create-popup [data-slot=command-list] { max-height:min(360px, 60vh); overscroll-behavior:contain; }
+.production-create-popup [data-slot=command-item] { min-height:32px; padding:8px 12px; }
+.production-create-popup [data-slot=command-item] > span { min-width:0; overflow-wrap:anywhere; }
+.production-create-popup strong { font-size:13px; font-weight:500; }
+.production-create-popup small { display:block; font-size:12px; line-height:18px; color:var(--foreground-secondary); }
+.production-create-popup [data-disabled=true] { opacity:1; }
+.production-create-popup [data-disabled=true] strong { color:var(--foreground-disabled); }
+.production-create-empty { padding:16px; font-size:14px; }
+.production-create-empty p { margin:0 0 8px; }

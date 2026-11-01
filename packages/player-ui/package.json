@@ -1,0 +1,46 @@
+{
+  "name": "@galcraft/player-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./player.css": "./dist/player.css",
+    "./data": {
+      "types": "./dist/data.d.ts",
+      "default": "./dist/data.js"
+    },
+    "./long-term": {
+      "types": "./dist/long-term.d.ts",
+      "default": "./dist/long-term.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node build-styles.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@galcraft/assets": "workspace:*",
+    "@galcraft/contracts": "workspace:*",
+    "@galcraft/plugins": "workspace:*",
+    "@galcraft/runtime": "workspace:*",
+    "@galcraft/stage": "workspace:*",
+    "@galcraft/templates": "workspace:*",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@galcraft/dsl": "workspace:*"
+  },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "packages/player-ui"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

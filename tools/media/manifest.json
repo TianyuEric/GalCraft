@@ -1,0 +1,16 @@
+{
+  "name": "GalCraft Windows media tools",
+  "platform": "win32",
+  "arch": "x64",
+  "release": "BtbN autobuild-2026-10-30-13-01 / FFmpeg n9.0.2-39-g7adfbe40dc LGPL",
+  "archive": "ffmpeg-n9.0.2-39-g7adfbe40dc-win64-lgpl-9.0.zip",
+  "source": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-30-13-01/ffmpeg-n9.0.2-39-g7adfbe40dc-win64-lgpl-9.0.zip",
+  "license": "LGPL-3.0-or-later",
+  "executables": [
+    "ffmpeg.exe",
+    "ffprobe.exe"
+  ],
+  "videoEncoder": "h264_mf",
+  "audioEncoder": "aac",
+  "pixelFormat": "yuv420p"
+}

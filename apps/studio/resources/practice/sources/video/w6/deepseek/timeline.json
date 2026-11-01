@@ -1,0 +1,44 @@
+{
+  "key": "deepseek",
+  "title": "留给明天的灯",
+  "music": "05",
+  "from": 20,
+  "bars": 8,
+  "bpm": 86,
+  "shots": [
+    {
+      "image": "deepseekAction",
+      "kind": "cable",
+      "caption": "线路 · 一盏接一盏",
+      "subtitle": "接上的，是一条通往明天的线路。",
+      "start": 0,
+      "end": 5.583333333333333
+    },
+    {
+      "image": "shop",
+      "kind": "together",
+      "caption": "共同完成的放映",
+      "subtitle": "光照见银幕，也照见身边的人。",
+      "start": 5.583333333333333,
+      "end": 11.166666666666666
+    },
+    {
+      "image": "deepseekCg",
+      "kind": "hold",
+      "caption": "散场之后",
+      "subtitle": "最后一盏灯，留给愿意等候的人。",
+      "start": 11.166666666666666,
+      "end": 16.75
+    },
+    {
+      "image": "shop",
+      "kind": "lantern",
+      "caption": "留给明天的灯",
+      "subtitle": "明天，也一起走吧。",
+      "start": 16.75,
+      "end": 22.333333333333332
+    }
+  ],
+  "frames": 670,
+  "duration": 22.333333333333332
+}

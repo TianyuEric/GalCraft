@@ -1,0 +1,15 @@
+import { emptyContributions } from '@galcraft/plugins/contracts';
+import type { GalCraftPlugin } from '@galcraft/plugins/contracts';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { id, ok, issue, capabilities } from './common.js';
+export function createPlugin(): GalCraftPlugin { return {activate:async(host)=>({...emptyContributions(),
+ resources:[{key:id+'/plainGroup',kind:'effect',extensions:['txt'],inspect:async(rootFile,_files,source)=>{if(source)await source.readText(rootFile);return ok({files:[rootFile],capabilities,metadata:{}});}}],
+ resourceProcessors:[{key:id+'/copy',version:'0.1.0',inputKinds:['effect'],outputKinds:['effect'],supportsCancel:true,fields:[],process:async(input,signal)=>{const files=[];for(const path of input.source.files){signal.throwIfAborted();const bytes=await input.source.readBytes(path);await mkdir(dirname(join(input.outputDirectory,path)),{recursive:true});await writeFile(join(input.outputDirectory,path),bytes);files.push({path,bytes:bytes.length,mime:path.endsWith('.txt')?'text/plain':'application/octet-stream'});}return ok({rootFile:input.source.rootFile,files,kind:'effect' as const,capabilities,metadata:input.source.metadata});}}],
+ generationProviders:[{key:id+'/textProvider',version:'0.1.0',purposes:['text'],configFields:[],inputSchema:{type:'object'},outputSchema:{type:'object',properties:{artifacts:{type:'array'},usage:{}},required:['artifacts','usage']},capabilities:{query:false,refetch:false,cancelPerTask:false,resume:false},create:config=>({
+ inspect:async(_config,purpose)=>({connectionId:config.id,connectionRevision:config.revision,checkedAt:new Date().toISOString(),serviceVersion:'1',purpose,status:'unverified',inputs:[],output:'text',models:null,promptFormat:'natural',textVision:null,remote:{query:false,cancelQueued:false,cancelRunning:'none'},issues:[]}),
+ submit:async function*(input,ctx){const secret=config.credentialId?await host.credentials?.read(config.credentialId):null;const response=await fetch(config.baseUrl,{method:'POST',headers:{'Content-Type':'application/json',...(secret?{Authorization:'Bearer '+secret}:{})},body:JSON.stringify(input),signal:ctx.signal});if(!response.ok)throw new Error('HTTP '+response.status);const text=await response.text();await mkdir(ctx.directory,{recursive:true});const path=join(ctx.directory,'result.txt');await writeFile(path,text);yield{kind:'output' as const,artifacts:[{kind:'text' as const,localPath:path,mime:'text/plain',bytes:Buffer.byteLength(text),metadata:{},groupId:ctx.requestId,role:'primary' as const,background:null}],usage:null};},
+ query:async()=>ok({state:'unknown' as const,output:null,issues:[]}),fetch:async()=>({ok:false as const,error:issue('Refetch unsupported'),issues:[]}),cancel:async()=>({local:'stopped' as const,remote:'unsupported' as const})
+ })}],
+ publishChecks:[{key:id+'/settingsCheck',check:async input=>input.target==='windows'?[]:[{...issue('Review the Web target settings'),severity:'warning'}]}],
+ }),deactivate:async()=>{}}; }

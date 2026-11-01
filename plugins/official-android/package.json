@@ -1,0 +1,10 @@
+{
+  "name": "@galcraft/official-android", "version": "0.1.0", "private": true, "type": "module",
+  "main": "./index.mjs", "exports": { ".": "./index.mjs" },
+  "files": ["index.mjs", "package", "README.md"],
+  "scripts": { "build": "node build.mjs", "typecheck": "node --check src/services.mjs && node --check src/toolchain.mjs", "test": "node --test src/mobile.test.mjs" },
+  "devDependencies": { "@galcraft/contracts": "workspace:*", "@galcraft/plugins": "workspace:*", "@galcraft/publishing": "workspace:*", "@galcraft/templates": "workspace:*" },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "plugins/official-android"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

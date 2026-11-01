@@ -1,0 +1,10 @@
+.document-recovery { display: grid; gap: 16px; min-width: 0; }
+.document-recovery-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
+.document-recovery p { color: var(--muted-foreground); margin: 0; }
+.document-recovery [role="alert"] { color: var(--danger-foreground); }
+.document-recovery-path { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
+.document-recovery-path .gc-field { flex: 1; min-width: min(100%, 20rem); margin: 0; }
+.document-recovery-files { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.document-recovery-files summary { cursor: pointer; overflow-wrap: anywhere; padding-block: 8px; }
+.document-recovery-files h3 { font-size: 14px; margin-block: 12px 8px; }
+.document-recovery-files section { min-width: 0; }

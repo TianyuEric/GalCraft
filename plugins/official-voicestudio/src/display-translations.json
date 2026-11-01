@@ -1,0 +1,82 @@
+{
+  "Spoken text": [
+    "朗读文字",
+    "読み上げるテキスト"
+  ],
+  "Target language": [
+    "目标语言",
+    "対象言語"
+  ],
+  "Saved voice / engine preset": [
+    "已保存声音／引擎预设",
+    "保存済みの声／エンジンプリセット"
+  ],
+  "Exact reference transcript": [
+    "参考音频的准确逐字稿",
+    "参照音声の正確な書き起こし"
+  ],
+  "Voice design attributes / description": [
+    "声音设计属性／描述",
+    "声のデザイン属性／説明"
+  ],
+  "Performance instruction": [
+    "表演要求",
+    "演技の指示"
+  ],
+  "Speed": [
+    "语速",
+    "話速"
+  ],
+  "Seed": [
+    "随机种子",
+    "シード"
+  ],
+  "Recording language (optional ISO code)": [
+    "录音语言（可选 ISO 代码）",
+    "録音の言語（ISO コード・任意）"
+  ],
+  "Transcribe reference audio with the actual active ASR engine. Review and edit the text candidate, then transfer it to the clone draft. No speech is generated.": [
+    "用当前实际启用的 ASR 引擎转写参考音频。检查并编辑文字候选后，转入克隆草稿；此操作不生成语音。",
+    "現在有効な ASR エンジンで参照音声を書き起こします。テキスト候補を確認・編集して複製用の下書きに引き継ぎます。音声の生成は行いません。"
+  ],
+  "Use the selected connection’s actual engine, model and saved voice. OmniVoice accepts voice-design attributes; performance instructions are exposed only for a confirmed engine endpoint. Review the installed model’s source and conditions before use. Local abort does not confirm remote cancellation.": [
+    "使用所选连接的实际引擎、模型和已保存声音。OmniVoice 支持声音设计属性；只有已确认支持的引擎端点才开放表演要求。使用前核对已安装模型的来源和条件。本地中止无法确认远端取消。",
+    "選択した接続の実際のエンジン、モデル、保存済みの声を使います。OmniVoice は声のデザイン属性に対応します。演技指示は対応を確認したエンドポイントでのみ利用できます。使用前にモデルの出典と条件を確認してください。ローカル中止ではリモートの取消は確認できません。"
+  ],
+  "Discover the selected connection, fill the actual inputs and review the frozen plan.": [
+    "读取所选连接能力，填写实际输入，并检查冻结的执行计划。",
+    "選択した接続の機能を確認し、実際の入力を記入して固定した実行計画を確認します。"
+  ],
+  "VoiceStudio · Speech": [
+    "VoiceStudio · 语音",
+    "VoiceStudio · 読み上げ"
+  ],
+  "VoiceStudio speech": [
+    "VoiceStudio 语音",
+    "VoiceStudio 読み上げ"
+  ],
+  "VoiceStudio · Voice design": [
+    "VoiceStudio · 声音设计",
+    "VoiceStudio · 声のデザイン"
+  ],
+  "VoiceStudio design": [
+    "VoiceStudio 声音设计",
+    "VoiceStudio 声のデザイン"
+  ],
+  "VoiceStudio · Reference clone": [
+    "VoiceStudio · 参考克隆",
+    "VoiceStudio · 参照音声から複製"
+  ],
+  "VoiceStudio clone": [
+    "VoiceStudio 参考克隆",
+    "VoiceStudio 参照音声から複製"
+  ],
+  "VoiceStudio · Reference transcription": [
+    "VoiceStudio · 参考转写",
+    "VoiceStudio · 参照音声の書き起こし"
+  ],
+  "VoiceStudio transcribe": [
+    "VoiceStudio 参考转写",
+    "VoiceStudio 参照音声の書き起こし"
+  ]
+}

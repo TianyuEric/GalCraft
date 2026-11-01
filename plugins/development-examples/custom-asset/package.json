@@ -1,0 +1,9 @@
+{
+  "name": "org.example.vector-shape", "version": "0.1.0", "private": true, "type": "module",
+  "scripts": { "typecheck": "tsc --noEmit", "build": "galcraft-plugin build .", "check": "galcraft-plugin check package", "pack": "galcraft-plugin pack package dist" },
+  "dependencies": { "@galcraft/plugins": "0.1.0", "@galcraft/contracts": "0.1.0" },
+  "devDependencies": { "typescript": "7.0.2", "@types/node": "24.13.6" },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "plugins/development-examples/custom-asset"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

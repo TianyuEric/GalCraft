@@ -1,0 +1,13 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 2
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Title,Microsoft YaHei,64,&H00FFFFFF,&H00FFFFFF,&H70201C18,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,120,120,156,1
+Style: Subtitle,Microsoft YaHei,36,&H00FFFFFF,&H00FFFFFF,&H70201C18,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,120,120,96,1
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:07.00,Title,,0,0,0,,{\fad(500,500)}故事还没有完
+Dialogue: 0,0:00:10.00,0:00:17.80,Subtitle,,0,0,0,,{\fad(500,700)}绯书 · 把自己的声音留在这里

@@ -1,0 +1,163 @@
+{
+  "title": "今晚，让春天亮起来",
+  "branding": {
+    "icon": "branding/spring-lights.svg"
+  },
+  "backgrounds": {
+    "street": "backgrounds/spring-street.png",
+    "shop": "backgrounds/spring-shop.png",
+    "town": "backgrounds/spring-town.png",
+    "station": "backgrounds/spring-station.png",
+    "sunset": "backgrounds/spring-sunset.png",
+    "sky": "backgrounds/spring-sky.png"
+  },
+  "music": [
+    "music/spring-01.opus",
+    "music/spring-02.opus",
+    "music/spring-03.opus",
+    "music/spring-04.opus",
+    "music/spring-05.opus"
+  ],
+  "voices": {
+    "deepseek": [
+      "voice/deepseek-ja-01.mp3",
+      "voice/deepseek-ja-02.mp3",
+      "voice/deepseek-ja-03.mp3",
+      "voice/deepseek-ja-04.mp3",
+      "voice/deepseek-ja-05.mp3",
+      "voice/deepseek-ja-06.mp3",
+      "voice/deepseek-ja-07.mp3",
+      "voice/deepseek-ja-08.mp3",
+      "voice/deepseek-ja-09.mp3",
+      "voice/deepseek-ja-10.mp3",
+      "voice/deepseek-ja-11.mp3",
+      "voice/deepseek-ja-12.mp3",
+      "voice/deepseek-ja-13.mp3"
+    ],
+    "chatgpt": [
+      "voice/chatgpt-ja-01.mp3",
+      "voice/chatgpt-ja-02.mp3",
+      "voice/chatgpt-ja-03.mp3",
+      "voice/chatgpt-ja-04.mp3",
+      "voice/chatgpt-ja-05.mp3",
+      "voice/chatgpt-ja-06.mp3",
+      "voice/chatgpt-ja-07.mp3",
+      "voice/chatgpt-ja-08.mp3",
+      "voice/chatgpt-ja-09.mp3",
+      "voice/chatgpt-ja-10.mp3",
+      "voice/chatgpt-ja-11.mp3",
+      "voice/chatgpt-ja-12.mp3",
+      "voice/chatgpt-ja-13.mp3"
+    ],
+    "claude": [
+      "voice/claude-ja-01.mp3",
+      "voice/claude-ja-02.mp3",
+      "voice/claude-ja-03.mp3",
+      "voice/claude-ja-04.mp3",
+      "voice/claude-ja-05.mp3",
+      "voice/claude-ja-06.mp3",
+      "voice/claude-ja-07.mp3",
+      "voice/claude-ja-08.mp3",
+      "voice/claude-ja-09.mp3",
+      "voice/claude-ja-10.mp3",
+      "voice/claude-ja-11.mp3",
+      "voice/claude-ja-12.mp3",
+      "voice/claude-ja-13.mp3"
+    ]
+  },
+  "textures": {
+    "petals": "textures/cherryBlossoms.webp",
+    "rain": "textures/rain.png",
+    "snow": "textures/snow.png"
+  },
+  "videos": {
+    "opening": "video/opening.mp4",
+    "deepseek": "video/deepseek.mp4",
+    "chatgpt": "video/chatgpt.mp4",
+    "claude": "video/claude.mp4"
+  },
+  "figures": {
+    "deepseek": {
+      "neutral": "figures/deepseek-neutral.png",
+      "smile": "figures/deepseek-smile.png",
+      "serious": "figures/deepseek-serious.png",
+      "surprised": "figures/deepseek-surprised.png",
+      "shy": "figures/deepseek-shy.png",
+      "sad": "figures/deepseek-sad.png"
+    },
+    "chatgpt": {
+      "neutral": "figures/chatgpt-neutral.png",
+      "smile": "figures/chatgpt-smile.png",
+      "serious": "figures/chatgpt-serious.png",
+      "surprised": "figures/chatgpt-surprised.png",
+      "shy": "figures/chatgpt-shy.png",
+      "sad": "figures/chatgpt-sad.png"
+    },
+    "claude": {
+      "neutral": "figures/claude-neutral.png",
+      "smile": "figures/claude-smile.png",
+      "serious": "figures/claude-serious.png",
+      "surprised": "figures/claude-surprised.png",
+      "shy": "figures/claude-shy.png",
+      "sad": "figures/claude-sad.png"
+    }
+  },
+  "avatars": {
+    "deepseek": "avatars/deepseek-head.png",
+    "chatgpt": "avatars/chatgpt-head.png",
+    "claude": "avatars/claude-head.png"
+  },
+  "ui": {
+    "start": "ui/spring-start.svg",
+    "save": "ui/spring-save.svg",
+    "load": "ui/spring-load.svg",
+    "history": "ui/spring-history.svg",
+    "settings": "ui/spring-settings.svg",
+    "pin": "ui/spring-pin.svg",
+    "auto": "ui/spring-auto.svg",
+    "skip": "ui/spring-skip.svg",
+    "title": "ui/spring-title.svg",
+    "back": "ui/spring-back.svg",
+    "music": "ui/spring-music.svg",
+    "cg": "ui/spring-cg.svg",
+    "exit": "ui/spring-exit.svg",
+    "flow": "ui/spring-flow.svg",
+    "characters": "ui/spring-characters.svg"
+  },
+  "cg": {
+    "deepseek": "cg/spring-deepseek.png",
+    "chatgpt": "cg/spring-chatgpt.png",
+    "claude": "cg/spring-claude.png"
+  },
+  "effects": {
+    "rain": "audio/spring-rain-loop.wav",
+    "bell": "audio/spring-projector-bell.wav"
+  },
+  "home": {
+    "wall": "home/memory-wall.png",
+    "friends": "home/cinema-friends.png",
+    "preparation": "home/screening-preparation.png",
+    "title": "home/spring-title.png"
+  },
+  "voiceSources": "sources/voice/adopted-ja",
+  "voiceLocale": "ja",
+  "videoSources": "sources/video/w6",
+  "authorAssets": [
+    "backgrounds/spring-shop.png",
+    "backgrounds/spring-station.png",
+    "cg/spring-deepseek.png",
+    "cg/spring-chatgpt.png",
+    "cg/spring-claude.png",
+    "figures/deepseek-smile.png",
+    "figures/chatgpt-smile.png",
+    "figures/claude-smile.png",
+    "sources/video/w6/images/deepseek-action.png",
+    "sources/video/w6/images/chatgpt-action.png",
+    "sources/video/w6/images/claude-action.png",
+    "sources/video/w6/fonts/NotoSansCJKsc-Regular.otf",
+    "sources/video/w6/audio/opening-mix.wav",
+    "sources/video/w6/audio/deepseek-mix.wav",
+    "sources/video/w6/audio/chatgpt-mix.wav",
+    "sources/video/w6/audio/claude-mix.wav"
+  ]
+}

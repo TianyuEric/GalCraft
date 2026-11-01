@@ -1,0 +1,19 @@
+{
+  "archive": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-30-13-01/ffmpeg-n9.0.2-39-g7adfbe40dc-win64-lgpl-9.0.zip",
+  "archiveZipMembersVerified": true,
+  "comparison": "Direct byte comparison of the prepared runtime executables with the exact upstream ZIP members. Packaging may subsequently add a distribution signature.",
+  "executables": [
+    {
+      "executable": "ffmpeg.exe",
+      "bytes": 132190720,
+      "matchesExactUpstreamArchive": true,
+      "upstreamMember": "ffmpeg-n9.0.2-39-g7adfbe40dc-win64-lgpl-9.0/bin/ffmpeg.exe"
+    },
+    {
+      "executable": "ffprobe.exe",
+      "bytes": 131990016,
+      "matchesExactUpstreamArchive": true,
+      "upstreamMember": "ffmpeg-n9.0.2-39-g7adfbe40dc-win64-lgpl-9.0/bin/ffprobe.exe"
+    }
+  ]
+}

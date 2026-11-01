@@ -1,0 +1,44 @@
+{
+  "key": "chatgpt",
+  "title": "春天的下一幕",
+  "music": "03",
+  "from": 20,
+  "bars": 8,
+  "bpm": 84,
+  "shots": [
+    {
+      "image": "chatgptCg",
+      "kind": "stars",
+      "caption": "一针 · 一线",
+      "subtitle": "缺口里，也能长出一颗星。",
+      "start": 0,
+      "end": 5.716666666666667
+    },
+    {
+      "image": "chatgptAction",
+      "kind": "stars",
+      "caption": "把星光重新串起",
+      "subtitle": "把修好的光，分给身边的人。",
+      "start": 5.716666666666667,
+      "end": 11.433333333333334
+    },
+    {
+      "image": "station",
+      "kind": "departure",
+      "caption": "春天的下一幕",
+      "subtitle": "沿着星光，走向下一站。",
+      "start": 11.433333333333334,
+      "end": 17.15
+    },
+    {
+      "image": "chatgptCg",
+      "kind": "hold",
+      "caption": "修补 · 分享 · 出发",
+      "subtitle": "属于我们的下一幕，正要开始。",
+      "start": 17.15,
+      "end": 22.866666666666667
+    }
+  ],
+  "frames": 686,
+  "duration": 22.866666666666667
+}

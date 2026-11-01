@@ -1,0 +1,12 @@
+import type { Dependency, Id, Issue, Lock, Ref, VersionRef } from './common.js';
+export type ProjectPackage = { format: 'galcraft-project'; schemaVersion: 1; packageId: Id; projectId: Id; releaseVersion: string; engineVersion: string; createdAt: string;
+  documents: VersionRef[]; dependencies: Lock; files: { path: string; bytes: number; role: 'document' | 'asset' | 'style' | 'dependency'; owner: Ref | null }[];
+  externalDependencies: { dependency: Dependency; included: boolean; reason: string; sourceUrl: string | null; instructions: string }[] };
+export type BackupOptions = { source: 'saved' | 'saveThenBackup'; destination: string };
+export type RestoreOptions = { packagePath: string; destination: string; identity: 'restoreOriginal' | 'copyNew'; collision: 'newDirectory' | 'replaceConfirmed' };
+export type WorkReadiness = { projectId: Id; editing: 'editable' | 'readOnly' | 'unavailable'; playtest: 'available' | 'unavailable' | 'unchecked'; publish: 'available' | 'unavailable' | 'unchecked';
+  generation: { usage: string; state: 'available' | 'needsConnection' | 'unchecked'; issues: Issue[] }[]; issues: { activity: 'editing' | 'playtest' | 'publish'; issue: Issue }[] };
+export type RestoreReceipt = { projectId: Id; directory: string; identity: RestoreOptions['identity']; readiness: WorkReadiness };
+export type RestorePlanSummary = { planId: Id; packageId: Id; sourceProjectId: Id; resultProjectId: Id; stagingDirectory: string; destination: string; missing: Issue[];
+  idMap: Record<Id, Id>; previousDirectory: string | null; operationDirectory: string;
+  projectName?: string; options: RestoreOptions; manifest: ProjectPackage | null; readiness: WorkReadiness | null };

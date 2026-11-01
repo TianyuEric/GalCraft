@@ -1,0 +1,28 @@
+{
+  "key": "deepseek",
+  "title": "留给明天的灯",
+  "subtitle": "澜汐 · 灯火会记得回来的路",
+  "music": "../../../../assets/generated/practice/music/originals/spring-05.wav",
+  "shots": [
+    "backgrounds/spring-shop.png",
+    "cg/spring-deepseek.png",
+    "backgrounds/spring-station.png",
+    "cg/spring-deepseek.png"
+  ],
+  "shotSeconds": 5,
+  "fadeSeconds": 0.5,
+  "duration": 18.5,
+  "fps": 30,
+  "size": [
+    1920,
+    1080
+  ],
+  "motion": "缓慢推拉和横移，0.5秒画面交叠",
+  "subtitles": "deepseek.ass",
+  "audio": {
+    "startSec": 8,
+    "volume": 0.85,
+    "fadeInSec": 0.5,
+    "fadeOutSec": 1
+  }
+}

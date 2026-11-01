@@ -1,0 +1,90 @@
+{
+  "Score": [
+    "乐谱",
+    "楽譜"
+  ],
+  "Edit sections, tracks, notes and sampled instruments.": [
+    "编辑分段、音轨、音符与采样音色。",
+    "セクション、トラック、ノート、サンプル音源を編集します。"
+  ],
+  "Editable music composition": [
+    "可编辑编曲",
+    "編集可能な作曲"
+  ],
+  "Render an existing multitrack score locally using its exact installed soundbank. Query soundbankInfo for real instrument IDs and ranges before preparing.": [
+    "使用精确安装的音色库在本地渲染已有多轨乐谱。准备前通过音源目录读取实际乐器身份和音域。",
+    "指定バージョンのインストール済み音源を使い、既存のマルチトラック楽譜をローカルで描画します。準備前に音源一覧で実際の楽器識別子と音域を確認します。"
+  ],
+  "Write a score and render locally": [
+    "写谱并本地渲染",
+    "作曲してローカルで描画"
+  ],
+  "Use a compatible text connection to write a score, validate it, then render locally. Query soundbankInfo for the exact installed library and instruments; the host must provide that soundbank.": [
+    "使用兼容的文字连接写谱，校验后本地渲染。先从音源目录读取精确安装的音色库和乐器；宿主须提供该音色库。",
+    "対応するテキスト接続で楽譜を作成・検証し、ローカルで描画します。音源一覧で指定バージョンのインストール済み音源と楽器を確認してください。ホストにその音源が必要です。"
+  ],
+  "Creative reference score": [
+    "创作参考乐谱",
+    "制作の参考楽譜"
+  ],
+  "Installed soundbank": [
+    "已安装音色库",
+    "インストール済み音源"
+  ],
+  "Choose an actual soundbank; otherwise inherit the creative reference or selected score scheme.": [
+    "选择实际音色库；留空时继承创作参考或所选乐谱方案。",
+    "実際の音源を選択します。省略時は参考楽譜または選択した楽譜プリセットから引き継ぎます。"
+  ],
+  "Actual instrument catalog": [
+    "实际乐器目录",
+    "実際の楽器一覧"
+  ],
+  "Writing style (optional)": [
+    "写谱风格（可选）",
+    "作曲スタイル（任意）"
+  ],
+  "Omit for custom writing. ambient, dramatic and pop are writing style IDs; score scheme IDs are different.": [
+    "留空自定义写谱。ambient、dramatic、pop 是写谱风格身份，与乐谱方案身份不同。",
+    "自由に作曲する場合は省略します。ambient、dramatic、pop は作曲スタイルの識別子で、楽譜プリセットの識別子とは異なります。"
+  ],
+  "Creative description": [
+    "创作描述",
+    "制作の説明"
+  ],
+  "Explicit music constraints": [
+    "明确音乐约束",
+    "明示する音楽の条件"
+  ],
+  "Optional fixed BPM, meter, bars, body/total seconds, loop and instrument identity lists.": [
+    "可选指定固定 BPM、拍号、小节数、主体／总时长、循环及乐器身份列表。",
+    "固定 BPM、拍子、小節数、本体／合計の秒数、ループ、楽器識別子の一覧を任意に指定します。"
+  ],
+  "Rendering settings": [
+    "渲染设置",
+    "描画設定"
+  ],
+  "Editable score · Quiet narrative": [
+    "可编辑乐谱 · 宁静叙事",
+    "編集可能な楽譜・静かな物語"
+  ],
+  "A four-bar piano loop at 96 BPM for dialogue and quiet narration.": [
+    "96 BPM 的四小节钢琴循环，适合对白和宁静叙事。",
+    "会話と静かな物語に適した、96 BPM・4小節のピアノループです。"
+  ],
+  "Editable score · Emotional progression": [
+    "可编辑乐谱 · 情绪推进",
+    "編集可能な楽譜・感情の展開"
+  ],
+  "A piano and strings loop at 76 BPM; edit its sections and dynamics.": [
+    "76 BPM 的钢琴与弦乐循环，可编辑分段与力度。",
+    "76 BPM のピアノと弦楽器のループです。セクションと強弱を編集できます。"
+  ],
+  "Editable score · Everyday motion": [
+    "可编辑乐谱 · 日常律动",
+    "編集可能な楽譜・日常のリズム"
+  ],
+  "A piano and acoustic bass loop at 120 BPM for everyday scenes.": [
+    "120 BPM 的钢琴与原声贝斯循环，适合日常场景。",
+    "日常のシーンに適した、120 BPM のピアノとアコースティックベースのループです。"
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "name": "@galcraft/music-composition",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./editor": { "types": "./dist/editor.d.ts", "default": "./dist/editor.js" }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@galcraft/contracts": "workspace:*",
+    "@galcraft/plugins": "workspace:*",
+    "spessasynth_core": "4.3.22",
+    "spessasynth_lib": "4.3.14",
+    "stb-vorbis": "0.0.6",
+    "tone": "15.1.22"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "vite": "8.3.0"
+  },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "plugins/music-composition"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

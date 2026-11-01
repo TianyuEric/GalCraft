@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
+import { chromium } from 'playwright';
+
+const evidence = resolve('test-results/latest/studio-opening-fixes/stories');
+await mkdir(evidence, { recursive: true });
+const browser = await chromium.launch({ channel:'msedge', headless:true });
+const page = await browser.newPage({ viewport:{width:1440,height:900} });
+const errors = [], records = [];
+page.on('pageerror',error=>errors.push(error.message));
+const record = (target,data,expected,actual) => records.push({target,environment:'Formal Storybook / Edge / Windows',data,expected,actual,result:'passed'});
+const story = async id => { await page.goto(`http://localhost:6007/iframe.html?id=${id}&viewMode=story`); await page.locator('#storybook-root').waitFor(); };
+const shot = name => page.screenshot({path:join(evidence,`${name}.png`)});
+try {
+  await story('product-studio-authoring-visual-effect-fields--optional-values');
+  await page.waitForFunction(()=>document.querySelector('[data-testid="effect-draft"]')?.textContent.includes('"opacity":null'));
+  const opacity=page.getByLabel('不透明度',{exact:true});
+  await opacity.fill('0.5');await opacity.press('Enter');await opacity.fill('');await opacity.press('Enter');
+  assert((await page.getByTestId('effect-draft').textContent()).includes('"opacity":null'));
+  await opacity.fill('0.7');await opacity.press('Escape');assert.equal(await opacity.inputValue(),'');
+  await page.getByRole('button',{name:'编辑颜色叠加',exact:true}).click();
+  await page.locator('.candidate-color-value input').fill('#ff0000');await page.locator('.candidate-color-value input').press('Enter');
+  assert((await page.getByTestId('effect-draft').textContent()).includes('"rgb":[255,0,0]'));
+  record('Optional numeric and shared tint control','empty → 0.5 → empty; Esc; HEX edit','Empty stays unspecified, Esc restores, tint stays in draft','passed');
+  await shot('effects-light');
+  await page.setViewportSize({width:900,height:700});
+  await story('product-studio-authoring-visual-effect-fields--dusk-english');await page.locator('.effect-number-field').first().waitFor();await shot('effects-dusk-900');
+  await story('product-studio-authoring-scene-entry--configure-opening');
+  await page.waitForFunction(()=>document.querySelector('[data-testid="opening-draft"]')?.textContent.includes('"allowSkip":true'));
+  assert.equal(await page.locator('.scene-entry-advanced[open]').count(),0);
+  await shot('opening-900');record('Opening groups','title and fullscreen interlude enabled at 900px','All common fields reachable; transitions collapsed','passed');
+  await story('product-studio-authoring-scene-entry--empty-assets');await page.getByRole('checkbox',{name:'播放全屏间幕'}).waitFor();assert(await page.getByRole('checkbox',{name:'播放全屏间幕'}).isDisabled());
+  await page.setViewportSize({width:1440,height:900});
+  await story('product-studio-projects-project-center--pending-create');await page.getByRole('button',{name:'新建作品',exact:true}).click();await page.getByRole('textbox',{name:'作品名称',exact:true}).fill('创建状态验收');
+  await page.getByRole('button',{name:'选择目录并创建'}).click();const pending=page.getByRole('button',{name:'正在创建…',exact:true});assert(await pending.isDisabled());await shot('creating');await page.getByRole('button',{name:'选择目录并创建'}).waitFor();
+  assert.equal(await page.getByRole('textbox',{name:'作品名称',exact:true}).inputValue(),'创建状态验收');
+  record('Create pending and picker cancellation','4-second create Promise then cancellation','Spinner and disabled submit; input retained after cancellation','passed');
+  await story('product-studio-projects-project-center--failed-create');await page.getByRole('button',{name:'新建作品',exact:true}).click();await page.getByRole('textbox',{name:'作品名称',exact:true}).fill('失败保留输入');await page.getByRole('button',{name:'选择目录并创建'}).click();await page.getByRole('alert').filter({hasText:'创建失败'}).waitFor();assert.equal(await page.getByRole('textbox',{name:'作品名称',exact:true}).inputValue(),'失败保留输入');record('Create failure','rejected create Promise','Error and original input persist; submit re-enabled','passed');
+  await page.setViewportSize({width:900,height:620});await story('product-studio-authoring-professional-editors--document-overflow');await page.locator('.gc-wb-document-scroll').waitFor();
+  const dimensions=await page.locator('.gc-wb-documents').evaluate(node=>({outer:node.getBoundingClientRect().height,client:node.clientHeight,scroll:node.scrollWidth,width:node.clientWidth}));
+  assert(dimensions.scroll>dimensions.width);assert(dimensions.outer-dimensions.client<2);assert.equal(await page.locator('.gc-wb-document-scroll').evaluate(node=>node.getBoundingClientRect().height),36);
+  const last=page.getByRole('tab').last();await last.focus();await last.press('Enter');assert(await page.locator('.gc-wb-documents').evaluate(node=>node.scrollLeft>0));await shot('tabs-900');record('Overlay document scrollbar',dimensions,'36px outer strip; native scrollbar consumes zero height; last tab keyboard-accessible','passed');
+  assert.deepEqual(errors,[]);
+} catch (error) { await shot('failure'); console.log((await page.locator('body').innerText()).slice(0,3000));console.log(errors);throw error;
+} finally {await writeFile(join(evidence,'acceptance.json'),JSON.stringify({records,errors,result:records.length===5&&!errors.length?'passed':'failed'},null,2));await browser.close();}
+console.log(JSON.stringify({records:records.length,errors}));

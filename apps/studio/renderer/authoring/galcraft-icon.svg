@@ -1,0 +1,201 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="GalCraft icon">
+  <defs>
+    <linearGradient id="bg" x1="110" y1="80" x2="880" y2="940" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#61BDFB"/>
+      <stop offset="0.45" stop-color="#8FD7FF"/>
+      <stop offset="1" stop-color="#D8F3FF"/>
+    </linearGradient>
+
+    <linearGradient id="sky" x1="512" y1="150" x2="512" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4DAAF6"/>
+      <stop offset="0.52" stop-color="#8DD6FF"/>
+      <stop offset="1" stop-color="#FFF4DF"/>
+    </linearGradient>
+
+    <linearGradient id="bookLeft" x1="180" y1="670" x2="500" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.62" stop-color="#EAF6FF"/>
+      <stop offset="1" stop-color="#B7DDFF"/>
+    </linearGradient>
+
+    <linearGradient id="bookRight" x1="845" y1="670" x2="530" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.62" stop-color="#EEF7FF"/>
+      <stop offset="1" stop-color="#C3E3FF"/>
+    </linearGradient>
+
+    <linearGradient id="feather" x1="570" y1="755" x2="835" y2="310" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DDF4FF"/>
+      <stop offset="0.48" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E7E2FF"/>
+    </linearGradient>
+
+    <linearGradient id="windowStroke" x1="300" y1="120" x2="730" y2="600" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#D8EEFF"/>
+    </linearGradient>
+
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(514 405) rotate(90) scale(150)">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".98"/>
+      <stop offset=".26" stop-color="#FFF4C8" stop-opacity=".64"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="softShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#2D7CC5" flood-opacity=".22"/>
+    </filter>
+
+    <clipPath id="archClip">
+      <path d="M318 579V333C318 204 404 126 512 126s194 78 194 207v246Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- App tile -->
+  <rect x="48" y="48" width="928" height="928" rx="206" fill="url(#bg)"/>
+
+  <!-- Soft clouds -->
+  <g fill="#FFFFFF" opacity=".58">
+    <ellipse cx="180" cy="675" rx="120" ry="72"/>
+    <ellipse cx="105" cy="725" rx="95" ry="58"/>
+    <ellipse cx="255" cy="745" rx="128" ry="68"/>
+    <ellipse cx="842" cy="694" rx="124" ry="72"/>
+    <ellipse cx="932" cy="746" rx="94" ry="62"/>
+    <ellipse cx="775" cy="760" rx="120" ry="64"/>
+    <ellipse cx="170" cy="905" rx="150" ry="72"/>
+    <ellipse cx="330" cy="936" rx="150" ry="64"/>
+    <ellipse cx="697" cy="931" rx="160" ry="68"/>
+    <ellipse cx="865" cy="908" rx="135" ry="74"/>
+  </g>
+
+  <!-- Sky glow behind window -->
+  <circle cx="512" cy="430" r="220" fill="url(#glow)"/>
+
+  <!-- Arched window interior -->
+  <path d="M318 579V333C318 204 404 126 512 126s194 78 194 207v246Z"
+        fill="url(#sky)" opacity=".9"/>
+
+  <!-- Sea horizon -->
+  <g clip-path="url(#archClip)">
+    <path d="M290 621C392 590 458 600 511 614c57-17 123-23 218 4v138H290Z"
+          fill="#5ABCF2" opacity=".5"/>
+    <path d="M326 623h362" stroke="#FFFFFF" stroke-width="6" opacity=".6"/>
+    <path d="M394 647c62-20 131-17 202 1" fill="none" stroke="#DDF6FF" stroke-width="7" stroke-linecap="round" opacity=".55"/>
+    <path d="M429 680c46-12 95-10 153 0" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" opacity=".4"/>
+  </g>
+
+  <!-- Window frame -->
+  <path d="M296 600V326C296 184 393 103 512 103s216 81 216 223v274"
+        fill="none" stroke="url(#windowStroke)" stroke-width="28" stroke-linecap="round" opacity=".97"/>
+  <path d="M363 183v399M660 183v399M318 425h121M585 425h121"
+        fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" opacity=".88"/>
+
+  <!-- Shooting star arc -->
+  <path d="M365 500C480 379 602 321 754 289"
+        fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" opacity=".8"/>
+
+  <!-- Main star -->
+  <g filter="url(#softGlow)">
+    <path d="M512 273
+             C520 329 539 350 596 359
+             C539 368 520 389 512 445
+             C504 389 485 368 428 359
+             C485 350 504 329 512 273Z"
+          fill="#FFFFFF"/>
+  </g>
+
+  <!-- Small stars -->
+  <g fill="#FFFFFF">
+    <circle cx="279" cy="234" r="4"/>
+    <circle cx="326" cy="180" r="5"/>
+    <circle cx="386" cy="248" r="3"/>
+    <circle cx="451" cy="195" r="3.5"/>
+    <circle cx="611" cy="202" r="4"/>
+    <circle cx="691" cy="247" r="5"/>
+    <circle cx="755" cy="199" r="3"/>
+    <circle cx="812" cy="279" r="4"/>
+    <circle cx="246" cy="334" r="3.5"/>
+    <circle cx="786" cy="366" r="3.5"/>
+  </g>
+
+  <!-- Petals -->
+  <g fill="#EEF8FF" opacity=".95">
+    <path d="M185 381c37-13 69 9 81 45-39 9-67-9-81-45Z"/>
+    <path d="M219 534c41-12 75 14 82 51-42 7-71-12-82-51Z"/>
+    <path d="M824 542c36-18 70 0 81 35-37 14-69 0-81-35Z"/>
+    <path d="M754 824c40-16 73 3 82 39-39 10-69-5-82-39Z"/>
+  </g>
+
+  <!-- Open book -->
+  <g filter="url(#softShadow)">
+    <path d="M130 786
+             C217 667 341 624 488 670
+             C503 675 516 685 526 697
+             V876
+             C431 806 283 795 146 855
+             C120 866 97 878 76 892
+             C90 854 108 817 130 786Z"
+          fill="url(#bookLeft)"/>
+
+    <path d="M894 786
+             C807 667 683 624 536 670
+             C521 675 508 685 498 697
+             V876
+             C593 806 741 795 878 855
+             C904 866 927 878 948 892
+             C934 854 916 817 894 786Z"
+          fill="url(#bookRight)"/>
+
+    <!-- Page folds -->
+    <path d="M485 692C402 646 291 654 188 711
+             C304 681 399 697 485 742Z"
+          fill="#FFFFFF" opacity=".65"/>
+    <path d="M539 692C622 646 733 654 836 711
+             C720 681 625 697 539 742Z"
+          fill="#FFFFFF" opacity=".65"/>
+
+    <path d="M505 690c-8 58-9 116 7 183"
+          fill="none" stroke="#A6D3F8" stroke-width="8" opacity=".62"/>
+  </g>
+
+  <!-- Feather / quill -->
+  <g>
+    <path d="M552 791
+             C620 618 708 426 858 310
+             C821 386 772 446 716 489
+             C770 469 816 441 851 412
+             C821 501 751 568 663 626
+             C714 612 754 593 788 565
+             C747 648 663 724 566 800Z"
+          fill="url(#feather)"
+          stroke="#FFFFFF"
+          stroke-width="8"
+          stroke-linejoin="round"/>
+
+    <path d="M565 794C642 626 727 463 845 329"
+          fill="none"
+          stroke="#4A97E6"
+          stroke-width="9"
+          stroke-linecap="round"
+          opacity=".94"/>
+  </g>
+
+  <!-- Book spine -->
+  <path d="M484 875
+           C499 862 525 862 540 875
+           C552 885 552 903 540 913
+           C525 926 499 926 484 913
+           C472 903 472 885 484 875Z"
+        fill="#69B7F5"/>
+
+  <!-- Thin border -->
+  <rect x="58" y="58" width="908" height="908" rx="195"
+        fill="none" stroke="#EAF8FF" stroke-width="4" opacity=".7"/>
+</svg>

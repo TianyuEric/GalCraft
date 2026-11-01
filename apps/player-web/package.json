@@ -1,0 +1,12 @@
+{
+  "name": "@galcraft/player-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "vite --host 127.0.0.1", "build": "vite build && vite build --config vite.preview.config.ts", "typecheck": "tsc --noEmit -p tsconfig.json", "test": "vitest run src/local-preview.test.mjs" },
+  "dependencies": { "@galcraft/contracts": "workspace:*", "@galcraft/player-ui": "workspace:*" },
+  "devDependencies": { "typescript": "7.0.2", "vite": "8.3.0" },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "apps/player-web"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

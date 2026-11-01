@@ -1,0 +1,5 @@
+html, body, #storybook-root { width: 100%; min-height: 100%; margin: 0; }
+body { font-family: 'Geist Variable', 'Noto Sans CJK SC', system-ui, sans-serif; }
+.product-story { width: 100%; min-height: 100vh; }
+.player-story { height: 100vh; min-height: 0; }
+.product-story-error { padding: 24px; color: #a92d2d; }

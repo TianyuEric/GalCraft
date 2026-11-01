@@ -1,0 +1,1783 @@
+[
+  {
+    "id": "org.galcraft.voice-comfy/breezeDesign",
+    "version": 1,
+    "provider": {
+      "id": "org.galcraft.voice-comfy",
+      "version": "0.1.0"
+    },
+    "definition": {
+      "contractVersion": 1,
+      "id": "org.galcraft.voice-comfy/breezeDesign",
+      "version": 1,
+      "title": "Breeze · 声音设计",
+      "description": "本地 ComfyUI Breeze TTS 2，中英。声音描述、参考逐字稿和表演指令分别保存。权重及输出商业用途请核对适用授权。",
+      "providerKey": "org.galcraft.voice-comfy/comfy",
+      "purpose": "org.galcraft.voice-comfy/breezeDesign",
+      "fields": [
+        {
+          "path": "text",
+          "label": "朗读文本 / Spoken text / 読み上げ文",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "language",
+          "label": "目标语言 / Target language / 言語",
+          "type": "enum",
+          "default": "zh",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": [],
+          "enumValues": [
+            "zh",
+            "en"
+          ]
+        },
+        {
+          "path": "voiceDescription",
+          "label": "声音描述 / Voice description / 声の説明",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "seed",
+          "label": "种子 / Seed / シード",
+          "type": "integer",
+          "default": 42,
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "advanced",
+          "summary": true,
+          "keywords": [],
+          "min": 0,
+          "max": 2147483647
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "text",
+          "language",
+          "voiceDescription",
+          "seed"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "language": {
+            "enum": [
+              "zh",
+              "en"
+            ]
+          },
+          "voiceDescription": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          }
+        }
+      },
+      "inputs": [
+        {
+          "key": "text",
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "text/plain"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "key": "audio",
+          "type": "audio",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "audio/mpeg",
+            "audio/wav",
+            "audio/flac",
+            "audio/ogg"
+          ]
+        }
+      ],
+      "capabilities": {
+        "query": true,
+        "refetch": true,
+        "cancelPerTask": true,
+        "resume": true
+      },
+      "adoption": {
+        "kind": "asset",
+        "assetKind": "audio",
+        "usages": [
+          "voice"
+        ]
+      },
+      "workflow": {
+        "id": "00000000-0000-4000-8000-000000003001",
+        "revision": 1,
+        "name": "breezeDesign",
+        "purpose": "org.galcraft.voice-comfy/breezeDesign",
+        "imageUsages": null,
+        "graphVersion": "0.1.0",
+        "apiGraph": {
+          "1": {
+            "class_type": "BreezeTTS2LoadModel",
+            "inputs": {
+              "model": "bf16 (best quality)",
+              "dtype": "auto",
+              "device": "auto",
+              "attention": "auto",
+              "decode_mode": "eager",
+              "download_if_missing": false
+            }
+          },
+          "2": {
+            "class_type": "BreezeTTS2VoiceDesign",
+            "inputs": {
+              "text": "",
+              "instruction": "",
+              "cfg_scale": 4,
+              "max_new_tokens": 1500,
+              "temperature": 0.9,
+              "top_k": 50,
+              "top_p": 1,
+              "repetition_penalty": 1.1,
+              "depth_temperature": 0.9,
+              "depth_top_k": 50,
+              "depth_top_p": 1,
+              "seed": 42,
+              "breeze_model": [
+                "1",
+                0
+              ]
+            }
+          },
+          "4": {
+            "class_type": "SaveAudioAdvanced",
+            "inputs": {
+              "filename_prefix": "GalCraft/voice/breezeDesign",
+              "format": "mp3",
+              "format.quality": "V0",
+              "audio": [
+                "2",
+                0
+              ]
+            }
+          }
+        },
+        "editorWorkflowPath": null,
+        "inputs": [
+          {
+            "port": "text",
+            "nodeId": "2",
+            "classType": "BreezeTTS2VoiceDesign",
+            "input": "text",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "seed",
+            "nodeId": "2",
+            "classType": "BreezeTTS2VoiceDesign",
+            "input": "seed",
+            "valueType": "number",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "voiceDescription",
+            "nodeId": "2",
+            "classType": "BreezeTTS2VoiceDesign",
+            "input": "instruction",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          }
+        ],
+        "uploads": [],
+        "outputs": [
+          {
+            "nodeId": "4",
+            "key": "audio",
+            "kind": "audio",
+            "decoder": "comfyFileList",
+            "group": "voice",
+            "role": "primary",
+            "background": "unknown"
+          }
+        ],
+        "requiredNodes": [
+          {
+            "classType": "BreezeTTS2VoiceDesign",
+            "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+          },
+          {
+            "classType": "SaveAudioAdvanced",
+            "versionNote": "ComfyUI 0.35.2"
+          },
+          {
+            "classType": "BreezeTTS2LoadModel",
+            "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+          }
+        ],
+        "modelNotes": [
+          {
+            "name": "Breeze TTS 2",
+            "source": "https://huggingface.co/BreezeBlue/Breeze-TTS-2",
+            "license": "Research/non-commercial weights; verify output authorization"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "org.galcraft.voice-comfy/breezeClone",
+    "version": 1,
+    "provider": {
+      "id": "org.galcraft.voice-comfy",
+      "version": "0.1.0"
+    },
+    "definition": {
+      "contractVersion": 1,
+      "id": "org.galcraft.voice-comfy/breezeClone",
+      "version": 1,
+      "title": "Breeze · 参考克隆",
+      "description": "本地 ComfyUI Breeze TTS 2，中英。声音描述、参考逐字稿和表演指令分别保存。权重及输出商业用途请核对适用授权。",
+      "providerKey": "org.galcraft.voice-comfy/comfy",
+      "purpose": "org.galcraft.voice-comfy/breezeClone",
+      "fields": [
+        {
+          "path": "text",
+          "label": "朗读文本 / Spoken text / 読み上げ文",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "language",
+          "label": "目标语言 / Target language / 言語",
+          "type": "enum",
+          "default": "zh",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": [],
+          "enumValues": [
+            "zh",
+            "en"
+          ]
+        },
+        {
+          "path": "referenceText",
+          "label": "准确参考逐字稿 / Exact reference transcript / 正確な参照テキスト",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "seed",
+          "label": "种子 / Seed / シード",
+          "type": "integer",
+          "default": 42,
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "advanced",
+          "summary": true,
+          "keywords": [],
+          "min": 0,
+          "max": 2147483647
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "text",
+          "language",
+          "referenceText",
+          "seed"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "language": {
+            "enum": [
+              "zh",
+              "en"
+            ]
+          },
+          "referenceText": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          }
+        }
+      },
+      "inputs": [
+        {
+          "key": "text",
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "text/plain"
+          ]
+        },
+        {
+          "key": "referenceAudio",
+          "type": "audio",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "audio/mpeg",
+            "audio/wav",
+            "audio/ogg",
+            "audio/flac"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "key": "audio",
+          "type": "audio",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "audio/mpeg",
+            "audio/wav",
+            "audio/flac",
+            "audio/ogg"
+          ]
+        }
+      ],
+      "capabilities": {
+        "query": true,
+        "refetch": true,
+        "cancelPerTask": true,
+        "resume": true
+      },
+      "adoption": {
+        "kind": "asset",
+        "assetKind": "audio",
+        "usages": [
+          "voice"
+        ]
+      },
+      "workflow": {
+        "id": "00000000-0000-4000-8000-000000003002",
+        "revision": 1,
+        "name": "breezeClone",
+        "purpose": "org.galcraft.voice-comfy/breezeClone",
+        "imageUsages": null,
+        "graphVersion": "0.1.0",
+        "apiGraph": {
+          "1": {
+            "class_type": "BreezeTTS2LoadModel",
+            "inputs": {
+              "model": "bf16 (best quality)",
+              "dtype": "auto",
+              "device": "auto",
+              "attention": "auto",
+              "decode_mode": "eager",
+              "download_if_missing": false
+            }
+          },
+          "4": {
+            "class_type": "SaveAudioAdvanced",
+            "inputs": {
+              "filename_prefix": "GalCraft/voice/breezeClone",
+              "format": "mp3",
+              "format.quality": "V0",
+              "audio": [
+                "6",
+                0
+              ]
+            }
+          },
+          "6": {
+            "class_type": "BreezeTTS2VoiceClone",
+            "inputs": {
+              "text": "",
+              "reference_text": "",
+              "cfg_scale": 1,
+              "max_new_tokens": 1500,
+              "temperature": 0.9,
+              "top_k": 50,
+              "top_p": 1,
+              "repetition_penalty": 1.1,
+              "depth_temperature": 0.9,
+              "depth_top_k": 50,
+              "depth_top_p": 1,
+              "seed": 42,
+              "breeze_model": [
+                "1",
+                0
+              ],
+              "reference_audio": [
+                "8",
+                0
+              ]
+            }
+          },
+          "8": {
+            "class_type": "LoadAudio",
+            "inputs": {
+              "audio": ""
+            }
+          }
+        },
+        "editorWorkflowPath": null,
+        "inputs": [
+          {
+            "port": "text",
+            "nodeId": "6",
+            "classType": "BreezeTTS2VoiceClone",
+            "input": "text",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "seed",
+            "nodeId": "6",
+            "classType": "BreezeTTS2VoiceClone",
+            "input": "seed",
+            "valueType": "number",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "referenceAudio",
+            "nodeId": "8",
+            "classType": "LoadAudio",
+            "input": "audio",
+            "valueType": "audioFile",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "referenceText",
+            "nodeId": "6",
+            "classType": "BreezeTTS2VoiceClone",
+            "input": "reference_text",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          }
+        ],
+        "uploads": [
+          {
+            "port": "referenceAudio",
+            "method": "serverPath",
+            "subfolder": "GalCraft/voice",
+            "serverRoot": null
+          }
+        ],
+        "outputs": [
+          {
+            "nodeId": "4",
+            "key": "audio",
+            "kind": "audio",
+            "decoder": "comfyFileList",
+            "group": "voice",
+            "role": "primary",
+            "background": "unknown"
+          }
+        ],
+        "requiredNodes": [
+          {
+            "classType": "SaveAudioAdvanced",
+            "versionNote": "ComfyUI 0.35.2"
+          },
+          {
+            "classType": "BreezeTTS2LoadModel",
+            "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+          },
+          {
+            "classType": "LoadAudio",
+            "versionNote": "ComfyUI 0.35.2"
+          },
+          {
+            "classType": "BreezeTTS2VoiceClone",
+            "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+          }
+        ],
+        "modelNotes": [
+          {
+            "name": "Breeze TTS 2",
+            "source": "https://huggingface.co/BreezeBlue/Breeze-TTS-2",
+            "license": "Research/non-commercial weights; verify output authorization"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "org.galcraft.voice-comfy/breezeDirection",
+    "version": 1,
+    "provider": {
+      "id": "org.galcraft.voice-comfy",
+      "version": "0.1.0"
+    },
+    "definition": {
+      "contractVersion": 1,
+      "id": "org.galcraft.voice-comfy/breezeDirection",
+      "version": 1,
+      "title": "Breeze · 表演控制",
+      "description": "本地 ComfyUI Breeze TTS 2，中英。声音描述、参考逐字稿和表演指令分别保存。权重及输出商业用途请核对适用授权。",
+      "providerKey": "org.galcraft.voice-comfy/comfy",
+      "purpose": "org.galcraft.voice-comfy/breezeDirection",
+      "fields": [
+        {
+          "path": "text",
+          "label": "朗读文本 / Spoken text / 読み上げ文",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "language",
+          "label": "目标语言 / Target language / 言語",
+          "type": "enum",
+          "default": "zh",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": [],
+          "enumValues": [
+            "zh",
+            "en"
+          ]
+        },
+        {
+          "path": "performanceInstruction",
+          "label": "表演指令 / Performance / 演技指示",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "referenceText",
+          "label": "准确参考逐字稿 / Exact reference transcript / 正確な参照テキスト",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "seed",
+          "label": "种子 / Seed / シード",
+          "type": "integer",
+          "default": 42,
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "advanced",
+          "summary": true,
+          "keywords": [],
+          "min": 0,
+          "max": 2147483647
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "text",
+          "language",
+          "performanceInstruction",
+          "referenceText",
+          "seed"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "language": {
+            "enum": [
+              "zh",
+              "en"
+            ]
+          },
+          "performanceInstruction": {
+            "type": "string",
+            "minLength": 1
+          },
+          "referenceText": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          }
+        }
+      },
+      "inputs": [
+        {
+          "key": "text",
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "text/plain"
+          ]
+        },
+        {
+          "key": "referenceAudio",
+          "type": "audio",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "audio/mpeg",
+            "audio/wav",
+            "audio/ogg",
+            "audio/flac"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "key": "audio",
+          "type": "audio",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "audio/mpeg",
+            "audio/wav",
+            "audio/flac",
+            "audio/ogg"
+          ]
+        }
+      ],
+      "capabilities": {
+        "query": true,
+        "refetch": true,
+        "cancelPerTask": true,
+        "resume": true
+      },
+      "adoption": {
+        "kind": "asset",
+        "assetKind": "audio",
+        "usages": [
+          "voice"
+        ]
+      },
+      "workflow": {
+        "id": "00000000-0000-4000-8000-000000003003",
+        "revision": 1,
+        "name": "breezeDirection",
+        "purpose": "org.galcraft.voice-comfy/breezeDirection",
+        "imageUsages": null,
+        "graphVersion": "0.1.0",
+        "apiGraph": {
+          "1": {
+            "class_type": "BreezeTTS2LoadModel",
+            "inputs": {
+              "model": "bf16 (best quality)",
+              "dtype": "auto",
+              "device": "auto",
+              "attention": "auto",
+              "decode_mode": "eager",
+              "download_if_missing": false
+            }
+          },
+          "4": {
+            "class_type": "SaveAudioAdvanced",
+            "inputs": {
+              "filename_prefix": "GalCraft/voice/breezeDirection",
+              "format": "mp3",
+              "format.quality": "V0",
+              "audio": [
+                "7",
+                0
+              ]
+            }
+          },
+          "7": {
+            "class_type": "BreezeTTS2VoiceDirection",
+            "inputs": {
+              "text": "",
+              "reference_text": "",
+              "instruction": "",
+              "cfg_scale": 4,
+              "stitch_reference": "none",
+              "max_new_tokens": 1500,
+              "temperature": 0.9,
+              "top_k": 50,
+              "top_p": 1,
+              "repetition_penalty": 1.1,
+              "depth_temperature": 0.9,
+              "depth_top_k": 50,
+              "depth_top_p": 1,
+              "seed": 42,
+              "breeze_model": [
+                "1",
+                0
+              ],
+              "reference_audio": [
+                "8",
+                0
+              ]
+            }
+          },
+          "8": {
+            "class_type": "LoadAudio",
+            "inputs": {
+              "audio": ""
+            }
+          }
+        },
+        "editorWorkflowPath": null,
+        "inputs": [
+          {
+            "port": "text",
+            "nodeId": "7",
+            "classType": "BreezeTTS2VoiceDirection",
+            "input": "text",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "seed",
+            "nodeId": "7",
+            "classType": "BreezeTTS2VoiceDirection",
+            "input": "seed",
+            "valueType": "number",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "performanceInstruction",
+            "nodeId": "7",
+            "classType": "BreezeTTS2VoiceDirection",
+            "input": "instruction",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "referenceAudio",
+            "nodeId": "8",
+            "classType": "LoadAudio",
+            "input": "audio",
+            "valueType": "audioFile",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "referenceText",
+            "nodeId": "7",
+            "classType": "BreezeTTS2VoiceDirection",
+            "input": "reference_text",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          }
+        ],
+        "uploads": [
+          {
+            "port": "referenceAudio",
+            "method": "serverPath",
+            "subfolder": "GalCraft/voice",
+            "serverRoot": null
+          }
+        ],
+        "outputs": [
+          {
+            "nodeId": "4",
+            "key": "audio",
+            "kind": "audio",
+            "decoder": "comfyFileList",
+            "group": "voice",
+            "role": "primary",
+            "background": "unknown"
+          }
+        ],
+        "requiredNodes": [
+          {
+            "classType": "SaveAudioAdvanced",
+            "versionNote": "ComfyUI 0.35.2"
+          },
+          {
+            "classType": "BreezeTTS2LoadModel",
+            "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+          },
+          {
+            "classType": "LoadAudio",
+            "versionNote": "ComfyUI 0.35.2"
+          },
+          {
+            "classType": "BreezeTTS2VoiceDirection",
+            "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+          }
+        ],
+        "modelNotes": [
+          {
+            "name": "Breeze TTS 2",
+            "source": "https://huggingface.co/BreezeBlue/Breeze-TTS-2",
+            "license": "Research/non-commercial weights; verify output authorization"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "org.galcraft.voice-comfy/irodoriDesign",
+    "version": 1,
+    "provider": {
+      "id": "org.galcraft.voice-comfy",
+      "version": "0.1.0"
+    },
+    "definition": {
+      "contractVersion": 1,
+      "id": "org.galcraft.voice-comfy/irodoriDesign",
+      "version": 1,
+      "title": "Irodori · 声音设计",
+      "description": "本地 ComfyUI Irodori v4.1 Small，日语。当前参考模式无逐字稿输入；caption 按模式表达声音或表演。",
+      "providerKey": "org.galcraft.voice-comfy/comfy",
+      "purpose": "org.galcraft.voice-comfy/irodoriDesign",
+      "fields": [
+        {
+          "path": "text",
+          "label": "朗读文本 / Spoken text / 読み上げ文",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "language",
+          "label": "目标语言 / Target language / 言語",
+          "type": "enum",
+          "default": "ja",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": [],
+          "enumValues": [
+            "ja"
+          ]
+        },
+        {
+          "path": "voiceDescription",
+          "label": "声音描述 / Voice description / 声の説明",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "seed",
+          "label": "种子 / Seed / シード",
+          "type": "integer",
+          "default": 42,
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "advanced",
+          "summary": true,
+          "keywords": [],
+          "min": 0,
+          "max": 2147483647
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "text",
+          "language",
+          "voiceDescription",
+          "seed"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "language": {
+            "enum": [
+              "ja"
+            ]
+          },
+          "voiceDescription": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          }
+        }
+      },
+      "inputs": [
+        {
+          "key": "text",
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "text/plain"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "key": "audio",
+          "type": "audio",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "audio/mpeg",
+            "audio/wav",
+            "audio/flac",
+            "audio/ogg"
+          ]
+        }
+      ],
+      "capabilities": {
+        "query": true,
+        "refetch": true,
+        "cancelPerTask": true,
+        "resume": true
+      },
+      "adoption": {
+        "kind": "asset",
+        "assetKind": "audio",
+        "usages": [
+          "voice"
+        ]
+      },
+      "workflow": {
+        "id": "00000000-0000-4000-8000-000000003004",
+        "revision": 1,
+        "name": "irodoriDesign",
+        "purpose": "org.galcraft.voice-comfy/irodoriDesign",
+        "imageUsages": null,
+        "graphVersion": "0.1.0",
+        "apiGraph": {
+          "1": {
+            "class_type": "kjranyone.IrodoriTTS.ModelLoader",
+            "inputs": {
+              "model": "Irodori-TTS-v4.1-Small\\model.safetensors",
+              "model_device": "cuda",
+              "model_precision": "bf16",
+              "codec_device": "cpu",
+              "codec_precision": "fp32",
+              "enable_watermark": false,
+              "enable_silentcipher": false,
+              "compile_model": false,
+              "compile_dynamic": false,
+              "runtime_cache_policy": "offload_after_use"
+            }
+          },
+          "3": {
+            "class_type": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+            "inputs": {
+              "caption": "",
+              "max_caption_len": 0
+            }
+          },
+          "4": {
+            "class_type": "kjranyone.IrodoriTTS.Sampler",
+            "inputs": {
+              "text": "",
+              "seed": 42,
+              "seconds": 0,
+              "num_steps": 40,
+              "batch_size": 1,
+              "decode_mode": "sequential",
+              "context_kv_cache": true,
+              "max_text_len": 0,
+              "trim_tail": true,
+              "model_config": [
+                "1",
+                0
+              ],
+              "voice_design_config": [
+                "3",
+                0
+              ]
+            }
+          },
+          "6": {
+            "class_type": "SaveAudioAdvanced",
+            "inputs": {
+              "filename_prefix": "GalCraft/voice/irodoriDesign",
+              "format": "mp3",
+              "format.quality": "V0",
+              "audio": [
+                "4",
+                0
+              ]
+            }
+          }
+        },
+        "editorWorkflowPath": null,
+        "inputs": [
+          {
+            "port": "text",
+            "nodeId": "4",
+            "classType": "kjranyone.IrodoriTTS.Sampler",
+            "input": "text",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "seed",
+            "nodeId": "4",
+            "classType": "kjranyone.IrodoriTTS.Sampler",
+            "input": "seed",
+            "valueType": "number",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "voiceDescription",
+            "nodeId": "3",
+            "classType": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+            "input": "caption",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          }
+        ],
+        "uploads": [],
+        "outputs": [
+          {
+            "nodeId": "6",
+            "key": "audio",
+            "kind": "audio",
+            "decoder": "comfyFileList",
+            "group": "voice",
+            "role": "primary",
+            "background": "unknown"
+          }
+        ],
+        "requiredNodes": [
+          {
+            "classType": "kjranyone.IrodoriTTS.ModelLoader",
+            "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+          },
+          {
+            "classType": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+            "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+          },
+          {
+            "classType": "kjranyone.IrodoriTTS.Sampler",
+            "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+          },
+          {
+            "classType": "SaveAudioAdvanced",
+            "versionNote": "ComfyUI 0.35.2"
+          }
+        ],
+        "modelNotes": [
+          {
+            "name": "Irodori v4.1 Small",
+            "source": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small",
+            "license": "MIT model card and stated usage restrictions"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "org.galcraft.voice-comfy/irodoriClone",
+    "version": 1,
+    "provider": {
+      "id": "org.galcraft.voice-comfy",
+      "version": "0.1.0"
+    },
+    "definition": {
+      "contractVersion": 1,
+      "id": "org.galcraft.voice-comfy/irodoriClone",
+      "version": 1,
+      "title": "Irodori · 参考克隆",
+      "description": "本地 ComfyUI Irodori v4.1 Small，日语。当前参考模式无逐字稿输入；caption 按模式表达声音或表演。",
+      "providerKey": "org.galcraft.voice-comfy/comfy",
+      "purpose": "org.galcraft.voice-comfy/irodoriClone",
+      "fields": [
+        {
+          "path": "text",
+          "label": "朗读文本 / Spoken text / 読み上げ文",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "language",
+          "label": "目标语言 / Target language / 言語",
+          "type": "enum",
+          "default": "ja",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": [],
+          "enumValues": [
+            "ja"
+          ]
+        },
+        {
+          "path": "seed",
+          "label": "种子 / Seed / シード",
+          "type": "integer",
+          "default": 42,
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "advanced",
+          "summary": true,
+          "keywords": [],
+          "min": 0,
+          "max": 2147483647
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "text",
+          "language",
+          "seed"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "language": {
+            "enum": [
+              "ja"
+            ]
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          }
+        }
+      },
+      "inputs": [
+        {
+          "key": "text",
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "text/plain"
+          ]
+        },
+        {
+          "key": "referenceAudio",
+          "type": "audio",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "audio/mpeg",
+            "audio/wav",
+            "audio/ogg",
+            "audio/flac"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "key": "audio",
+          "type": "audio",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "audio/mpeg",
+            "audio/wav",
+            "audio/flac",
+            "audio/ogg"
+          ]
+        }
+      ],
+      "capabilities": {
+        "query": true,
+        "refetch": true,
+        "cancelPerTask": true,
+        "resume": true
+      },
+      "adoption": {
+        "kind": "asset",
+        "assetKind": "audio",
+        "usages": [
+          "voice"
+        ]
+      },
+      "workflow": {
+        "id": "00000000-0000-4000-8000-000000003005",
+        "revision": 1,
+        "name": "irodoriClone",
+        "purpose": "org.galcraft.voice-comfy/irodoriClone",
+        "imageUsages": null,
+        "graphVersion": "0.1.0",
+        "apiGraph": {
+          "1": {
+            "class_type": "kjranyone.IrodoriTTS.ModelLoader",
+            "inputs": {
+              "model": "Irodori-TTS-v4.1-Small\\model.safetensors",
+              "model_device": "cuda",
+              "model_precision": "bf16",
+              "codec_device": "cpu",
+              "codec_precision": "fp32",
+              "enable_watermark": false,
+              "enable_silentcipher": false,
+              "compile_model": false,
+              "compile_dynamic": false,
+              "runtime_cache_policy": "offload_after_use"
+            }
+          },
+          "2": {
+            "class_type": "kjranyone.IrodoriTTS.ReferenceAudio",
+            "inputs": {
+              "audio": "",
+              "ref_latent": "None",
+              "ref_normalize_db": -16,
+              "max_ref_seconds": 0
+            }
+          },
+          "4": {
+            "class_type": "kjranyone.IrodoriTTS.Sampler",
+            "inputs": {
+              "text": "",
+              "seed": 42,
+              "seconds": 0,
+              "num_steps": 40,
+              "batch_size": 1,
+              "decode_mode": "sequential",
+              "context_kv_cache": true,
+              "max_text_len": 0,
+              "trim_tail": true,
+              "model_config": [
+                "1",
+                0
+              ],
+              "ref_config": [
+                "2",
+                0
+              ]
+            }
+          },
+          "6": {
+            "class_type": "SaveAudioAdvanced",
+            "inputs": {
+              "filename_prefix": "GalCraft/voice/irodoriClone",
+              "format": "mp3",
+              "format.quality": "V0",
+              "audio": [
+                "4",
+                0
+              ]
+            }
+          }
+        },
+        "editorWorkflowPath": null,
+        "inputs": [
+          {
+            "port": "text",
+            "nodeId": "4",
+            "classType": "kjranyone.IrodoriTTS.Sampler",
+            "input": "text",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "seed",
+            "nodeId": "4",
+            "classType": "kjranyone.IrodoriTTS.Sampler",
+            "input": "seed",
+            "valueType": "number",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "referenceAudio",
+            "nodeId": "2",
+            "classType": "kjranyone.IrodoriTTS.ReferenceAudio",
+            "input": "audio",
+            "valueType": "audioFile",
+            "required": true,
+            "transform": "identity"
+          }
+        ],
+        "uploads": [
+          {
+            "port": "referenceAudio",
+            "method": "serverPath",
+            "subfolder": "GalCraft/voice",
+            "serverRoot": null
+          }
+        ],
+        "outputs": [
+          {
+            "nodeId": "6",
+            "key": "audio",
+            "kind": "audio",
+            "decoder": "comfyFileList",
+            "group": "voice",
+            "role": "primary",
+            "background": "unknown"
+          }
+        ],
+        "requiredNodes": [
+          {
+            "classType": "kjranyone.IrodoriTTS.ModelLoader",
+            "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+          },
+          {
+            "classType": "kjranyone.IrodoriTTS.ReferenceAudio",
+            "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+          },
+          {
+            "classType": "kjranyone.IrodoriTTS.Sampler",
+            "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+          },
+          {
+            "classType": "SaveAudioAdvanced",
+            "versionNote": "ComfyUI 0.35.2"
+          }
+        ],
+        "modelNotes": [
+          {
+            "name": "Irodori v4.1 Small",
+            "source": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small",
+            "license": "MIT model card and stated usage restrictions"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "org.galcraft.voice-comfy/irodoriDirection",
+    "version": 1,
+    "provider": {
+      "id": "org.galcraft.voice-comfy",
+      "version": "0.1.0"
+    },
+    "definition": {
+      "contractVersion": 1,
+      "id": "org.galcraft.voice-comfy/irodoriDirection",
+      "version": 1,
+      "title": "Irodori · 参考加表演",
+      "description": "本地 ComfyUI Irodori v4.1 Small，日语。当前参考模式无逐字稿输入；caption 按模式表达声音或表演。",
+      "providerKey": "org.galcraft.voice-comfy/comfy",
+      "purpose": "org.galcraft.voice-comfy/irodoriDirection",
+      "fields": [
+        {
+          "path": "text",
+          "label": "朗读文本 / Spoken text / 読み上げ文",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "language",
+          "label": "目标语言 / Target language / 言語",
+          "type": "enum",
+          "default": "ja",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": [],
+          "enumValues": [
+            "ja"
+          ]
+        },
+        {
+          "path": "performanceInstruction",
+          "label": "表演指令 / Performance / 演技指示",
+          "type": "string",
+          "default": "",
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "basic",
+          "summary": true,
+          "keywords": []
+        },
+        {
+          "path": "seed",
+          "label": "种子 / Seed / シード",
+          "type": "integer",
+          "default": 42,
+          "required": true,
+          "nullable": false,
+          "description": "",
+          "unit": "none",
+          "group": "advanced",
+          "summary": true,
+          "keywords": [],
+          "min": 0,
+          "max": 2147483647
+        }
+      ],
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "text",
+          "language",
+          "performanceInstruction",
+          "seed"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "language": {
+            "enum": [
+              "ja"
+            ]
+          },
+          "performanceInstruction": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          }
+        }
+      },
+      "inputs": [
+        {
+          "key": "text",
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "text/plain"
+          ]
+        },
+        {
+          "key": "referenceAudio",
+          "type": "audio",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "audio/mpeg",
+            "audio/wav",
+            "audio/ogg",
+            "audio/flac"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "key": "audio",
+          "type": "audio",
+          "required": true,
+          "multiple": false,
+          "mimeTypes": [
+            "audio/mpeg",
+            "audio/wav",
+            "audio/flac",
+            "audio/ogg"
+          ]
+        }
+      ],
+      "capabilities": {
+        "query": true,
+        "refetch": true,
+        "cancelPerTask": true,
+        "resume": true
+      },
+      "adoption": {
+        "kind": "asset",
+        "assetKind": "audio",
+        "usages": [
+          "voice"
+        ]
+      },
+      "workflow": {
+        "id": "00000000-0000-4000-8000-000000003006",
+        "revision": 1,
+        "name": "irodoriDirection",
+        "purpose": "org.galcraft.voice-comfy/irodoriDirection",
+        "imageUsages": null,
+        "graphVersion": "0.1.0",
+        "apiGraph": {
+          "1": {
+            "class_type": "kjranyone.IrodoriTTS.ModelLoader",
+            "inputs": {
+              "model": "Irodori-TTS-v4.1-Small\\model.safetensors",
+              "model_device": "cuda",
+              "model_precision": "bf16",
+              "codec_device": "cpu",
+              "codec_precision": "fp32",
+              "enable_watermark": false,
+              "enable_silentcipher": false,
+              "compile_model": false,
+              "compile_dynamic": false,
+              "runtime_cache_policy": "offload_after_use"
+            }
+          },
+          "2": {
+            "class_type": "kjranyone.IrodoriTTS.ReferenceAudio",
+            "inputs": {
+              "audio": "",
+              "ref_latent": "None",
+              "ref_normalize_db": -16,
+              "max_ref_seconds": 0
+            }
+          },
+          "3": {
+            "class_type": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+            "inputs": {
+              "caption": "",
+              "max_caption_len": 0
+            }
+          },
+          "4": {
+            "class_type": "kjranyone.IrodoriTTS.Sampler",
+            "inputs": {
+              "text": "",
+              "seed": 42,
+              "seconds": 0,
+              "num_steps": 40,
+              "batch_size": 1,
+              "decode_mode": "sequential",
+              "context_kv_cache": true,
+              "max_text_len": 0,
+              "trim_tail": true,
+              "model_config": [
+                "1",
+                0
+              ],
+              "ref_config": [
+                "2",
+                0
+              ],
+              "voice_design_config": [
+                "3",
+                0
+              ]
+            }
+          },
+          "6": {
+            "class_type": "SaveAudioAdvanced",
+            "inputs": {
+              "filename_prefix": "GalCraft/voice/irodoriDirection",
+              "format": "mp3",
+              "format.quality": "V0",
+              "audio": [
+                "4",
+                0
+              ]
+            }
+          }
+        },
+        "editorWorkflowPath": null,
+        "inputs": [
+          {
+            "port": "text",
+            "nodeId": "4",
+            "classType": "kjranyone.IrodoriTTS.Sampler",
+            "input": "text",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "seed",
+            "nodeId": "4",
+            "classType": "kjranyone.IrodoriTTS.Sampler",
+            "input": "seed",
+            "valueType": "number",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "performanceInstruction",
+            "nodeId": "3",
+            "classType": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+            "input": "caption",
+            "valueType": "string",
+            "required": true,
+            "transform": "identity"
+          },
+          {
+            "port": "referenceAudio",
+            "nodeId": "2",
+            "classType": "kjranyone.IrodoriTTS.ReferenceAudio",
+            "input": "audio",
+            "valueType": "audioFile",
+            "required": true,
+            "transform": "identity"
+          }
+        ],
+        "uploads": [
+          {
+            "port": "referenceAudio",
+            "method": "serverPath",
+            "subfolder": "GalCraft/voice",
+            "serverRoot": null
+          }
+        ],
+        "outputs": [
+          {
+            "nodeId": "6",
+            "key": "audio",
+            "kind": "audio",
+            "decoder": "comfyFileList",
+            "group": "voice",
+            "role": "primary",
+            "background": "unknown"
+          }
+        ],
+        "requiredNodes": [
+          {
+            "classType": "kjranyone.IrodoriTTS.ModelLoader",
+            "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+          },
+          {
+            "classType": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+            "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+          },
+          {
+            "classType": "kjranyone.IrodoriTTS.ReferenceAudio",
+            "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+          },
+          {
+            "classType": "kjranyone.IrodoriTTS.Sampler",
+            "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+          },
+          {
+            "classType": "SaveAudioAdvanced",
+            "versionNote": "ComfyUI 0.35.2"
+          }
+        ],
+        "modelNotes": [
+          {
+            "name": "Irodori v4.1 Small",
+            "source": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small",
+            "license": "MIT model card and stated usage restrictions"
+          }
+        ]
+      }
+    }
+  }
+]

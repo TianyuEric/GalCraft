@@ -1,0 +1,9 @@
+{
+  "name": "@galcraft/ai-epilogue", "version": "0.1.0", "private": true, "type": "module",
+  "scripts": { "build": "node build.mjs", "typecheck": "tsc --noEmit", "test": "vitest run src" },
+  "dependencies": { "@galcraft/contracts": "workspace:^", "@galcraft/plugins": "workspace:^", "@galcraft/dsl": "workspace:^" },
+  "devDependencies": { "@galcraft/documents": "workspace:^", "vite": "8.3.0", "typescript": "7.0.2", "@types/node": "24.13.6" },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "plugins/ai-epilogue"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

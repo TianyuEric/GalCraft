@@ -1,0 +1,51 @@
+{
+  "createdAt": "2026-10-28",
+  "tool": "Built-in imagegen",
+  "scope": "D28-08 approved spring cinema home assets",
+  "references": [
+    "cg/spring-deepseek.png",
+    "cg/spring-chatgpt.png",
+    "cg/spring-claude.png"
+  ],
+  "outputs": [
+    {
+      "file": "home/memory-wall.png",
+      "prompt": "Empty midnight-blue coastal cinema memory wall at dusk, warm projector light, dark wood, spring blossom shadows; broad quiet space for separate photos and menu. No people, photos, text or lanterns. Detailed anime visual novel background."
+    },
+    {
+      "file": "home/cinema-friends.png",
+      "prompt": "Exactly Lanxi, Qibai and Feishu from the three reference CGs, preserve identities and costumes; relaxed group portrait before coastal cinema at dusk, spring cherry blossoms and warm screening light. Full-bleed landscape anime photograph, no text, borders, extra people or lanterns."
+    },
+    {
+      "file": "home/screening-preparation.png",
+      "prompt": "Exactly the same three adult women from reference CGs preparing a screening inside the coastal cinema: Lanxi arranges tickets, Feishu holds film reel, Qibai ties blossom decoration. Preserve identity/costumes, polished anime visual novel CG, no extra people or text."
+    },
+    {
+      "file": "home/spring-title.png",
+      "prompt": "Standalone exact Chinese title 今晚，让春天亮起来 on true transparent PNG alpha. Two lines 今晚，让春天 / 亮起来, elegant expressive Chinese brush-and-serif lettering, ivory cream and warm gold, restrained petals; no background, subtitle, English, watermark or lantern."
+    }
+  ],
+  "validation": {
+    "title": "Exact characters visually checked; RGBA alpha range 0..253, including transparent counterforms",
+    "characters": "All three identities and costume relationships visually checked",
+    "originalDimensions": {
+      "wall": [
+        1672,
+        941
+      ],
+      "friends": [
+        1536,
+        1024
+      ],
+      "preparation": [
+        1536,
+        1024
+      ],
+      "title": [
+        1774,
+        887
+      ]
+    }
+  },
+  "adoption": "M04 import and M02 sample authoring transaction; all four entries in manifest.home and practice media closure"
+}

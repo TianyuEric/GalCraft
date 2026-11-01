@@ -1,0 +1,34 @@
+.studio-plugin-slot { margin: 20px; display: grid; gap: 16px; }
+.studio-plugin-contribution { color: var(--foreground); }
+.studio-plugin-dialog { min-width: 0; }
+.studio-plugin-dialog pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.studio-extension-nav { margin-top: 14px; }
+.plugin-author-contributions { display: grid; gap: 16px; min-width: 0; }
+.plugin-author-contributions h2 { font-size: 17px; font-weight: 600; margin: 12px 0 0; }
+.plugin-fields { display: grid; gap: 16px; min-width: 0; }
+.plugin-fields .plugin-fields { padding-left: 16px; border-left: 1px solid var(--border); }
+.plugin-fields fieldset, .studio-plugin-dialog fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.plugin-tool-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.plugin-array { display: grid; gap: 12px; }
+.plugin-array-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.plugin-number { display: flex; align-items: center; gap: 8px; }
+.plugin-tools-list, .plugin-document-list, .plugin-proposal-list { display: grid; }
+.plugin-tools-list > article, .plugin-document-list > article { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.plugin-tools-list strong, .plugin-document-list strong { overflow-wrap: anywhere; }
+.plugin-tools-list p, .plugin-neutral, .plugin-scope-summary { color: var(--muted-foreground); font-size: 13px; }
+.plugin-document-create { display: flex; gap: 12px; align-items: end; }
+.plugin-document-create > .gc-field { flex: 1; min-width: 0; }
+.plugin-tool-result { display: grid; gap: 12px; margin-top: 20px; }
+.plugin-tool-result h3 { font-size: 16px; font-weight: 600; }
+.plugin-proposal-list > article, .plugin-issue { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.plugin-diff { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: start; gap: 12px; margin: 8px 0; }
+.plugin-diff pre { font: 12px/1.6 monospace; padding: 8px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.plugin-discard { padding: 12px; border: 1px solid var(--border); border-radius: 8px; margin-top: 16px; }
+.plugin-resource-processors { margin: 20px; }
+.plugin-resource-candidate { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.plugin-resource-preview { max-width: 100%; max-height: 380px; object-fit: contain; }
+@media (max-width: 980px) { .plugin-tools-list > article, .plugin-document-list > article { flex-wrap: wrap; } .plugin-document-list .gc-actions { width: 100%; } }
+
+.plugin-document-editor { max-width: 920px; margin-inline: auto; padding: 24px; }
+.plugin-document-editor > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.plugin-document-editor > footer { display: flex; justify-content: flex-end; gap: 8px; position: sticky; bottom: 0; background: var(--background); padding-block: 12px; }

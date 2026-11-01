@@ -1,0 +1,19 @@
+import {useEffect,useState} from 'react';
+import type {Asset,CharacterDifference} from '@galcraft/contracts';
+import {Input} from '../../components/ui/input.js';
+import {Check} from 'lucide-react';
+import './CharacterDifferencePicker.css';
+
+export function CharacterDifferencePicker({differences,assets,value,locale,choose,refreshThumbnails}:{differences:readonly CharacterDifference[];assets:readonly Asset[];value:string;locale:string;choose(id:string):void;refreshThumbnails?():void}){
+  const [search,setSearch]=useState('');
+  const t=(zh:string,en:string,ja:string)=>locale==='en'?en:locale==='ja'?ja:zh;
+  const shown=differences.filter(difference=>`${difference.name} ${assets.find(asset=>asset.id===difference.figure.assetId)?.name??''}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+  useEffect(()=>{const frame=requestAnimationFrame(()=>refreshThumbnails?.());return()=>cancelAnimationFrame(frame);},[search,differences,refreshThumbnails]);
+  return <section className="character-difference-picker" lang={locale}><Input autoFocus aria-label={t('搜索共同差分','Search shared differences','共通差分を検索')} value={search} onChange={event=>setSearch(event.target.value)} onKeyDown={event=>{if(!event.nativeEvent.isComposing&&['ArrowDown','Enter'].includes(event.key)){event.preventDefault();event.currentTarget.closest('.character-difference-picker')?.querySelector<HTMLElement>('[role=option]')?.focus();}}}/>
+    {value&&!differences.some(item=>item.id===value)&&<p role="status">{t('原差分不可用，已保留当前引用。可选择其他差分。','The original difference is unavailable. Its reference is retained until you choose another.','元の差分がありません。別の差分を選ぶまで参照を保持します。')}</p>}
+    <div role="listbox" aria-label={t('角色共同差分','Character shared differences','キャラクターの共通差分')} onKeyDown={event=>{const options=[...event.currentTarget.querySelectorAll<HTMLElement>('[role=option]')],index=options.indexOf(document.activeElement as HTMLElement),columns=getComputedStyle(event.currentTarget).gridTemplateColumns.split(' ').length,next=event.key==='Home'?0:event.key==='End'?options.length-1:event.key==='ArrowDown'?Math.min(options.length-1,index+columns):event.key==='ArrowUp'?Math.max(0,index-columns):event.key==='ArrowRight'?Math.min(options.length-1,index+1):event.key==='ArrowLeft'?Math.max(0,index-1):null;if(next!==null){event.preventDefault();options[next]?.focus();}}}>
+      {shown.map(difference=>{const asset=assets.find(asset=>asset.id===difference.figure.assetId),variantId=difference.figure.variantId??asset?.activeVariantId,available=asset?.variants.some(variant=>variant.id===variantId);return <div className="character-difference-option" key={difference.id}><button type="button" role="option" aria-selected={value===difference.id} aria-label={difference.name} onClick={()=>choose(difference.id)}>{available?<img alt="" data-asset-id={difference.figure.assetId} data-variant-id={variantId}/>:<span className="character-difference-unavailable">{t('图片不可用','Image unavailable','画像なし')}</span>}<span><strong>{difference.name}</strong><small>{asset?.name??t('源图未载入','Source image is not loaded','元画像が未読込です')}</small></span>{value===difference.id&&<Check size={15}/>}</button><details><summary>{t('引用详情','Reference details','参照の詳細')}</summary><div>{t('差分标识','Difference ID','差分ID')}: <code>{difference.id}</code></div><div>{t('素材标识','Asset ID','素材ID')}: <code>{difference.figure.assetId}</code></div><div>{t('固定版本','Pinned version','固定バージョン')}: <code>{variantId??'—'}</code></div></details></div>;})}
+    </div>{!shown.length&&<p role="status">{differences.length?t('没有匹配差分','No matching differences','一致する差分がありません'):t('尚未配置共同差分','No shared differences yet','共通差分は未設定です')}{search&&<button type="button" onClick={()=>setSearch('')}>{t('清除搜索','Clear search','検索を解除')}</button>}</p>}
+    <button type="button" className="character-difference-clear" onClick={()=>choose('')}>{t('不指定共同差分','Do not specify a shared difference','共通差分を指定しない')}</button>
+  </section>;
+}

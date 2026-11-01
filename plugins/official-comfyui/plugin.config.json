@@ -1,0 +1,51 @@
+{
+  "manifest": {
+    "schemaVersion": 2,
+    "id": "org.galcraft.comfyui",
+    "name": "ComfyUI 执行能力",
+    "version": "0.1.0",
+    "description": "连接运行中的 ComfyUI，执行配置好的 API 工作流并取回候选结果；所需节点和模型由用户准备。",
+    "localizations": {
+      "en": {
+        "name": "ComfyUI Execution",
+        "description": "Connect a running ComfyUI service, execute configured API workflows and retrieve candidate results. Prepare the required nodes and models separately."
+      },
+      "ja": {
+        "name": "ComfyUI 実行機能",
+        "description": "稼働中の ComfyUI に接続し、設定済みの API ワークフローを実行して候補を取得します。必要なノードとモデルは別途用意してください。"
+      }
+    },
+    "author": "GalCraft",
+    "license": "MPL-2.0",
+    "homepage": null,
+    "engineRange": "^0.1.0",
+    "sdkMajor": 0,
+    "targets": [
+      "web",
+      "windows"
+    ],
+    "dependencies": [],
+    "contributions": [
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.comfyui/comfyUI",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      }
+    ],
+    "stateVersions": {
+      "document": 0,
+      "progress": 0,
+      "longTerm": 0
+    },
+    "native": []
+  },
+  "sources": {
+    "definition": "src/definition.ts",
+    "services": "src/services.ts"
+  },
+  "nativeSources": []
+}

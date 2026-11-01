@@ -1,0 +1,10 @@
+{
+  "toolId": "galcraft.birefnet",
+  "release": "v1",
+  "modelFile": "BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx",
+  "modelUrl": "https://github.com/ZhengPeng7/BiRefNet/releases/download/v1/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx",
+  "modelDirectory": "birefnet-v1-tiny",
+  "runtime": { "onnxruntime-node": "1.25.1", "sharp": "0.35.4", "executionProvider": "cpu" },
+  "input": { "shape": [1, 3, 1024, 1024], "layout": "NCHW", "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225] },
+  "output": { "shape": [1, 1, 1024, 1024], "activation": "sigmoid" }
+}

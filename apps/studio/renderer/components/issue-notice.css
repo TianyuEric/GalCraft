@@ -1,0 +1,11 @@
+.gc-issue-notice { min-width:0; overflow-wrap:anywhere; font-size:14px; line-height:22px; }
+.gc-issue-notice p { margin:0; }
+.gc-issue-heading { display:flex; align-items:flex-start; gap:8px; }
+.gc-issue-heading > p { flex:1; min-width:0; }
+.gc-issue-notice[data-severity=error] .gc-issue-heading > p { color:var(--danger-foreground); }
+.gc-issue-notice[data-severity=warning] .gc-issue-heading > p { color:var(--warning-foreground); }
+.gc-issue-reason { color:var(--foreground); }
+.gc-issue-notice .gc-issue-dismiss { flex:none; width:28px; height:28px; padding:0; }
+.gc-issue-notice summary { cursor:pointer; color:var(--muted-foreground); font-size:13px; }
+.gc-issue-notice summary:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.gc-issue-notice pre { max-height:320px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0; padding:12px; background:var(--workbench-explorer); color:var(--foreground); font-size:12px; line-height:20px; }

@@ -1,0 +1,55 @@
+.plugin-desktop-workbench.plugins-page { padding:0; display:grid; grid-template-columns:224px minmax(0,1fr) 280px; height:100%; min-height:0; min-width:0; overflow:hidden; background:var(--card); }
+.plugin-desktop-workbench.has-external-explorer { grid-template-columns:minmax(0,1fr) 280px; }
+.plugin-desktop-workbench.has-external-inspector { grid-template-columns:224px minmax(0,1fr); }
+.plugin-desktop-workbench.has-external-explorer.has-external-inspector { grid-template-columns:minmax(0,1fr); }
+.plugin-local-explorer,.plugin-local-inspector { min-width:0; min-height:0; overflow:auto; background:var(--background); }
+.plugin-local-explorer { border-right:1px solid var(--border); }
+.plugin-local-inspector { border-left:1px solid var(--border); }
+.plugin-pane-heading { padding:9px 12px; min-height:38px; font-size:13px; font-weight:600; border-bottom:1px solid var(--border); }
+.plugin-explorer-content,.plugin-inspector-content { min-width:0; }
+.plugin-explorer-actions { padding:10px; display:flex; flex-wrap:wrap; gap:8px; border-bottom:1px solid var(--border); }
+.plugin-explorer-actions .gc-button { min-height:30px; height:auto; font-size:12px; white-space:normal; }
+.plugin-explorer-empty { padding:12px; color:var(--muted-foreground); font-size:13px; }
+.plugin-explorer-content .gc-wb-tree-name { min-width:0; }
+.plugin-explorer-content .gc-wb-tree-row > small { flex:none; font-size:11px; color:var(--muted-foreground); }
+.plugin-inspector-content p { margin:0 0 12px; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+.plugin-inspector-content details { margin-top:14px; font-size:12px; overflow-wrap:anywhere; }
+.plugin-inspector-content .gc-button { min-height:30px; height:auto; white-space:normal; font-size:13px; }
+.plugin-inspector-facts { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 12px; font-size:13px; margin:0 0 16px; }
+.plugin-inspector-facts dt { color:var(--muted-foreground); }
+.plugin-inspector-facts dd { margin:0; overflow-wrap:anywhere; }
+.plugin-workbench-document { min-width:0; min-height:0; display:flex; flex-direction:column; }
+.plugin-workbench-toolbar { flex:none; min-height:42px; padding:6px 12px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; border-bottom:1px solid var(--border); }
+.plugin-workbench-toolbar h1 { font-size:15px; font-weight:600; margin:0; overflow-wrap:anywhere; }
+.plugin-workbench-toolbar .gc-button { font-size:12px; height:28px; }
+.plugin-workbench-toolbar .plugin-local-toggle { display:none; }
+.plugin-document-scroll { min-height:0; flex:1; overflow:auto; padding:16px; }
+.plugin-editor { padding:0; min-width:0; background:var(--card); }
+.plugin-editor p { font-size:14px; overflow-wrap:anywhere; }
+.plugin-editor-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding-bottom:12px; border-bottom:1px solid var(--border); margin-bottom:16px; }
+.plugin-editor-heading h2 { font-size:16px; margin:0; }
+.plugin-editor footer { position:sticky; bottom:-16px; padding:12px 0; margin-top:12px; background:var(--card); }
+.plugin-dialog-actions { display:flex; flex-direction:column; align-items:stretch; gap:12px; }
+.plugin-dialog-actions .workbench-error { margin:0; max-height:112px; overflow:auto; overflow-wrap:anywhere; color:var(--danger-foreground); }
+.plugin-dialog-actions > .gc-actions { justify-content:flex-end; }
+@media (max-width:1100px) {
+  .plugin-desktop-workbench:not(.has-external-explorer):not(.has-external-inspector) { grid-template-columns:210px minmax(0,1fr); }
+  .plugin-desktop-workbench:not(.has-external-explorer):not(.has-external-inspector)[data-side="inspector"] { grid-template-columns:minmax(0,1fr) 280px; }
+  .plugin-desktop-workbench:not(.has-external-explorer):not(.has-external-inspector)[data-side="explorer"] > .plugin-local-inspector,.plugin-desktop-workbench:not(.has-external-explorer):not(.has-external-inspector)[data-side="inspector"] > .plugin-local-explorer { display:none; }
+  .plugin-workbench-toolbar .plugin-local-toggle { display:inline-flex; }
+}
+
+.plugin-desktop-workbench .plugin-impact { padding:12px 0; border:0; border-bottom:1px solid var(--border); border-radius:0; background:transparent; }
+.plugin-desktop-workbench .plugin-impact + .plugin-impact { margin-top:0; }
+.plugin-desktop-workbench .plugin-impact > header { gap:8px; }
+.plugin-desktop-workbench .plugin-impact h3 { font-size:14px; }
+.plugin-desktop-workbench .plugin-version-change { gap:12px; padding:12px 0; }
+.plugin-desktop-workbench .impact-facts { gap:8px 12px; font-size:13px; margin:12px 0 0; }
+.plugin-editor > h3 { margin:24px 0 8px; font-size:16px; font-weight:600; }
+.plugin-editor .plugin-document-list { max-height:320px; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.plugin-editor .plugin-document-list details { margin-top:8px; font-size:12px; }
+.plugin-editor .plugin-document-list article > div { min-width:0; }
+.plugin-impact-list { max-height:400px; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.plugin-impact-list:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.plugin-tree-state { display:flex; align-items:center; gap:4px; font-variant-numeric:tabular-nums; }
+.plugin-tree-state .gc-badge { font-size:11px; white-space:nowrap; }

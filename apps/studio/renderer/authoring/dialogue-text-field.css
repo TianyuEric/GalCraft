@@ -1,0 +1,15 @@
+.dialogue-text-editor { display:grid;gap:10px;min-width:0; }
+.dialogue-text-editor > textarea { width:100%;min-height:132px;resize:vertical;line-height:1.6; }
+.dialogue-text-editor > .field-help { margin:0;color:var(--muted-foreground);font-size:12px;line-height:1.6; }
+.dialogue-text-controls { display:flex;flex-wrap:wrap;gap:10px 12px;align-items:end; }
+.dialogue-text-controls > label { display:grid;gap:5px;min-width:0;font-size:12px;color:var(--muted-foreground); }
+.dialogue-text-controls input { min-height:32px;max-width:100%; }
+.dialogue-text-controls input[type=text] { width:150px; }
+.dialogue-text-controls input[type=number] { width:110px; }
+.dialogue-text-controls input[type=color] { width:62px;padding:3px!important; }
+.dialogue-text-controls > label:has(input[type=checkbox]) { display:flex;align-items:center;gap:6px;min-height:32px; }
+.dialogue-text-controls input[type=checkbox] { min-height:0;accent-color:var(--primary); }
+.dialogue-text-controls button { min-height:32px; }
+.dialogue-text-editor .dialogue-text-preview { margin:0;padding:14px;background:#182338;color:#fff;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--border);border-radius:6px; }
+.dialogue-text-editor [role=alert]:empty { display:none; }
+.dialogue-text-editor [role=alert] { margin:0;color:var(--danger,#ba4d59);font-size:12px; }

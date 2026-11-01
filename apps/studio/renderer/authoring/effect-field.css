@@ -1,0 +1,6 @@
+.effects-fields .authoring-field:has(> .effect-number-field) > span:first-child { display:none; }
+.effect-number-field, .effect-color-field { min-width:0; display:grid; gap:4px; width:100%; }
+.effect-number-field > input[type="range"] { width:100%; min-width:0; accent-color:var(--primary); }
+.effect-number-field .field-help { white-space:normal; overflow-wrap:anywhere; font-size:12px; line-height:18px; color:var(--foreground-secondary); }
+.effect-color-actions { display:flex; align-items:center; gap:8px; min-width:0; }
+.effect-color-actions > :first-child { flex:1; min-width:0; }

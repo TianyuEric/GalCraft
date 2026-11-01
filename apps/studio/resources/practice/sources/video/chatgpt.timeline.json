@@ -1,0 +1,28 @@
+{
+  "key": "chatgpt",
+  "title": "春天的下一幕",
+  "subtitle": "绮白 · 下一站，也一起走吧",
+  "music": "../../../../assets/generated/practice/music/originals/spring-03.wav",
+  "shots": [
+    "backgrounds/spring-town.png",
+    "cg/spring-chatgpt.png",
+    "backgrounds/spring-sky.png",
+    "cg/spring-chatgpt.png"
+  ],
+  "shotSeconds": 5,
+  "fadeSeconds": 0.5,
+  "duration": 18.5,
+  "fps": 30,
+  "size": [
+    1920,
+    1080
+  ],
+  "motion": "缓慢推拉和横移，0.5秒画面交叠",
+  "subtitles": "chatgpt.ass",
+  "audio": {
+    "startSec": 8,
+    "volume": 0.85,
+    "fadeInSec": 0.5,
+    "fadeOutSec": 1
+  }
+}

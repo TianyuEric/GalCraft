@@ -1,0 +1,11 @@
+.verification-assets { margin-top:12px; min-width:0; font-size:13px; }
+.verification-assets summary { min-height:32px; padding:4px 0; cursor:pointer; }
+.verification-assets > .gc-field { margin:8px 0; }
+.verification-filter { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:8px 0; font-variant-numeric:tabular-nums; }
+.verification-asset-region { max-height:240px; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; border-block:1px solid var(--border); }
+.verification-asset-region:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.verification-asset-region ul { padding:0; margin:0; list-style:none; }
+.verification-asset-region li { padding:8px 4px; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
+.verification-asset-region strong { display:block; font-size:14px; line-height:22px; font-weight:500; }
+.verification-asset-region li > span { color:var(--foreground-secondary); font-size:12px; }
+.verification-asset-region p,.verification-assets-empty { font-size:14px; line-height:22px; }

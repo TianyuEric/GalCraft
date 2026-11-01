@@ -1,0 +1,33 @@
+.authoring-field-group.animation-target-fields { min-width:0; max-width:100%; }
+.animation-target-fields > .authoring-field { min-width:0; max-width:100%; }
+.animation-target-reference { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; width:100%; max-width:100%; gap:8px; }
+.animation-target-reference > .animation-target-trigger { display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:3px; width:100%; min-width:0; height:auto; padding:8px 10px; white-space:normal; text-align:left; }
+.animation-target-trigger strong { font:500 14px/22px var(--font-sans); }
+.animation-target-trigger small { font:400 12px/18px var(--font-sans); color:var(--foreground-secondary); overflow-wrap:anywhere; }
+.animation-target-reference > details { min-width:0; font:400 12px/18px var(--font-sans); color:var(--foreground-secondary); }
+.animation-target-reference details p { margin:6px 0; overflow-wrap:anywhere; }
+.animation-target-reference input { min-width:0; max-width:100%; }
+.studio-content-popover:has(.animation-target-picker) { width:min(480px,calc(100vw - 32px)); max-width:calc(100vw - 32px); overflow:hidden; }
+.animation-target-picker { display:flex; flex-direction:column; gap:12px; min-width:0; max-height:min(476px,calc(80dvh - 24px)); color:var(--foreground); font:400 13px/20px var(--font-sans); }
+.animation-target-heading,.animation-target-picker > input,.animation-target-help { flex-shrink:0; }
+.animation-target-picker p { margin:0; }
+.animation-target-heading strong { font-size:14px; line-height:22px; font-weight:600; }
+.animation-target-heading p,.animation-target-help { font-size:12px; line-height:18px; color:var(--foreground-secondary); }
+.animation-target-results { flex:1 1 auto; min-height:0; max-height:min(340px,42vh); overflow-y:auto; overflow-x:hidden; }
+.animation-target-option { min-width:0; padding:4px 0 8px; border-bottom:1px solid var(--border); }
+.animation-target-option:last-child { border-bottom:0; padding-bottom:0; }
+.animation-target-choice { display:flex; flex-direction:column; align-items:stretch; gap:5px; width:100%; min-width:0; padding:8px; border:0; border-radius:6px; background:transparent; color:var(--foreground); text-align:left; cursor:pointer; font:inherit; }
+.animation-target-choice:hover { background:var(--surface-hover); }
+.animation-target-choice[aria-selected=true] { background:var(--selection); }
+.animation-target-choice:focus-visible { outline:2px solid var(--primary); outline-offset:-2px; }
+.animation-target-title { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 12px; }
+.animation-target-title > strong { font-size:14px; line-height:22px; font-weight:600; overflow-wrap:anywhere; }
+.animation-target-selected { display:inline-flex; align-items:center; gap:4px; color:var(--primary); font-size:12px; line-height:18px; white-space:nowrap; }
+.animation-target-appearance { color:var(--foreground-secondary); font-size:12px; line-height:18px; overflow-wrap:anywhere; }
+.animation-target-state { color:var(--foreground-secondary); font-size:12px; line-height:18px; }
+.animation-target-state[data-state=absent] { color:var(--danger-foreground); }
+.animation-target-sources { padding:4px 8px 0; color:var(--foreground-secondary); font-size:12px; line-height:18px; }
+.animation-target-sources > summary { cursor:pointer; min-height:24px; }
+.animation-target-sources > button { display:flex; align-items:flex-start; gap:6px; width:100%; height:auto; padding:6px 0; white-space:normal; text-align:left; }
+.animation-target-sources > button > svg { flex:none; margin-top:3px; }
+.animation-target-sources > button > span { min-width:0; overflow-wrap:anywhere; }

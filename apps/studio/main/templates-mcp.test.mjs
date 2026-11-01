@@ -1,0 +1,28 @@
+import {afterEach,expect,it} from 'vitest';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client';
+import {ProjectSession} from '@galcraft/documents';
+import {currentProjectScope} from '@galcraft/collaboration';
+import {createOfficialTemplate,createTemplateDocuments,readTemplateDocuments} from '@galcraft/templates';
+import {StudioCollaboration} from './collaboration-providers.mjs';
+import {StudioTemplates} from './templates-providers.mjs';
+let root,session,service,client;afterEach(async()=>{await client?.close();await service?.close();await session?.dispose('discard');if(root)await rm(root,{recursive:true,force:true});root=session=service=client=null;});
+it('discovers bindings and template contracts and switches through the actual SDK without a full template discovery payload',async()=>{
+  root=await mkdtemp(join(tmpdir(),'galcraft-template-mcp-'));const workRoot=join(root,'work'),profile=join(root,'profile'),source=createOfficialTemplate();
+  session=await ProjectSession.createProject(workRoot,'Work01',createTemplateDocuments(source));const projects={currentSession:session,currentRoot:workRoot,currentSessionId:'Write1'},provider=new StudioTemplates({userData:profile,projects});
+  const plugins={externalTools:async()=>[],dependencies:()=>[],acquireDefinitions:async()=>({ok:true,value:{documents:[],components:[],pages:[],release:async()=>{}}})};
+  service=new StudioCollaboration({userData:profile,projects,assets:{},production:{generationProviders:{operations:async()=>[]}},plugins,host:{templateLibrary:provider}});await service.ready;
+  const collaboration=await service.core.create({projectId:'Work01',projectRoot:workRoot,writeSessionId:'Write1',projectName:'Template fixture',goal:'Switch Player UI',harness:'codex',scope:currentProjectScope()});
+  client=new Client({name:'template-acceptance',version:'0.1.0'},{versionNegotiation:{mode:'auto'}});await client.connect(new StreamableHTTPClientTransport(new URL((await service.mcp.start()).endpoint)));
+  const invoke=async(input,callId)=>{const response=await client.callTool({name:'galcraft_pages',arguments:{projectId:'Work01',sessionId:collaboration.id,...(callId?{callId}:{}),input,view:'full'}});expect(response.isError,JSON.stringify(response)).not.toBe(true);expect(response.structuredContent.state,JSON.stringify(response.structuredContent)).toBe('completed');return response.structuredContent.result;};
+  const definitions=await client.listTools(),discovery=definitions.tools.find(tool=>tool.name==='galcraft_pages');expect(JSON.stringify(discovery.inputSchema)).not.toContain('compiledSourceRevision');
+  const bindings=await invoke({action:'bindings'});expect(bindings.fields.find(field=>field.value==='preferences.volumes.master')).toMatchObject({type:'number',access:'readWrite',scope:'playerPreferences'});
+  const catalog=await invoke({action:'catalog',part:'templateSwitch'});expect(catalog.requestSchema).toBeTruthy();
+  const listed=await invoke({action:'templateLibrary',request:{action:'list'}});expect(listed.result.items).toHaveLength(3);
+  const incoming=createOfficialTemplate({kind:'light'}),prepared=await invoke({action:'templatePlan',request:{id:incoming.id,version:incoming.version}},'TemplatePlan');expect(prepared.blocked).toBe(false);expect(prepared.plan).toBeTruthy();expect(prepared.full).toBeUndefined();
+  await invoke({action:'apply',planId:prepared.plan.planId,expected:prepared.plan.input.expected},'TemplateApply');expect(readTemplateDocuments([...session.documents.values()]).id).toBe(incoming.id);
+  const read=await invoke({action:'read'});expect(read.directory.hiddenPages.some(page=>page.key==='music')).toBe(true);
+  const restored=await invoke({action:'restoreTemplatePage',pageKey:'music'},'RestorePlan');await invoke({action:'apply',planId:restored.plan.planId,expected:restored.plan.input.expected},'RestoreApply');expect(readTemplateDocuments([...session.documents.values()]).pages.some(page=>page.key==='music')).toBe(true);
+},20000);

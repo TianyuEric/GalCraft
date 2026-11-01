@@ -1,0 +1,2 @@
+.gc-pagination{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding-block:8px;color:var(--foreground-secondary);font-size:12px;line-height:20px;font-variant-numeric:tabular-nums}
+.gc-pagination-actions{display:flex;align-items:center;gap:4px}.gc-pagination-actions .gc-button{width:28px;min-width:28px;height:28px;padding:0}.gc-pagination-actions>span{min-width:40px;text-align:center}

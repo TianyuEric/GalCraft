@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "model": "Aratako/Irodori-TTS-v4.1-Small",
+  "actualModelFile": "Irodori-TTS-v4.1-Small/model.safetensors",
+  "checkedAt": "2026-10-29",
+  "source": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small/raw/main/README.md",
+  "modelPage": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small",
+  "licenseDeclared": "MIT",
+  "licenseDeclarationLocation": "Model card frontmatter and License section",
+  "licenseTermsLink": "https://choosealicense.com/licenses/mit/",
+  "separateModelLicenseFile": {
+    "status": "not-obtained",
+    "attemptedSource": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small/raw/main/LICENSE"
+  },
+  "modelCardAdditionalTermsSummary": [
+    "The publisher requires explicit consent for cloning or impersonating an individual voice.",
+    "The publisher prohibits misleading synthetic speech and misinformation.",
+    "The publisher distinguishes coincidental similarity in non-reference generation from intentional reproduction and assigns responsibility for use to the user."
+  ],
+  "notes": "Model, node/code package and finished recording terms are distinct. The model card declaration records the generator used for these adopted recordings. The sample includes finished recordings and dialogue correspondence."
+}

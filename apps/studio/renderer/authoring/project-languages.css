@@ -1,0 +1,10 @@
+.project-language-editor { display: grid; gap: 16px; max-width: 680px; padding: 16px; color: var(--foreground); }
+.project-language-editor h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
+.project-language-editor p { margin: 0; color: var(--foreground-secondary); font-size: 14px; line-height: 22px; text-wrap: pretty; }
+.project-language-editor fieldset { display: grid; gap: 12px; border: 0; border-block-start: 1px solid var(--border); padding: 16px 0 0; min-width: 0; }
+.project-language-editor legend { padding-inline-end: 8px; font-size: 13px; font-weight: 600; }
+.project-language-choices { display: flex; gap: 8px 16px; flex-wrap: wrap; }
+.project-language-choices label { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; font-size: 14px; }
+.project-language-add { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
+.project-language-add .gc-field { flex: 1 1 240px; }
+.project-language-editor .gc-actions { display: flex; flex-wrap: wrap; gap: 8px; }

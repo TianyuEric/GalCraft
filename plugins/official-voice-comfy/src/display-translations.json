@@ -1,0 +1,86 @@
+{
+  "Spoken text": [
+    "朗读文字",
+    "読み上げるテキスト"
+  ],
+  "Target language": [
+    "目标语言",
+    "対象言語"
+  ],
+  "Voice description": [
+    "声音描述",
+    "声の説明"
+  ],
+  "Performance": [
+    "表演要求",
+    "演技の指示"
+  ],
+  "Exact reference transcript": [
+    "参考音频的准确逐字稿",
+    "参照音声の正確な書き起こし"
+  ],
+  "Seed": [
+    "随机种子",
+    "シード"
+  ],
+  "zh": [
+    "中文",
+    "中国語"
+  ],
+  "en": [
+    "英文",
+    "英語"
+  ],
+  "ja": [
+    "日文",
+    "日本語"
+  ],
+  "ComfyUI Breeze TTS 2 supports Chinese and English. Design uses voiceDescription. Clone and Direction require referenceAudio plus its exact referenceText; Direction also uses performanceInstruction. These fields enter separate workflow nodes. Check applicable model and output licenses.": [
+    "ComfyUI Breeze TTS 2 支持中文和英文。声音设计使用声音描述；克隆和表演指导需要参考音频及其准确逐字稿，表演指导还使用表演要求。这些字段进入独立工作流节点。请核对模型及输出许可。",
+    "ComfyUI Breeze TTS 2 は中国語と英語に対応します。声のデザインには声の説明を使います。複製と演技指示には参照音声と正確な書き起こしが必要で、演技指示には演技の指定も使います。各項目は別のワークフローノードに渡します。モデルと出力のライセンスを確認してください。"
+  ],
+  "ComfyUI Irodori v4.1 Small supports Japanese. Design uses voiceDescription; Clone uses referenceAudio; Direction adds performanceInstruction. The current reference workflow has no transcript input. caption carries voice description or performance according to the chosen mode.": [
+    "ComfyUI Irodori v4.1 Small 支持日文。设计使用声音描述，克隆使用参考音频，指导另加表演要求。当前参考工作流没有逐字稿输入；caption 按所选模式传递声音描述或表演要求。",
+    "ComfyUI Irodori v4.1 Small は日本語に対応します。デザインには声の説明、複製には参照音声、指示には演技の指定を追加します。現在の参照ワークフローに書き起こし入力はありません。caption には選択モードに応じて声の説明または演技指示を渡します。"
+  ],
+  "Breeze · Voice design": [
+    "Breeze · 声音设计",
+    "Breeze · 声のデザイン"
+  ],
+  "Prepare Chinese or English speech. Fill the spoken text and review the frozen execution plan.": [
+    "准备中文或英文语音。填写朗读文字并检查冻结执行计划。",
+    "中国語または英語の音声を準備します。読み上げテキストを記入し、固定した実行計画を確認します。"
+  ],
+  "Breeze · Reference clone": [
+    "Breeze · 参考克隆",
+    "Breeze · 参照音声から複製"
+  ],
+  "Prepare Chinese or English speech. Choose reference audio and its exact transcript. Fill the spoken text and review the frozen execution plan.": [
+    "准备中文或英文语音。选择参考音频及准确逐字稿。填写朗读文字并检查冻结执行计划。",
+    "中国語または英語の音声を準備します。参照音声と正確な書き起こしを選択します。読み上げテキストを記入し、固定した実行計画を確認します。"
+  ],
+  "Breeze · Performance direction": [
+    "Breeze · 表演指导",
+    "Breeze · 演技の指示"
+  ],
+  "Irodori · Voice design": [
+    "Irodori · 声音设计",
+    "Irodori · 声のデザイン"
+  ],
+  "Prepare Japanese speech. Fill the spoken text and review the frozen execution plan.": [
+    "准备日文语音。填写朗读文字并检查冻结执行计划。",
+    "日本語の音声を準備します。読み上げテキストを記入し、固定した実行計画を確認します。"
+  ],
+  "Irodori · Reference clone": [
+    "Irodori · 参考克隆",
+    "Irodori · 参照音声から複製"
+  ],
+  "Prepare Japanese speech. Choose reference audio. Fill the spoken text and review the frozen execution plan.": [
+    "准备日文语音。选择参考音频。填写朗读文字并检查冻结执行计划。",
+    "日本語の音声を準備します。参照音声を選択します。読み上げテキストを記入し、固定した実行計画を確認します。"
+  ],
+  "Irodori · Reference and direction": [
+    "Irodori · 参考与指导",
+    "Irodori · 参照音声と演技指示"
+  ]
+}

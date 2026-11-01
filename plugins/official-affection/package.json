@@ -1,0 +1,11 @@
+{
+  "name": "@galcraft/official-affection", "version": "0.1.0", "private": true, "type": "module",
+  "main": "./dist/index.js", "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -p tsconfig.build.json && node build.mjs", "typecheck": "tsc --noEmit", "test": "vitest run src" },
+  "devDependencies": { "vite": "8.3.0", "@types/node": "24.13.6" },
+  "dependencies": { "@galcraft/contracts": "workspace:*", "@galcraft/plugins": "workspace:*", "zod": "4.6.5" },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "plugins/official-affection"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

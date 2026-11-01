@@ -1,0 +1,8 @@
+{
+  "originalSource": "rav1e-Cargo.lock",
+  "reconstructedResolvedLock": "rav1e-Cargo.resolved.lock",
+  "evidence": "https://github.com/BtbN/FFmpeg-Builds/actions/runs/40871264069/job/123535205173",
+  "recordedChange": "cc 1.2.26 -> 1.10.0; added find-msvc-tools 0.1.15 and shlex 2.0.1; shlex 1.3.0 remains for bindgen.",
+  "checksumSource": "crates.io version metadata; retained upstream checksums",
+  "scope": "Reconstruction from the pinned source lock and the original build log. This file does not claim byte identity with the deleted build-directory Cargo.lock."
+}

@@ -1,0 +1,13 @@
+.shared-difference-crop { display: grid; gap: 10px; }
+.shared-difference-crop > p { margin: 0; color: var(--muted-foreground); font-size: 12px; }
+.shared-difference-crop-source { position: relative; width: 100%; max-width: 560px; border: 1px solid var(--border); background: var(--workbench-inspector); touch-action: none; user-select: none; }
+.shared-difference-crop-source > canvas { display: block; width: 100%; height: 100%; }
+.shared-difference-crop-selection { position: absolute; border: 2px solid var(--primary); box-sizing: border-box; }
+.shared-difference-crop-move { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: move; }
+.shared-difference-crop-corner { position: absolute; width: 14px; height: 14px; min-width: 14px; padding: 0; border: 2px solid var(--primary); border-radius: 2px; background: var(--card); }
+.shared-difference-crop-nw { top: -8px; left: -8px; cursor: nwse-resize; }
+.shared-difference-crop-ne { top: -8px; right: -8px; cursor: nesw-resize; }
+.shared-difference-crop-sw { bottom: -8px; left: -8px; cursor: nesw-resize; }
+.shared-difference-crop-se { bottom: -8px; right: -8px; cursor: nwse-resize; }
+.shared-difference-crop-source button:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.shared-difference-crop-source button:disabled { cursor: default; }

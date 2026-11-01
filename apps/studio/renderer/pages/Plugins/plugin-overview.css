@@ -1,0 +1,7 @@
+.plugin-overview { margin-bottom:16px; min-width:0; }
+.plugin-overview-identity { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap; font-variant-numeric:tabular-nums; }
+.plugin-overview h2 { margin:0; font-size:18px; line-height:26px; font-weight:600; overflow-wrap:anywhere; }
+.plugin-overview p { font-size:14px; line-height:22px; overflow-wrap:anywhere; margin:12px 0; max-width:72ch; }
+.plugin-overview dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 12px; font-size:13px; line-height:20px; margin:16px 0; }
+.plugin-overview dt,.plugin-overview-next { color:var(--foreground-secondary); }
+.plugin-overview dd { margin:0; overflow-wrap:anywhere; }

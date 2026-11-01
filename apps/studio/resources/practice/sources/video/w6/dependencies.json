@@ -1,0 +1,177 @@
+{
+  "media": {
+    "shop": "backgrounds/spring-shop.png",
+    "station": "backgrounds/spring-station.png",
+    "deepseekCg": "cg/spring-deepseek.png",
+    "chatgptCg": "cg/spring-chatgpt.png",
+    "claudeCg": "cg/spring-claude.png",
+    "deepseekFigure": "figures/deepseek-smile.png",
+    "chatgptFigure": "figures/chatgpt-smile.png",
+    "claudeFigure": "figures/claude-smile.png",
+    "deepseekAction": "sources/video/w6/images/deepseek-action.png",
+    "chatgptAction": "sources/video/w6/images/chatgpt-action.png",
+    "claudeAction": "sources/video/w6/images/claude-action.png",
+    "font": "sources/video/w6/fonts/NotoSansCJKsc-Regular.otf"
+  },
+  "clips": [
+    {
+      "key": "opening",
+      "music": "music/spring-01.opus",
+      "startBar": 0,
+      "bars": 12,
+      "bpm": 86,
+      "duration": 33.5,
+      "mix": "audio/opening-mix.wav",
+      "audioBinding": {
+        "alias": "audio",
+        "assetId": "eln9XI",
+        "variantId": "I7Pisl",
+        "port": "audio",
+        "purpose": "audio"
+      }
+    },
+    {
+      "key": "deepseek",
+      "music": "music/spring-05.opus",
+      "startBar": 20,
+      "bars": 8,
+      "bpm": 86,
+      "duration": 22.333333333333332,
+      "mix": "audio/deepseek-mix.wav",
+      "audioBinding": {
+        "alias": "audio",
+        "assetId": "hxlWci",
+        "variantId": "8Z1eKF",
+        "port": "audio",
+        "purpose": "audio"
+      }
+    },
+    {
+      "key": "chatgpt",
+      "music": "music/spring-03.opus",
+      "startBar": 20,
+      "bars": 8,
+      "bpm": 84,
+      "duration": 22.866666666666667,
+      "mix": "audio/chatgpt-mix.wav",
+      "audioBinding": {
+        "alias": "audio",
+        "assetId": "EWZJbW",
+        "variantId": "vSlKlZ",
+        "port": "audio",
+        "purpose": "audio"
+      }
+    },
+    {
+      "key": "claude",
+      "music": "music/spring-05.opus",
+      "startBar": 12,
+      "bars": 8,
+      "bpm": 86,
+      "duration": 22.333333333333332,
+      "mix": "audio/claude-mix.wav",
+      "audioBinding": {
+        "alias": "audio",
+        "assetId": "zu06NG",
+        "variantId": "IWAm9G",
+        "port": "audio",
+        "purpose": "audio"
+      }
+    }
+  ],
+  "plugin": {
+    "id": "org.galcraft.motion-canvas",
+    "version": "0.1.0"
+  },
+  "toolchain": {
+    "motionCanvas": "3.17.2",
+    "vite": "5.4.21",
+    "renderer": "0.1.0"
+  },
+  "bindings": {
+    "shop": {
+      "alias": "shop",
+      "assetId": "hadS3x",
+      "variantId": "4gAvDH",
+      "port": "images",
+      "purpose": "image"
+    },
+    "station": {
+      "alias": "station",
+      "assetId": "wrgi6G",
+      "variantId": "Tqjk4T",
+      "port": "images",
+      "purpose": "image"
+    },
+    "deepseekCg": {
+      "alias": "deepseekCg",
+      "assetId": "jI2rTO",
+      "variantId": "60KXQs",
+      "port": "images",
+      "purpose": "image"
+    },
+    "chatgptCg": {
+      "alias": "chatgptCg",
+      "assetId": "miD3h8",
+      "variantId": "Kz4suV",
+      "port": "images",
+      "purpose": "image"
+    },
+    "claudeCg": {
+      "alias": "claudeCg",
+      "assetId": "KoZDrk",
+      "variantId": "zM9Qwq",
+      "port": "images",
+      "purpose": "image"
+    },
+    "deepseekFigure": {
+      "alias": "deepseekFigure",
+      "assetId": "RIcvxk",
+      "variantId": "FU80Tu",
+      "port": "images",
+      "purpose": "image"
+    },
+    "chatgptFigure": {
+      "alias": "chatgptFigure",
+      "assetId": "XdrE9u",
+      "variantId": "VnySJf",
+      "port": "images",
+      "purpose": "image"
+    },
+    "claudeFigure": {
+      "alias": "claudeFigure",
+      "assetId": "3tObRu",
+      "variantId": "qwfdOY",
+      "port": "images",
+      "purpose": "image"
+    },
+    "deepseekAction": {
+      "alias": "deepseekAction",
+      "assetId": "EQ2Pbx",
+      "variantId": "KBe4cc",
+      "port": "images",
+      "purpose": "image"
+    },
+    "chatgptAction": {
+      "alias": "chatgptAction",
+      "assetId": "dcLi32",
+      "variantId": "KAt743",
+      "port": "images",
+      "purpose": "image"
+    },
+    "claudeAction": {
+      "alias": "claudeAction",
+      "assetId": "OLVd4r",
+      "variantId": "6CgZ2c",
+      "port": "images",
+      "purpose": "image"
+    },
+    "font": {
+      "alias": "font",
+      "assetId": "CPopkH",
+      "variantId": "QPwWzZ",
+      "port": "fonts",
+      "purpose": "font"
+    }
+  }
+}

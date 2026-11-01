@@ -1,0 +1,5 @@
+{
+  "MIT.txt": "https://spdx.org/licenses/MIT.html",
+  "MPL-2.0.txt": "https://spdx.org/licenses/MPL-2.0.html",
+  "scope": "Canonical license texts supplement crates that declare an SPDX license without packaging a standalone text. Original package metadata and source notices retain attribution."
+}

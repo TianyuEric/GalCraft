@@ -1,0 +1,32 @@
+{
+  "name": "@galcraft/publishing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/engine/index.js",
+  "types": "./dist/engine/index.d.ts",
+  "exports": {
+    "./build": { "types": "./dist/engine/build.d.ts", "default": "./dist/engine/build.js" },
+    "./engine": {
+      "types": "./dist/engine/index.d.ts",
+      "default": "./dist/engine/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run engine/src"
+  },
+  "dependencies": {
+    "@galcraft/contracts": "workspace:*",
+    "resedit": "3.1.0",
+    "sharp": "0.35.4",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6"
+  },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "packages/publishing"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

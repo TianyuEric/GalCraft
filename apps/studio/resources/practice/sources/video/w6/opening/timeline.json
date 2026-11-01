@@ -1,0 +1,77 @@
+{
+  "key": "opening",
+  "title": "今晚，让春天亮起来",
+  "music": "01",
+  "from": 0,
+  "bars": 12,
+  "bpm": 86,
+  "shots": [
+    {
+      "image": "shop",
+      "kind": "closure",
+      "caption": "影院最后一晚",
+      "subtitle": "今晚，空椅子还在等谁。",
+      "start": 0,
+      "end": 4.4
+    },
+    {
+      "image": "deepseekAction",
+      "kind": "cable",
+      "caption": "澜汐 · 让线路接上明天",
+      "subtitle": "一段线路，留住尚未亮起的光。",
+      "start": 4.4,
+      "end": 8.8
+    },
+    {
+      "image": "chatgptAction",
+      "kind": "stars",
+      "caption": "绮白 · 把星光重新串起",
+      "subtitle": "一针一线，把春天缝回银幕。",
+      "start": 8.8,
+      "end": 13.200000000000001
+    },
+    {
+      "image": "claudeAction",
+      "kind": "film",
+      "caption": "绯书 · 记录每一个人",
+      "subtitle": "一格胶片，记下还未说完的故事。",
+      "start": 13.200000000000001,
+      "end": 17.6
+    },
+    {
+      "image": "station",
+      "kind": "obstacle",
+      "caption": "雨 · 电源 · 末班车",
+      "subtitle": "雨声里，末班车仍在倒数。",
+      "start": 17.6,
+      "end": 22
+    },
+    {
+      "image": "shop",
+      "kind": "together",
+      "caption": "最后一次筹备",
+      "subtitle": "在银幕亮起之前，我们仍有选择。",
+      "start": 22,
+      "end": 26.4
+    },
+    {
+      "image": "shop",
+      "kind": "title",
+      "caption": "",
+      "subtitle": "今晚，让春天亮起来。",
+      "start": 26.4,
+      "end": 33.5
+    }
+  ],
+  "weights": [
+    4.4,
+    4.4,
+    4.4,
+    4.4,
+    4.4,
+    4.4,
+    7.1
+  ],
+  "frames": 1005,
+  "duration": 33.5
+}

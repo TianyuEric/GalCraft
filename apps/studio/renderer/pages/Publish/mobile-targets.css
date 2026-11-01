@@ -1,0 +1,15 @@
+.publish-mobile { display: grid; gap: 12px; min-width: 0; padding-block: 16px; border-block-start: 1px solid var(--border); }
+.publish-mobile h3, .publish-mobile h4, .publish-mobile p { margin: 0; }
+.publish-mobile .gc-field { margin: 0; }
+.publish-mobile h3 { font-size: 16px; font-weight: 600; }
+.publish-mobile h4 { font-size: 14px; font-weight: 600; margin-block-start: 8px; }
+.publish-mobile p, .publish-mobile summary { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.publish-mobile p { color: var(--muted-foreground); }
+.publish-mobile details { display: grid; gap: 12px; }
+.publish-mobile details[open] > :not(summary) { margin-block-start: 12px; }
+.publish-mobile summary { cursor: pointer; }
+.publish-mobile-license { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.6; }
+.publish-mobile-license input { margin-block-start: 4px; flex-shrink: 0; accent-color: var(--primary); }
+.publish-mobile a { text-decoration: underline; text-underline-offset: 3px; }
+.publish-mobile-progress { display: grid; gap: 8px; min-width: 0; font-size: 12px; }
+.publish-mobile-progress strong { font-size: 13px; font-weight: 500; max-height: 100px; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }

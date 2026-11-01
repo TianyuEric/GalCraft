@@ -1,0 +1,53 @@
+{
+  "name": "@galcraft/templates",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./library": {
+      "types": "./dist/library.d.ts",
+      "default": "./dist/library.js"
+    },
+    "./editor": {
+      "types": "./dist/editor.d.ts",
+      "default": "./dist/editor.js"
+    },
+    "./style-editing": {
+      "types": "./dist/style-editing.d.ts",
+      "default": "./dist/style-editing.js"
+    },
+    "./composition-contracts": {
+      "types": "./dist/composition-contracts.d.ts",
+      "default": "./dist/composition-contracts.js"
+    },
+    "./compiler": {
+      "types": "./dist/compiler.d.ts",
+      "default": "./dist/compiler.js"
+    },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "pnpm build && vitest run core"
+  },
+  "dependencies": {
+    "zod": "4.6.5",
+    "@galcraft/contracts": "workspace:*",
+    "fflate": "0.8.2",
+    "postcss": "8.5.28",
+    "postcss-selector-parser": "7.1.6",
+    "sass": "1.105.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6"
+  },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "packages/templates"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

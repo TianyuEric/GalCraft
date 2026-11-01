@@ -1,0 +1,95 @@
+{
+  "manifest": {
+    "schemaVersion": 2,
+    "id": "org.galcraft.voice-comfy",
+    "name": "Breeze / Irodori 配音",
+    "version": "0.1.0",
+    "description": "通过 ComfyUI 使用 Breeze TTS 2（中英）和 Irodori v4.1 Small（日语）制作声音设计、参考克隆和表演指导配音；需另备服务、节点及模型。",
+    "localizations": {
+      "en": {
+        "name": "Breeze / Irodori Voice",
+        "description": "Use Breeze TTS 2 (Chinese/English) and Irodori v4.1 Small (Japanese) through ComfyUI for voice design, reference cloning and performance direction. Requires a prepared service, nodes and models."
+      },
+      "ja": {
+        "name": "Breeze / Irodori 音声制作",
+        "description": "ComfyUI 経由で Breeze TTS 2（中国語・英語）と Irodori v4.1 Small（日本語）の声質設計、参照音声のクローンと演技指示を使った音声を制作します。サービス、ノードとモデルを別途用意してください。"
+      }
+    },
+    "author": "GalCraft",
+    "license": "MPL-2.0",
+    "homepage": null,
+    "engineRange": "^0.1.0",
+    "sdkMajor": 0,
+    "targets": [
+      "web",
+      "windows"
+    ],
+    "dependencies": [],
+    "contributions": [
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.voice-comfy/breezeDesign",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.voice-comfy/breezeClone",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.voice-comfy/breezeDirection",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.voice-comfy/irodoriDesign",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.voice-comfy/irodoriClone",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.voice-comfy/irodoriDirection",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      }
+    ],
+    "stateVersions": {
+      "document": 0,
+      "progress": 0,
+      "longTerm": 0
+    },
+    "native": []
+  },
+  "sources": {
+    "definition": "src/definition.ts"
+  },
+  "nativeSources": []
+}

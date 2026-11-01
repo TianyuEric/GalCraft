@@ -1,0 +1,23 @@
+.scene-relations-dialog { height: min(780px, calc(100dvh - 48px)); }
+.scene-relations-dialog .gc-dialog-body { display: flex; flex: 1; min-height: 0; }
+.scene-relations { display: flex; flex: 1; flex-direction: column; min-height: 0; gap: 12px; width: 100%; }
+.scene-relations [role=toolbar] { flex-wrap: wrap; gap: 8px; box-shadow: none; }
+.scene-relations p { margin: 0; }
+.scene-relations-canvas { display: flex; flex: 1; min-height: 300px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.scene-relations-canvas > .react-flow { flex: 1; height: auto !important; }
+.scene-relations .react-flow { --xy-background-color: var(--background); --xy-node-color: var(--foreground); --xy-edge-stroke: var(--muted-foreground); --xy-edge-label-color: var(--foreground); --xy-edge-label-background-color: var(--card); --xy-controls-button-background-color: var(--card); --xy-controls-button-background-color-hover: var(--accent); --xy-controls-button-color: var(--foreground); --xy-controls-button-border-color: var(--border); }
+.scene-relation-node { width: 224px; height: 112px; border-color: var(--border); color: var(--foreground); background: var(--card); }
+.scene-relation-node header { padding: 12px; }
+.scene-relation-node h3 { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; margin: 0; }
+.scene-relation-node [data-slot=base-node-content] { padding: 0 12px 12px; color: var(--muted-foreground); font-size: 12px; gap: 4px; }
+.scene-relation-chapter { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.scene-relation-ending { align-self: flex-start; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; font-size: 11px; line-height: 14px; background: var(--card); color: var(--foreground); }
+.scene-relation-node.is-current { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary); }
+.scene-relation-node.is-missing { border-color: var(--destructive); }
+.scene-relations-warning { color: var(--destructive); font-size: 12px; }
+.scene-relations-list { max-height: 180px; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.scene-relations-list button { height: auto; min-height: 32px; white-space: normal; text-align: left; justify-content: flex-start; }
+.background-transition { display: flex; flex-direction: column; gap: 12px; padding-bottom: 16px; }
+.background-transition [data-slot=number-field] { width: 100%; }
+.background-transition [data-slot=number-field] input { font: inherit; }
+@media (max-width: 960px) { .scene-relations [role=toolbar] button { padding-inline: 8px; } }

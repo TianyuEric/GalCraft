@@ -1,0 +1,19 @@
+.asset-import-result { margin: 0 0 20px; border: 1px solid var(--border); border-radius: 10px; padding: 16px; background: var(--card); color: var(--foreground); }
+.asset-import-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.asset-import-heading h2 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+.asset-import-heading p, .asset-result-help { margin: 0; font-size: 13px; }
+.asset-result-help { margin-top: 8px; color: var(--muted-foreground); }
+.asset-import-failures { list-style: none; padding: 0; margin: 12px 0 0; max-height: 280px; overflow: auto; }
+.asset-import-failures li { padding: 12px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.asset-import-failures strong { font-size: 14px; font-weight: 600; }
+.asset-import-reason { margin: 6px 0; font-size: 13px; color: var(--danger-foreground); white-space: pre-wrap; }
+.asset-import-failures summary, .selected-assets-path summary { width: fit-content; cursor: pointer; color: var(--muted-foreground); font-size: 12px; }
+.asset-import-failures code, .selected-assets-path code { display: block; margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.selected-assets-summary { margin: 0 0 16px; color: var(--muted-foreground); }
+.selected-assets-sheet .gc-dialog-body { min-width: 0; }
+.selected-assets-name { display: block; overflow-wrap: anywhere; }
+.selected-assets-sheet .selected-assets-path { margin: 6px 0 0; padding: 0; border: 0; }
+.selected-assets-stale { margin-top: 16px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; }
+.selected-assets-stale h3 { margin: 0 0 8px; font-size: 14px; }
+.selected-assets-stale p { margin: 0 0 12px; color: var(--muted-foreground); font-size: 13px; }
+.selected-assets-stale ul { padding-left: 20px; margin-bottom: 12px; overflow-wrap: anywhere; }

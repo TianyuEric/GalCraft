@@ -1,0 +1,40 @@
+.designer-template-chooser { display:flex; flex-direction:column; gap:12px; min-width:0; min-height:0; height:100%; font:13px/1.5 var(--font-sans); }
+.designer-template-content { display:grid; grid-template-columns:minmax(0,1fr); gap:16px; min-width:0; min-height:0; flex:1; overflow:auto; }
+.designer-template-content > * { min-width:0; max-width:100%; }
+.designer-template-chooser h3 { margin:0 0 8px; font-size:14px; }
+.designer-template-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; }
+.designer-template-chooser .designer-template-options > button { display:flex; align-items:flex-start; justify-content:center; flex-direction:column; gap:6px; height:auto; min-height:72px; padding:10px; text-align:left; white-space:normal; }
+.designer-template-options > button[aria-pressed=true] { border-color:var(--primary); background:var(--secondary); }
+.designer-template-options span { color:var(--muted-foreground); font-size:12px; line-height:1.5; }
+.designer-template-preview { position:relative; min-width:0; width:100%; aspect-ratio:16/9; overflow:hidden; border:1px solid var(--border); border-radius:6px; background:var(--workbench-explorer); }
+.designer-template-preview > div { position:relative; width:100%; height:100%; overflow:hidden; }
+.gc-workbench .designer-center.has-template { display:flex; flex-direction:column; background:var(--workbench-editor); }
+.designer-template-preview p { padding:12px; }
+.designer-template-preview-status { position:absolute; inset:0; margin:0; display:grid; place-items:center; background:var(--workbench-explorer); font-size:13px; }
+.designer-template-impact p { margin:6px 0; overflow-wrap:anywhere; line-height:1.6; }
+.designer-template-retain-tools { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0; }
+.designer-template-retain-tools > :is(input,div) { flex:1 1 160px; min-width:0; }
+.designer-template-retain-list { max-height:360px; overflow:auto; padding:4px; }
+.designer-template-retain-list fieldset { border:0; border-bottom:1px solid var(--border); margin:0 0 12px; padding:0 0 12px; min-width:0; }
+.designer-template-retain-list legend { font:600 13px/20px var(--font-sans); margin-bottom:4px; overflow-wrap:anywhere; }
+.designer-template-retain-list fieldset > div { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:4px 12px; }
+.designer-template-retain-list label { display:flex; align-items:center; gap:8px; min-height:28px; font-size:13px; }
+.designer-template-retain-list input { width:16px; height:16px; flex:none; accent-color:var(--primary); }
+.designer-template-technical { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 12px; font-size:12px; }
+.designer-template-technical dd { margin:0; overflow-wrap:anywhere; }
+.designer-template-apply { flex:none; display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:8px 16px; padding:12px 0; border-top:1px solid var(--border); background:var(--workbench-editor); }
+.designer-template-chooser .designer-template-apply > button { height:auto; min-height:32px; white-space:normal; max-width:100%; }
+.designer-template-apply > span { flex:1; font-size:12px; color:var(--muted-foreground); }
+.designer-center.has-template > :not(.designer-template-workspace) { display:none; }
+.designer-template-workspace { display:flex; flex-direction:column; min-width:0; min-height:0; height:100%; }
+.designer-template-workspace > div { min-height:0; flex:1; }
+.designer-template-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.designer-template-heading h2 { margin:0; font-size:18px; }
+.designer-template-conflict { padding:12px 0; border-bottom:1px solid var(--border); min-width:0; }
+.designer-template-conflict dd { margin:4px 0 12px; max-height:160px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+.designer-template-change-list { max-height:320px; overflow:auto; padding-inline-start:20px; font-size:13px; line-height:1.7; }
+.designer-template-management { display:grid; gap:12px; padding-block:12px; }
+.designer-template-management > label { display:grid; gap:6px; font-size:13px; }
+.designer-template-management > label:has(input[type=checkbox]) { display:flex; align-items:center; gap:8px; }
+.designer-template-management .gc-actions, .designer-template-conflicts .gc-actions { flex-wrap:wrap; }
+.designer-template-chooser [role=alert] { color:var(--destructive); overflow-wrap:anywhere; }

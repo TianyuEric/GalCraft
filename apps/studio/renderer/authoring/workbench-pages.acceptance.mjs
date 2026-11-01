@@ -1,0 +1,61 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
+
+const { chromium } = createRequire(process.env.GALCRAFT_PLAYWRIGHT_PACKAGE ?? import.meta.url)('playwright');
+const output=resolve('test-results/latest/workbench-reconstruction/pages'); await mkdir(output,{recursive:true});
+const browser=await chromium.connectOverCDP('http://127.0.0.1:9346'); const page=browser.contexts()[0].pages()[0]; page.setDefaultTimeout(15000);
+const report={environment:'Windows / actual Electron preload and M02/M09/M11 / isolated workbench-shell-qa userData and sample project',checks:[],errors:[],result:'failed'};
+page.on('pageerror',error=>report.errors.push(error.message));
+const nav=name=>page.locator('.studio-rail').getByRole('button',{name,exact:true}).click();
+const shot=name=>page.screenshot({path:join(output,`${name}.png`),scale:'css'});
+const check=(target,actual)=>report.checks.push({target,expected:'持续工作区入口、真实所属状态与可达操作保持',actual,result:'pass'});
+try {
+  await page.setViewportSize({width:1440,height:900});
+  await nav('作品'); await page.locator('.project-welcome').waitFor();
+  assert(await page.getByRole('heading',{name:'作品中心',exact:true}).isVisible());
+  const order=await page.evaluate(()=>{ const list=document.querySelector('.project-library'),current=document.querySelector('.project-current'); return !!list&&!!current&&!!(list.compareDocumentPosition(current)&Node.DOCUMENT_POSITION_FOLLOWING); }); assert(order);
+  await shot('projects-current'); check('P01 作品库优先', {libraryBeforeCurrent:order});
+  await nav('插件'); await page.locator('.plugin-summary').waitFor(); await shot('plugins-current');
+  await page.getByRole('button',{name:'开发目录',exact:true}).click(); await page.locator('.plugin-editor').waitFor(); assert.equal(await page.getByRole('dialog').count(),0);
+  await shot('plugin-development'); await page.getByRole('button',{name:'返回插件列表',exact:true}).click();
+  await page.getByRole('button',{name:'安装插件',exact:true}).click(); await page.locator('.plugin-editor').waitFor(); assert.equal(await page.getByRole('dialog').count(),0);
+  await shot('plugin-install'); await page.getByRole('button',{name:'返回插件列表',exact:true}).click();
+  check('P06 持续包检查与开发文档', {modalCount:0,installedState:await page.locator('.plugin-summary').innerText()});
+  await nav('发布'); await page.locator('.publish-workflow').waitFor();
+  await page.getByRole('button',{name:/引擎版本与历史/}).click(); await page.locator('.publish-engine-document').waitFor(); assert.equal(await page.getByRole('dialog').count(),0);
+  await shot('engine-history'); await page.getByRole('button',{name:'返回发行配置',exact:true}).click(); await shot('publish-current');
+  check('P07 引擎持续文档', {modalCount:0});
+  report.buttons=await page.getByRole('button').allTextContents(); report.text=await page.locator('.publish-page').innerText();
+  await nav('制作'); await page.locator('.production-page').waitFor();
+  if(!await page.locator('.gc-wb-inspector').isVisible()){await page.getByRole('button',{name:'显示或隐藏Inspector',exact:true}).click();await page.locator('.gc-wb-inspector').waitFor();}
+  await page.locator('.production-new-menu summary').click(); await page.locator('.production-new-options').getByRole('button',{name:'配音',exact:true}).click();
+  await page.getByText('未开始编辑',{exact:true}).waitFor();
+  await page.getByRole('textbox',{name:'朗读文本或逐行清单',exact:true}).fill('工作台独立配音验收。\n保留原稿与采用位置。');
+  await page.getByRole('button',{name:'按非空行拆分',exact:true}).click();
+  assert.equal(await page.locator('.speech-lines tbody tr').count(),2);
+  const geometry=await page.evaluate(()=>({document:document.querySelector('.production-document').getBoundingClientRect().width,externalInspector:!!document.querySelector('.gc-wb-inspector .production-inspector'),externalTasks:!!document.querySelector('.gc-wb-explorer .task-sidebar')}));
+  assert(geometry.document>=400,JSON.stringify(geometry));assert(geometry.externalInspector);assert(geometry.externalTasks);
+  await page.evaluate(()=>{window.qaProductionDocument=document.querySelector('.production-document');}); await shot('production-speech');
+  await page.setViewportSize({width:900,height:620});
+  await page.waitForTimeout(100);
+  const inspectorToggle=page.getByRole('button',{name:'显示或隐藏Inspector',exact:true});
+  if(await inspectorToggle.getAttribute('aria-pressed')!=='true')await inspectorToggle.click();
+  await page.locator('.gc-wb-inspector .production-inspector').waitFor();
+  assert(await page.locator('.gc-wb-inspector .production-inspector').getByText('本次制作参数',{exact:true}).isVisible());
+  assert.equal(await page.evaluate(()=>window.qaProductionDocument===document.querySelector('.production-document')),true);
+  await page.locator('.speech-lines tbody textarea').first().fill('工作台窄窗保留原稿。');
+  await page.locator('.production-document-actions').getByRole('button',{name:'保存草稿',exact:true}).click();
+  await page.getByText('草稿已保存',{exact:true}).waitFor();
+  assert.equal(await page.locator('.speech-lines tbody textarea').first().inputValue(),'工作台窄窗保留原稿。');
+  const fixed=await page.evaluate(()=>{const view=document.querySelector('.gc-wb-editor').getBoundingClientRect(),header=document.querySelector('.production-workbench-toolbar').getBoundingClientRect(),actions=document.querySelector('.production-document-actions').getBoundingClientRect();return{headerInside:header.top>=view.top-1&&header.bottom<=view.bottom+1,actionsInside:actions.top>=view.top-1&&actions.bottom<=view.bottom+1};});assert(fixed.headerInside&&fixed.actionsInside,JSON.stringify(fixed));
+  await shot('production-speech-narrow');await page.setViewportSize({width:1440,height:900});
+  check('P04 正式壳Explorer/Inspector与容器密度',{...geometry,...fixed,narrowInputEditable:true,narrowInspectorReachable:true,documentPreserved:true});
+  await page.getByRole('tab',{name:'方案库',exact:true}).click();await page.locator('.production-library-row').first().click();
+  for(const name of ['复制到个人','复制到作品','导出方案'])assert(await page.getByRole('button',{name,exact:true}).isVisible());
+  await shot('production-library');check('P04 真实专用输入和方案消费者', {speechLines:2,managementActions:3,externalRequests:0});
+  await nav('创作');
+  assert.deepEqual(report.errors,[]);report.result='passed';
+}catch(error){report.failure=error.stack;throw error;}
+finally{await writeFile(join(output,'report.json'),JSON.stringify({...report,executedAt:new Date().toISOString()},null,2));console.log(JSON.stringify({result:report.result,checks:report.checks.length,output,failure:report.failure}));await browser.close();}

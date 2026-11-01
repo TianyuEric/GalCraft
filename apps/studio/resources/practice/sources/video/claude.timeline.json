@@ -1,0 +1,28 @@
+{
+  "key": "claude",
+  "title": "故事还没有完",
+  "subtitle": "绯书 · 把自己的声音留在这里",
+  "music": "../../../../assets/generated/practice/music/originals/spring-05.wav",
+  "shots": [
+    "backgrounds/spring-shop.png",
+    "cg/spring-claude.png",
+    "backgrounds/spring-sunset.png",
+    "cg/spring-claude.png"
+  ],
+  "shotSeconds": 5,
+  "fadeSeconds": 0.5,
+  "duration": 18.5,
+  "fps": 30,
+  "size": [
+    1920,
+    1080
+  ],
+  "motion": "缓慢推拉和横移，0.5秒画面交叠",
+  "subtitles": "claude.ass",
+  "audio": {
+    "startSec": 8,
+    "volume": 0.85,
+    "fadeInSec": 0.5,
+    "fadeOutSec": 1
+  }
+}

@@ -1,0 +1,10 @@
+packages:
+  - apps/*
+  - packages/*
+  - plugins/*
+  - tools/*
+allowBuilds:
+  electron-winstaller: false
+  '@parcel/watcher': false
+  esbuild: true
+  onnxruntime-node: true

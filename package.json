@@ -1,0 +1,36 @@
+{
+  "name": "galcraft-workspace",
+  "private": true,
+  "packageManager": "pnpm@12.3.4",
+  "engines": {
+    "node": "24.21.0",
+    "pnpm": "12.3.4"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @galcraft/studio dev",
+    "build": "pnpm -r --if-present run build",
+    "typecheck": "pnpm -r --if-present run typecheck && pnpm check:architecture",
+    "check:architecture": "node --test tools/check-architecture-boundaries.test.mjs && node tools/check-architecture-boundaries.mjs",
+    "test": "pnpm -r --workspace-concurrency=1 --if-present run test && pnpm test:tools",
+    "test:tools": "pnpm --filter @galcraft/authoring... --if-present run build && node --test tools/*.test.mjs tests/e2e/fixtures.test.mjs",
+    "storybook": "pnpm --filter @galcraft/studio storybook",
+    "storybook:build": "pnpm --filter @galcraft/studio build-storybook",
+    "desktop:package": "node tools/package-studio.mjs",
+    "studio:npm": "node tools/package-studio-npm.mjs",
+    "sample:package": "node tools/package-practice.mjs"
+  },
+  "devDependencies": {
+    "@babel/parser": "7.29.9",
+    "@galcraft/contracts": "workspace:*",
+    "@galcraft/documents": "workspace:*",
+    "@galcraft/templates": "workspace:*",
+    "@resvg/resvg-js": "2.6.2",
+    "electron-builder": "26.15.3",
+    "marked": "14.0.0",
+    "playwright": "1.62.1",
+    "resedit": "3.1.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  },
+  "license": "MPL-2.0"
+}

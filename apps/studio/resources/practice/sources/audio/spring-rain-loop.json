@@ -1,0 +1,29 @@
+{
+  "key": "spring-rain-loop",
+  "kind": "rain",
+  "seconds": 12,
+  "seed": 2026102001,
+  "file": "audio/spring-rain-loop.wav",
+  "source": "GalCraft original procedural audio; no third party recordings or samples",
+  "author": "GalCraft sample media",
+  "distribution": "Retained under the repository copyright and sample distribution terms; no external media license dependency",
+  "script": "tools/artwork/synthesize-practice-effects.mjs",
+  "method": "Seeded xorshift noise, periodic settled low-pass filters and periodic amplitude motion; rain includes wrapped synthetic resonant droplets",
+  "sampleRate": 48000,
+  "channels": 2,
+  "format": "PCM signed 16-bit WAV",
+  "loop": {
+    "startSeconds": 0,
+    "endSeconds": 12
+  },
+  "recommendedVolume": 0.15,
+  "metrics": {
+    "rms": 0.05215395615867375,
+    "peak": 0.21578305959701538
+  },
+  "boundaryDelta": [
+    -0.0056101009249687195,
+    0.05221127159893513
+  ],
+  "listeningStatus": "requires human listening; waveform analysis does not assert perceived quality"
+}

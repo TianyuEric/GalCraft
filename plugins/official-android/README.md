@@ -1,0 +1,13 @@
+# Android target 0.1.0
+
+This lightweight Studio service package contributes `org.galcraft.android/build` through the public target-builder SDK. The package contains a Java WebView Player, the shared-host bridge, Gradle project sources, and the Gradle 8.9 wrapper. It does not contain a JDK, Android SDK, Gradle distribution, or build cache.
+
+The template fixes AGP 8.7.3, compile/target SDK 35, Build Tools 35.0.0 and minSdk 26. The preparation port reuses JDK 17 or 21, or downloads Temurin 17.0.17+10; it installs command-line tools 13114758 and the required SDK components. Tools default to the author's `.galcraft/tools/galcraft-android-0.1.0` directory. An explicit SDK/JDK path reuses that installation. The selected directory keeps its other files. The author must confirm the [Android SDK license](https://developer.android.com/studio/terms) before preparation. Cancellation keeps completed components.
+
+M11 supplies a frozen plan, resolved shared Web Player and controlled staging directory. The builder copies the runtime, snapshot, template, assets and exact runtime plugins into the Android assets folder. Android project export produces a complete source project without detecting, installing or running the external build tools. APK and AAB outputs require the prepared JDK, Android SDK and Gradle toolchain; the builder returns the actual artifact path and size. M11 commits the output only after successful completion. The source project remains available beside `artifacts/` for rebuilding. Local Gradle intermediate files are removed from the delivered source project.
+
+The native host maps package content to `https://appassets.androidplatform.net`, handles byte ranges, stores Player data in private SQLite transactions, handles the system back action and lifecycle events, and uses system document pickers for transfers. Android WebView supplies touch/media rendering; actual device playback and performance need device evidence.
+
+APK uses debug signing by default. AAB requires author signing by default; choose the explicit local test signing mode to produce a debug-signed AAB for validation. Distribution signing supplies `storeFile`, `keyAlias`, `storePasswordEnvironment` and `keyPasswordEnvironment`; passwords and private keys remain in the author's environment. Submit release-signed AAB files to the store.
+
+Compatibility sources: [AGP 8.7](https://developer.android.com/build/releases/agp-8-7-0-release-notes), [sdkmanager](https://developer.android.com/tools/sdkmanager), [local WebView content](https://developer.android.com/develop/ui/views/layout/webapps/load-local-content). The wrapper contains its Apache 2.0 license in `META-INF/LICENSE`.

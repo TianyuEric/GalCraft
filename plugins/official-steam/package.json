@@ -1,0 +1,31 @@
+{
+  "name": "@galcraft/official-steam",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run src"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "vite": "8.3.0"
+  },
+  "dependencies": {
+    "@galcraft/contracts": "workspace:*",
+    "@galcraft/plugins": "workspace:*",
+    "steamworks.js": "0.4.0"
+  },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "plugins/official-steam"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

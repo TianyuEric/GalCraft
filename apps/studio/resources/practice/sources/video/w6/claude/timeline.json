@@ -1,0 +1,44 @@
+{
+  "key": "claude",
+  "title": "故事还没有完",
+  "music": "05",
+  "from": 12,
+  "bars": 8,
+  "bpm": 86,
+  "shots": [
+    {
+      "image": "claudeAction",
+      "kind": "film",
+      "caption": "胶片里的他们",
+      "subtitle": "起初，我只在镜头后面。",
+      "start": 0,
+      "end": 5.583333333333333
+    },
+    {
+      "image": "shop",
+      "kind": "memories",
+      "caption": "一格一格，留下此刻",
+      "subtitle": "把每个人的笑容，收进春夜。",
+      "start": 5.583333333333333,
+      "end": 11.166666666666666
+    },
+    {
+      "image": "claudeCg",
+      "kind": "camera",
+      "caption": "让镜头走入当下",
+      "subtitle": "这一次，我也走进故事里。",
+      "start": 11.166666666666666,
+      "end": 16.75
+    },
+    {
+      "image": "claudeCg",
+      "kind": "album",
+      "caption": "故事还没有完",
+      "subtitle": "下一页，写下“我们”。",
+      "start": 16.75,
+      "end": 22.333333333333332
+    }
+  ],
+  "frames": 670,
+  "duration": 22.333333333333332
+}

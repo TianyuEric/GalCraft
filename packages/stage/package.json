@@ -1,0 +1,34 @@
+{
+  "name": "@galcraft/stage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./presets": { "types": "./dist/animation-presets.d.ts", "default": "./dist/animation-presets.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./commands": {
+      "types": "./dist/commands.d.ts",
+      "default": "./dist/commands.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@galcraft/contracts": "workspace:*",
+    "@galcraft/runtime": "workspace:*",
+    "@galcraft/plugins": "workspace:*",
+    "pixi.js": "8.12.0",
+    "pixi-filters": "6.1.5"
+  },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "packages/stage"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

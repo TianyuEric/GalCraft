@@ -1,0 +1,101 @@
+{
+  "manifest": {
+    "schemaVersion": 2,
+    "id": "org.galcraft.novelai",
+    "name": "NovelAI 创作能力",
+    "version": "0.1.0",
+    "description": "连接 NovelAI，编辑结构化提示词并生成图像候选；需可用账户凭据，文字提示词制作另需兼容文字连接。",
+    "localizations": {
+      "en": {
+        "name": "NovelAI Creative Tools",
+        "description": "Connect NovelAI, edit structured prompts and generate image candidates. Requires valid account credentials; text-assisted prompt creation also needs a compatible text connection."
+      },
+      "ja": {
+        "name": "NovelAI 創作機能",
+        "description": "NovelAI に接続し、構造化プロンプトを編集して画像候補を生成します。有効なアカウント認証情報が必要で、文章からのプロンプト作成には対応テキスト接続も必要です。"
+      }
+    },
+    "author": "GalCraft",
+    "license": "MPL-2.0",
+    "homepage": null,
+    "engineRange": "^0.1.0",
+    "sdkMajor": 0,
+    "targets": [
+      "web",
+      "windows"
+    ],
+    "dependencies": [],
+    "contributions": [
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.novelai/novelAIText",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.novelai/novelAIImage",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.novelai/prompt",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.novelai/image",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "fieldEditor",
+        "key": "org.galcraft.novelai/promptEditor",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "fieldEditor",
+        "key": "org.galcraft.novelai/imageEditor",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "textPreparation",
+        "key": "org.galcraft.novelai/preparePrompt",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      }
+    ],
+    "stateVersions": {
+      "document": 0,
+      "progress": 0,
+      "longTerm": 0
+    },
+    "native": []
+  },
+  "sources": {
+    "definition": "src/definition.ts",
+    "services": "src/services.ts",
+    "editor": "src/editor.ts"
+  },
+  "nativeSources": []
+}

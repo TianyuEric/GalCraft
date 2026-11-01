@@ -1,0 +1,20 @@
+import { useState } from 'react';
+import { AnimationPresets, createAnimationPreset, type AnimationPresetId, type AppliedAnimationPreset, type AnimationPresetParameters } from '@galcraft/stage';
+import { Button, Choice, Field } from '../../components/controls.js';
+import { Input } from '../../components/ui/input.js';
+export function AnimationPresetPicker({ locale, disabled, context, apply }: { locale: string; disabled?: boolean; context?: AnimationPresetParameters; apply(value: AppliedAnimationPreset): void | Promise<void> }) {
+  const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
+  const [id, setId] = useState<AnimationPresetId>('jump'), [values, setValues] = useState({ durationMs: 600, amplitude: 90, cycles: 1, targetX: 960, targetY: 0, offsetY: 0 });
+  const [error, setError] = useState(''), [pending, setPending] = useState(false);
+  const preset = AnimationPresets.find(item => item.id === id)!;
+  const number = (key: keyof typeof values, label: string, min?: number, max?: number) => <Field label={label}><Input type="number" aria-label={label} value={values[key]} min={min} max={max} step={key === 'cycles' ? 1 : 'any'} disabled={disabled || pending} onChange={event => setValues(old => ({ ...old, [key]: event.target.value === '' ? NaN : Number(event.target.value) }))}/></Field>;
+  return <details className="gca-preset-picker"><summary>{t('应用常用动画预设', 'Apply an animation preset', 'アニメーションプリセットを適用')}</summary><div className="gca-preset-fields">
+    <Choice label={t('动画预设', 'Animation preset', 'アニメーションプリセット')} disabled={disabled || pending} value={id} options={AnimationPresets.map(item => ({ value: item.id, label: item.title[locale === 'en' ? 1 : locale === 'ja' ? 2 : 0] }))} onChange={value => { const next = AnimationPresets.find(item => item.id === value)!; setId(next.id); setValues(old => ({ ...old, durationMs: next.durationMs, amplitude: next.amplitude, cycles: next.cycles })); setError(''); }}/>
+    {number('durationMs', t('预设时长（毫秒）', 'Preset duration (ms)', 'プリセット時間（ms）'), 1)}
+    {!['moveLeftQuarter', 'moveRightQuarter', 'moveTo', 'slideInLeft', 'slideInRight', 'slideOutLeft', 'slideOutRight', 'fadeIn', 'fadeOut'].includes(id) && number('amplitude', id === 'moveBy' ? t('水平相对偏移（像素）', 'Relative X offset (px)', '相対X移動（px）') : t('幅度', 'Amplitude', '振幅'))}
+    {['reaction', 'idle', 'emphasis'].includes(preset.group) && number('cycles', t('动作次数', 'Cycles', '回数'), 1, 32)}
+    {id === 'moveTo' && <>{number('targetX', t('目标舞台 X（像素）', 'Target stage X (px)', '舞台の対象X（px）'))}{number('targetY', t('目标垂直偏移（像素）', 'Target Y offset (px)', '対象Y移動（px）'))}</>}
+    {id === 'moveBy' && number('offsetY', t('垂直相对偏移（像素）', 'Relative Y offset (px)', '相対Y移動（px）'))}
+    <Button tone="primary" disabled={disabled || pending || Object.values(values).some(value => !Number.isFinite(value))} onClick={async () => { setPending(true); setError(''); try { await apply(createAnimationPreset(id, { ...context, ...values })); } catch (reason) { setError(String(reason)); } finally { setPending(false); } }}>{t('应用并编辑关键帧', 'Apply and edit keyframes', '適用してキーを編集')}</Button>
+  </div><p className="pro-note">{preset.group === 'exit' ? t('退场预设的轨道只改变外观；剧情使用对象的“退场”操作释放显示实例。', 'These tracks change appearance. Use the object’s Exit operation in the story to remove its display instance.', 'トラックは外観を変更します。物語では対象の「退場」で表示を解放します。') : preset.group === 'entrance' ? t('入场轨道用于已显示对象；剧情先使用“显示”操作建立对象。', 'Entrance tracks need a displayed object. Use Show to create the story object first.', '登場トラックには表示対象が必要です。物語では「表示」で対象を作成します。') : preset.group === 'move' ? t('移动结束保留目标位置；左右四分之一按舞台宽度 25% / 75% 计算。', 'Movement keeps its endpoint. Quarter positions use 25% / 75% of stage width.', '移動終了後は対象位置を保持。左右1/4は舞台幅の25%・75%です。') : t('以实际开始状态为基准，完成恢复起态。呼吸支持循环及按实例停止。', 'Uses the actual starting state and returns to it. Breathing supports looping and stopping by instance.', '実際の開始状態を基準に終了時に戻ります。呼吸はループとインスタンス停止に対応。')}</p>{error && <p role="alert" className="pro-error">{error}</p>}</details>;
+}

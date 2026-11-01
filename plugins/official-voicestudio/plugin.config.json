@@ -1,0 +1,115 @@
+{
+  "manifest": {
+    "schemaVersion": 2,
+    "id": "org.galcraft.voicestudio",
+    "name": "VoiceStudio",
+    "version": "0.1.0",
+    "description": "连接用户另行准备的 VoiceStudio 服务与模型，发现声音并制作角色配音、设计样音、参考克隆和逐字稿；能力依实际引擎而定。",
+    "localizations": {
+      "en": {
+        "name": "VoiceStudio",
+        "description": "Connect a separately prepared VoiceStudio service and models for voice discovery, character speech, design samples, reference cloning and transcription. Capabilities depend on the active engine."
+      },
+      "ja": {
+        "name": "VoiceStudio",
+        "description": "別途用意した VoiceStudio サービスとモデルに接続し、声の検索、キャラクター音声、声質設計サンプル、参照音声のクローンと文字起こしを制作します。利用できる機能は実際のエンジンによって異なります。"
+      }
+    },
+    "author": "GalCraft",
+    "license": "MPL-2.0",
+    "homepage": "https://github.com/debpalash/VoiceStudio",
+    "engineRange": "^0.1.0",
+    "sdkMajor": 0,
+    "targets": [
+      "web",
+      "windows"
+    ],
+    "dependencies": [],
+    "contributions": [
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.voicestudio/voiceStudio",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.voicestudio/speech",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "fieldEditor",
+        "key": "org.galcraft.voicestudio/speechEditor",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.voicestudio/design",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "fieldEditor",
+        "key": "org.galcraft.voicestudio/designEditor",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.voicestudio/clone",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "fieldEditor",
+        "key": "org.galcraft.voicestudio/cloneEditor",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.voicestudio/transcribe",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "fieldEditor",
+        "key": "org.galcraft.voicestudio/transcribeEditor",
+        "targets": [
+          "windows"
+        ],
+        "required": true
+      }
+    ],
+    "stateVersions": {
+      "document": 0,
+      "progress": 0,
+      "longTerm": 0
+    },
+    "native": []
+  },
+  "sources": {
+    "definition": "src/definition.ts",
+    "services": "src/services.ts",
+    "editor": "src/editor.ts"
+  },
+  "nativeSources": []
+}

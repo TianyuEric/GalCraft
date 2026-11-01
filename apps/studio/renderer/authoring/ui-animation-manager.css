@@ -1,0 +1,20 @@
+.designer-animation-manager { display:flex; flex-direction:column; height:100%; min-height:0; padding:16px; gap:16px; background:var(--background); color:var(--foreground); }
+.designer-animation-manager > header { display:flex; align-items:start; justify-content:space-between; gap:16px; }
+.designer-animation-manager h2 { margin:0; font-size:18px; font-weight:600; }
+.designer-animation-manager h3 { font-size:14px; font-weight:600; margin:16px 0 8px; }
+.designer-animation-manager p { font-size:13px; line-height:20px; color:var(--muted-foreground); margin:4px 0; }
+.designer-animation-columns { display:grid; grid-template-columns:240px minmax(0,1fr); min-height:0; flex:1; gap:24px; }
+.designer-animation-columns > nav { display:flex; flex-direction:column; gap:8px; overflow:auto; }
+.designer-animation-columns > nav button { display:flex; justify-content:space-between; gap:8px; text-align:start; height:auto; min-height:36px; }
+.designer-animation-columns > nav button span { overflow-wrap:anywhere; }
+.designer-animation-columns > nav small { font-size:12px; color:var(--muted-foreground); white-space:nowrap; }
+.designer-animation-columns > nav [aria-pressed=true] { background:var(--ui-accent); color:var(--accent-foreground); }
+.designer-animation-editor { min-height:0; overflow:auto; display:flex; flex-direction:column; gap:12px; padding-right:8px; }
+.designer-animation-editor label { display:grid; gap:4px; font-size:13px; }
+.designer-animation-editor fieldset { border:1px solid var(--border); padding:12px; border-radius:6px; margin:0; min-width:0; }
+.designer-animation-values { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px 12px; margin-bottom:12px; }
+.designer-animation-specimen { display:flex; min-height:120px; align-items:center; justify-content:center; gap:48px; background:var(--ui-muted); border-radius:6px; }
+.designer-animation-specimen > button:first-child { border:1px solid var(--border); background:var(--card); color:var(--foreground); padding:12px 16px; border-radius:6px; }
+.designer-animation-editor footer { position:sticky; bottom:0; display:flex; gap:8px; flex-wrap:wrap; padding:12px 0; background:var(--background); border-top:1px solid var(--border); }
+.designer-animation-editor li { font-size:13px; overflow-wrap:anywhere; line-height:20px; }
+@media(max-width:1000px) { .designer-animation-columns { grid-template-columns:180px minmax(0,1fr); gap:16px; } .designer-animation-values { grid-template-columns:repeat(2,minmax(0,1fr)); } }

@@ -1,0 +1,141 @@
+{
+  "manifest": {
+    "schemaVersion": 2,
+    "id": "org.galcraft.generation-services",
+    "name": "常用生成服务",
+    "version": "0.1.0",
+    "description": "连接已配置的文字、图像、语音和音乐服务，执行制作并收集候选；需可用服务、模型及相应凭据。",
+    "localizations": {
+      "en": {
+        "name": "Common Generation Services",
+        "description": "Connect configured text, image, speech and music services to run production tasks and collect candidates. Requires available services, models and any required credentials."
+      },
+      "ja": {
+        "name": "汎用生成サービス",
+        "description": "設定済みのテキスト・画像・音声・音楽サービスに接続し、制作を実行して候補を取得します。利用可能なサービス、モデルと必要な認証情報を用意してください。"
+      }
+    },
+    "author": "GalCraft",
+    "license": "MPL-2.0",
+    "homepage": null,
+    "engineRange": "^0.1.0",
+    "sdkMajor": 0,
+    "targets": [
+      "web",
+      "windows"
+    ],
+    "dependencies": [],
+    "contributions": [
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.generation-services/chatCompletions",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.generation-services/anthropic",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.generation-services/gemini",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.generation-services/ollama",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.generation-services/openAIImage",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.generation-services/webUI",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.generation-services/openAISpeech",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.generation-services/gptSoVits",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.generation-services/miniMaxSpeech",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.generation-services/elevenLabs",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.galcraft.generation-services/miniMaxMusic",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      }
+    ],
+    "stateVersions": {
+      "document": 0,
+      "progress": 0,
+      "longTerm": 0
+    },
+    "native": []
+  },
+  "sources": {
+    "definition": "src/definition.ts",
+    "services": "src/services.ts"
+  },
+  "nativeSources": []
+}

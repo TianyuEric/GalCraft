@@ -1,0 +1,78 @@
+import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { chromium } from 'playwright';
+
+const output = resolve('test-results/latest/studio-creation-save');
+await mkdir(output, { recursive: true });
+const browser = await chromium.launch({ channel: 'msedge', headless: true });
+const errors = [], evidence = [];
+try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  page.on('pageerror', error => errors.push(error.message));
+  const open = async story => {
+    await page.goto(`http://127.0.0.1:6007/iframe.html?id=product-studio-workbench-object-save-review--${story}&viewMode=story`);
+    await page.getByRole('dialog').waitFor();
+    await page.getByRole('dialog').evaluate(element => Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
+  };
+  await open('selection');
+  const checkboxes = page.getByRole('checkbox');
+  assert.equal(await checkboxes.count(), 3);
+  await page.getByRole('button', { name: '保存 3 个对象', exact: true }).waitFor();
+  await page.screenshot({ path: resolve(output, 'object-save-light.png') });
+  await checkboxes.nth(2).uncheck();
+  await page.getByRole('button', { name: '保存 2 个对象', exact: true }).waitFor();
+  await checkboxes.nth(1).uncheck();
+  assert.equal(await page.getByRole('button', { name: '保存 0 个对象', exact: true }).isDisabled(), true);
+  await checkboxes.nth(0).check();
+  await page.getByRole('button', { name: '保存 2 个对象', exact: true }).waitFor();
+  assert.equal(await checkboxes.nth(1).isChecked(), true);
+  await page.getByText('联动：').waitFor();
+  await page.getByRole('button', { name: '丢弃此项修改', exact: true }).nth(1).click();
+  await page.getByRole('button', { name: '确认丢弃修改', exact: true }).click();
+  await page.getByRole('button', { name: '撤销丢弃', exact: true }).waitFor();
+  assert.equal(await page.getByRole('checkbox').count(), 1);
+  await page.getByRole('button', { name: '撤销丢弃', exact: true }).click();
+  await page.getByRole('checkbox').nth(2).waitFor();
+  await page.getByRole('button', { name: '全选', exact: true }).click();
+  await page.getByRole('button', { name: '保存 3 个对象', exact: true }).waitFor();
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  evidence.push('selection, required dependency removal, immediate discard, one-action undo, cancel');
+  await open('selection');
+  await page.getByRole('button', { name: '丢弃已选择（3）', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: /^保存 \d+ 个对象$/ }).count(), 0);
+  await page.screenshot({ path: resolve(output, 'object-discard-confirm.png') });
+  await page.getByRole('button', { name: '确认丢弃修改', exact: true }).click();
+  await page.getByRole('button', { name: '关闭审阅', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: /^保存 \d+ 个对象$/ }).count(), 0);
+  await page.screenshot({ path: resolve(output, 'object-discard-complete.png') });
+  await page.getByRole('button', { name: '关闭审阅', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  evidence.push('discard confirmation has a discard action; completed discard closes without a save action');
+  for (const story of ['dark', 'english', 'japanese']) {
+    await page.setViewportSize({ width: story === 'dark' ? 900 : 1440, height: story === 'dark' ? 620 : 900 });
+    await open(story);
+    await page.screenshot({ path: resolve(output, `object-save-${story}.png`) });
+    const bounds = await page.locator('.save-review-actions').boundingBox();
+    assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= page.viewportSize().height, `${story} footer is visible`);
+  }
+  await open('failure');
+  await page.getByRole('button', { name: '保存 3 个对象', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: '文件正在被占用' }).waitFor();
+  assert.equal(await page.getByRole('checkbox').count(), 3);
+  await page.getByRole('button', { name: '刷新修改范围', exact: true }).click();
+  await page.getByRole('button', { name: '保存 3 个对象', exact: true }).waitFor({ state: 'visible' });
+  evidence.push('dark narrow viewport, English, Japanese, failure retention and refresh');
+  await page.setViewportSize({ width: 900, height: 620 });
+  await page.goto('http://127.0.0.1:6007/iframe.html?id=product-studio-workbench-object-save-review--pinned&viewMode=story');
+  await page.locator('.save-review-workspace').waitFor();
+  await page.locator('.save-object-details > summary').first().click();
+  const pinnedFooter = await page.locator('.save-review-actions').boundingBox();
+  assert.ok(pinnedFooter && pinnedFooter.y + pinnedFooter.height <= 620, 'Pinned review actions remain in the viewport');
+  await page.screenshot({ path: resolve(output, 'object-save-pinned.png') });
+  evidence.push('pinned review with expanded differences at 900 × 620');
+  assert.deepEqual(errors, []);
+  await writeFile(resolve(output, 'storybook.json'), JSON.stringify({ environment: 'Formal Storybook; in-memory provider fixture', result: 'PASS', evidence, errors }, null, 2));
+  process.stdout.write(JSON.stringify({ result: 'PASS', evidence, output }));
+} finally { await browser.close(); }

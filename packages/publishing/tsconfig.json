@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "engine/src",
+    "outDir": "dist/engine",
+    "types": ["node"]
+  },
+  "include": ["engine/src/**/*.ts"]
+}

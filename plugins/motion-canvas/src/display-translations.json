@@ -1,0 +1,18 @@
+{
+  "Motion Canvas project": [
+    "Motion Canvas 工程",
+    "Motion Canvas プロジェクト"
+  ],
+  "Edit TS/TSX sources, exact asset bindings and output settings; preparation freezes the project.": [
+    "编辑 TS/TSX 源码、精确素材绑定和输出设置；准备计划时冻结工程。",
+    "TS/TSX ソース、正確な素材の紐付け、出力設定を編集します。準備時にプロジェクトを固定します。"
+  ],
+  "Motion Canvas video": [
+    "Motion Canvas 视频",
+    "Motion Canvas 動画"
+  ],
+  "Render an editable Motion Canvas project with exact image, font and audio bindings into standard MP4 candidates. Read projectInfo describe/validate/runtime first. Use actual references with matching images/fonts/audio ports and exact versions. Rendering requires the optional local toolchain and a configured plugin connection.": [
+    "将可编辑的 Motion Canvas 工程及精确图片、字体、音频绑定渲染为标准 MP4 候选。先读取工程信息的说明／校验／运行环境。使用与端口及精确版本对应的实际引用。渲染需要可选的本地工具链和已配置的插件连接。",
+    "編集可能な Motion Canvas プロジェクトを、正確な画像・フォント・音声の紐付けと共に標準 MP4 候補に描画します。先にプロジェクト情報の説明・検証・実行環境を確認してください。各ポートと指定バージョンに合う実際の参照を使います。描画には任意導入のローカルツールチェーンと設定済みのプラグイン接続が必要です。"
+  ]
+}

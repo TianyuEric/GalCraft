@@ -1,0 +1,33 @@
+{
+  "name": "@galcraft/official-novelai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && galcraft-plugin build .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run src --passWithNoTests"
+  },
+  "dependencies": {
+    "@galcraft/contracts": "workspace:^",
+    "@galcraft/plugins": "workspace:^",
+    "@galcraft/generation-services": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "typescript": "7.0.2"
+  },
+  "exports": {
+    "./definition": {
+      "types": "./dist/definition.d.ts",
+      "default": "./dist/definition.js"
+    },
+    "./editor": {
+      "types": "./dist/editor.d.ts",
+      "default": "./dist/editor.js"
+    }
+  },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "plugins/official-novelai"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

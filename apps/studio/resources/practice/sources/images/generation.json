@@ -1,0 +1,123 @@
+{
+  "title": "今晚，让春天亮起来",
+  "createdAt": "2026-10-20",
+  "images": [
+    {
+      "kind": "background",
+      "key": "street",
+      "storage": "backgrounds/spring-street.png",
+      "prompt": "Use case: illustration-story. Asset type: final visual novel background for the original story Tonight, Let Spring Glow. Create ONE beautiful hand painted anime environment, 16:9 landscape at 2560×1440 or at least 1920×1080 pixels. Scene: quiet coastal old neighborhood street in spring dusk, a small beloved cinema preparing its last outdoor screening, weathered cream plaster facades and blue gray tiled roofs, flowering cherry tree on one side, warm unlettered paper lanterns strung overhead, a glimpse of distant harbor at the far end, gentle amber windows and violet blue twilight. Human eye level, deep coherent street perspective, foreground standing space for character sprites, calm lower fifth with no busy highlights for a dialogue box. Rich painterly detail, cinematic soft light, wistful but hopeful, consistent refined Japanese animation background art, no people, no characters, no readable text, no signs with lettering, no logos, no watermarks, no panels.",
+      "original": "sources/images/originals/street.png",
+      "generator": "imagegen built-in",
+      "sourceWidth": 1672,
+      "sourceHeight": 941,
+      "deliveryWidth": 1920,
+      "deliveryHeight": 1080,
+      "adaptation": "等比例Lanczos适配1920×1080，居中裁去不足一像素比例差；保留原始生成文件"
+    },
+    {
+      "kind": "background",
+      "key": "shop",
+      "storage": "backgrounds/spring-shop.png",
+      "prompt": "Use case: illustration-story. Create ONE final 1920x1080 pixel, 16:9 landscape anime visual novel background, matching a warm hand-painted spring coastal neighborhood world. Exterior of a small old local cinema at blue hour: cream plaster, navy tiled roof, a modest wooden entrance, blank illuminated marquee with NO LETTERING, rolled white outdoor screen and folding chairs being readied on the forecourt, copper amber paper lanterns and a cherry tree, string lights, tender evening violet sky. Empty scene, no people. Eye level wide shot, entrance to the left of center, spacious clean pavement foreground for character sprites, bottom fifth low detail for a dialogue overlay. Refined painterly Japanese-animation scenery, convincing perspective and beautiful soft reflected light. Do not include any lettering, logos, watermarks, panels or montage. Render the image at full HD resolution or higher, exact 16:9 framing.",
+      "original": "sources/images/originals/shop.png",
+      "generator": "imagegen built-in",
+      "sourceWidth": 1672,
+      "sourceHeight": 941,
+      "deliveryWidth": 1920,
+      "deliveryHeight": 1080,
+      "adaptation": "等比例Lanczos适配1920×1080，居中裁去不足一像素比例差；保留原始生成文件"
+    },
+    {
+      "kind": "background",
+      "key": "town",
+      "storage": "backgrounds/spring-town.png",
+      "prompt": "Use case: illustration-story. Asset type: original full-HD visual novel background, 16:9 landscape. A lively yet empty coastal shopping lane in spring evening, hand-painted Japanese-animation background art. Small closed shops with wooden shutters, hanging flower baskets, soft lit cafe windows and plain unlettered awnings, warm lanterns overhead, cherry blossom petals on the stone path; familiar cream plaster and blue-gray tiled roofs of an old cinema neighborhood. Eye-level wide perspective, spacious foreground for three standing character sprites, calm dark lower fifth for dialogue, distant warm lights. Hopeful gentle atmosphere, muted teal shadows and amber light, refined detailed painterly scenery with consistent architecture. No people, no readable text, no logos, no watermark, no montage. Deliver one 1920x1080 or larger 16:9 scene.",
+      "original": "sources/images/originals/town.png",
+      "generator": "imagegen built-in",
+      "sourceWidth": 1672,
+      "sourceHeight": 941,
+      "deliveryWidth": 1920,
+      "deliveryHeight": 1080,
+      "adaptation": "等比例Lanczos适配1920×1080，居中裁去不足一像素比例差；保留原始生成文件"
+    },
+    {
+      "kind": "background",
+      "key": "station",
+      "storage": "backgrounds/spring-station.png",
+      "prompt": "Use case: illustration-story. One original hand-painted anime visual-novel background at full HD or higher, 16:9 landscape. A small coastal railway station forecourt at dawn after a spring night: low cream station building, blue-gray tile roof, a long empty platform visible beyond, unlettered station sign, warm lamps switching off, a few pale cherry petals, distant sea and softly glowing horizon. Same intimate old coastal neighborhood as a cherished small cinema. Tender farewell mood, lavender blue shadows and pale peach morning light. Eye-level cinematic wide shot, broad foreground for character sprites, lower fifth calm and uncluttered for dialogue. Beautiful detailed Japanese-animation environment painting, coherent perspective. No people, trains with logos, readable text, watermarks or collage. 1920x1080 minimum requested.",
+      "original": "sources/images/originals/station.png",
+      "generator": "imagegen built-in",
+      "sourceWidth": 1672,
+      "sourceHeight": 941,
+      "deliveryWidth": 1920,
+      "deliveryHeight": 1080,
+      "adaptation": "等比例Lanczos适配1920×1080，居中裁去不足一像素比例差；保留原始生成文件"
+    },
+    {
+      "kind": "background",
+      "key": "sky",
+      "storage": "backgrounds/spring-sky.png",
+      "prompt": "Use case: illustration-story. One original 16:9 anime environment background, 1920x1080 or higher. A calm bright spring sky over a quiet coastal hillside, soft blue sky fills upper three quarters with delicate sunlit white clouds, a few cherry branches framing upper corners and cream rooftops low at the horizon, warm morning light, pale turquoise sea visible between roofs. Refined hand-painted Japanese-animation background art, hopeful intimate atmosphere matching a spring cinema visual novel. Spacious uncluttered composition usable as a system page background; bottom fifth gentle and low contrast. No people, no text, no watermark, no logos, no montage.",
+      "original": "sources/images/originals/sky.png",
+      "generator": "imagegen built-in",
+      "sourceWidth": 1672,
+      "sourceHeight": 941,
+      "deliveryWidth": 1920,
+      "deliveryHeight": 1080,
+      "adaptation": "等比例Lanczos适配1920×1080，居中裁去不足一像素比例差；保留原始生成文件"
+    },
+    {
+      "kind": "background",
+      "key": "sunset",
+      "storage": "backgrounds/spring-sunset.png",
+      "prompt": "Use case: illustration-story. One original 16:9 landscape full-HD anime visual novel background, softly painted coastal spring sunset. A wide sky of muted peach, coral and lavender fading into deep blue above the sea, tiny warm lights of the old neighborhood and a cinema roof silhouette only along the bottom edge, a few natural clouds catching gold. Quiet intimate hope after a final outdoor film screening. Rich refined Japanese-animation environment painting, subtle luminous air and convincing clouds, generous clean sky for the story title, no typography painted in. No people, no text, logos, watermark or collage. 1920x1080 or larger.",
+      "original": "sources/images/originals/sunset.png",
+      "generator": "imagegen built-in",
+      "sourceWidth": 1672,
+      "sourceHeight": 941,
+      "deliveryWidth": 1920,
+      "deliveryHeight": 1080,
+      "adaptation": "等比例Lanczos适配1920×1080，居中裁去不足一像素比例差；保留原始生成文件"
+    },
+    {
+      "kind": "cg",
+      "key": "deepseek",
+      "storage": "cg/spring-deepseek.png",
+      "prompt": "Use case: illustration-story, identity-preserve. The attached image is a CHARACTER DESIGN REFERENCE, not a target image to reproduce. Create one original 16:9 narrative CG, full HD or larger, for a tender spring coastal cinema visual novel. Match the adult whale-tailed woman exactly: long wavy navy-blue hair with blue tips, blue eyes, white frilled headband, navy-and-white long frilled dress/apron with gold trim and whale emblem, blue fin-like ears and large navy whale tail. Preserve outfit, adult facial identity and proportions. Scene: she is on a small cinema rooftop at late blue hour, holding a warm unlettered paper lantern with both hands and smiling with relieved affection toward the viewer, a few cherry petals in the air. Sea and old neighborhood lights behind, softly glowing outdoor film screen low in distance. Medium three-quarter seated/kneeling composition, hands anatomically sound, tail visible to one side. Clean refined anime character linework integrated with luminous hand-painted scenery, amber lantern light on her face and cool blue evening. Lower fifth unobtrusive for dialogue overlay. No text, logos, watermarks, panels, extra characters, or new clothing.",
+      "original": "sources/images/originals/cg-deepseek.png",
+      "generator": "imagegen built-in",
+      "sourceWidth": 1672,
+      "sourceHeight": 941,
+      "deliveryWidth": 1920,
+      "deliveryHeight": 1080,
+      "adaptation": "等比例Lanczos适配1920×1080，居中裁去不足一像素比例差；保留原始生成文件"
+    },
+    {
+      "kind": "cg",
+      "key": "chatgpt",
+      "storage": "cg/spring-chatgpt.png",
+      "prompt": "Use case: illustration-story, identity-preserve. The attached image is the precise CHARACTER DESIGN REFERENCE only. Create ONE original 16:9 narrative CG, full HD or larger, for a hopeful intimate coastal cinema visual novel. Preserve the adult silver-haired dragon woman: very long silver-white hair, pale lavender eyes, curved white dragon horns, small pointed ears, white scaled tail, elegant long white and pale lavender dress with silver Chinese knot ornaments and layered translucent sleeves, identical outfit and adult face/proportions. Scene: she sits beside the old cinema's outdoor projection screen and carefully stitches a tiny star-shaped cloth patch onto a torn corner, looking up toward the viewer with a young gentle smile. Warm string lights above, a reel of film nearby, cherry petals and cool blue spring night harbor in the softly painted background. Medium-wide three-quarter composition, character on right half, hands clearly holding fabric and needle with natural anatomy, tail curled beside her. Refined clean anime character illustration integrated into luminous hand-painted scenery. Quiet lower fifth for dialogue. No other characters, readable text, logos, watermark, collage or new clothing.",
+      "original": "sources/images/originals/cg-chatgpt.png",
+      "generator": "imagegen built-in",
+      "sourceWidth": 1672,
+      "sourceHeight": 941,
+      "deliveryWidth": 1920,
+      "deliveryHeight": 1080,
+      "adaptation": "等比例Lanczos适配1920×1080，居中裁去不足一像素比例差；保留原始生成文件"
+    },
+    {
+      "kind": "cg",
+      "key": "claude",
+      "storage": "cg/spring-claude.png",
+      "prompt": "Use case: illustration-story, identity-preserve. The attached image is the CHARACTER DESIGN REFERENCE, preserve her adult identity and exact costume. Create ONE original 16:9 narrative CG, full HD or larger, for an intimate hopeful spring coastal cinema visual novel. The adult woman has long flowing vivid orange hair, amber eyes, a sunflower hair ornament tied with black ribbon, ivory long-sleeved high-neck blouse and full ivory/orange/black long skirt with fine gold botanical trim, black waist sash and orange ribbon, same outfit/proportions. Scene: inside the old cinema's little projection booth, she leans beside a vintage film projector, holding her open brown notebook close and looking directly at the viewer with a warm slightly bashful smile, as if finally telling her own story. A soft beam projects across the room toward a blurred screen beyond the window; warm amber light on her face, cool blue twilight outside, a small vase with a spring blossom. Medium three-quarter shot with natural hands, rich refined anime illustration integrated with hand-painted cinematic scenery. Lower fifth quiet for dialogue. No other characters, readable writing, logos, watermarks, panels, or new clothing.",
+      "original": "sources/images/originals/cg-claude.png",
+      "generator": "imagegen built-in",
+      "sourceWidth": 1672,
+      "sourceHeight": 941,
+      "deliveryWidth": 1920,
+      "deliveryHeight": 1080,
+      "adaptation": "等比例Lanczos适配1920×1080，居中裁去不足一像素比例差；保留原始生成文件"
+    }
+  ]
+}

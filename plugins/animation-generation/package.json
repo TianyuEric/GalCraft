@@ -1,0 +1,24 @@
+{
+  "name": "@galcraft/animation-generation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "galcraft-plugin build .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run src",
+    "check": "galcraft-plugin check package"
+  },
+  "dependencies": {
+    "@galcraft/contracts": "workspace:^",
+    "@galcraft/plugins": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "typescript": "7.0.2",
+    "@galcraft/generation-services": "workspace:*"
+  },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "plugins/animation-generation"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

@@ -1,0 +1,36 @@
+{
+  "createdAt": "2026-10-29",
+  "tool": "image_gen built-in (GPT Image)",
+  "purpose": "春夜影院四片影片的角色操作近景",
+  "images": [
+    {
+      "alias": "deepseekAction",
+      "reference": "cg/spring-deepseek.png",
+      "original": "images/originals/deepseek-action.png",
+      "adopted": "images/deepseek-action.png",
+      "sourceSize": [1672, 941],
+      "deliverySize": [1920, 1080],
+      "prompt": "Use case illustration-story, identity-preserve. Create ONE new cinematic 16:9 anime action shot for the original coastal spring cinema story. The supplied image is a CHARACTER IDENTITY, COSTUME AND PAINTING STYLE REFERENCE. Preserve this adult whale-tailed woman's long navy hair with blue tips, blue eyes, white frilled headband and the EXACT navy-and-white long frilled dress/apron with gold trim and whale emblem, fin-like ears and navy whale tail. New scene: medium three-quarter side shot beside the old cinema at blue hour, she kneels at a wooden equipment table and connects a sturdy black cable plug into a compact brass power distribution box, eyes focused down at the socket. Natural clear hands, one hand holds plug, other steadies box. A loose string of unlit bulbs lies across lower foreground, a few warm lanterns behind, empty outdoor screen and spring harbor out of focus. Composition character on RIGHT half, cable/box visible near lower center, LEFT third is unobstructed dim wooden table for animated cable overlay. Tender, purposeful, no danger, no exposed wires. Refined clean anime linework with rich painterly background, amber and cool blue evening. No writing, text, logos, watermark, collage or panels. Full HD or higher, landscape 16:9."
+    },
+    {
+      "alias": "chatgptAction",
+      "reference": "cg/spring-chatgpt.png",
+      "original": "images/originals/chatgpt-action.png",
+      "adopted": "images/chatgpt-action.png",
+      "sourceSize": [1672, 941],
+      "deliverySize": [1920, 1080],
+      "prompt": "Use case illustration-story, identity-preserve. Create ONE new 16:9 anime cinematic action shot from the supplied precise CHARACTER/COSTUME/STYLE reference. Preserve the adult silver-haired dragon woman's very long silver-white hair, lavender eyes, curved white horns, pointed ears, white scaled tail, exact elegant white and pale lavender dress with silver Chinese knot ornaments and layered flowing sleeves. New scene at same old coastal cinema during spring night: a medium-wide side shot, she raises a strand of small star-shaped paper lanterns to a wooden screen frame, fastening the loose strand with her right hand, left hand supports a lavender star cloth patch. Character on LEFT-center, gentle determined profile facing right; long tail curls lower left. The wooden screen frame stands at right; dim indigo sky and harbor behind. One strand is hanging down unlit, leave upper right open for animated strand/stitched-star graphics. Hands natural and distinct. Amber lantern light and cool indigo, refined anime linework integrated with painterly scenery. No writing, text, logos, watermark, collage, panels or extra characters. Full HD or higher, landscape 16:9."
+    },
+    {
+      "alias": "claudeAction",
+      "reference": "cg/spring-claude.png",
+      "original": "images/originals/claude-action.png",
+      "adopted": "images/claude-action.png",
+      "sourceSize": [1672, 941],
+      "deliverySize": [1920, 1080],
+      "prompt": "Use case illustration-story, identity-preserve. Create ONE new 16:9 cinematic action shot using the supplied CHARACTER identity, exact costume and painting style reference. Preserve adult woman long flowing vivid orange hair, amber eyes, sunflower ornament with black ribbon, ivory high-neck long-sleeved blouse, ivory/orange/black long skirt, fine gold botanical trim, black sash and orange ribbon. Same coastal cinema projection booth in spring night. New medium-wide composition: she stands at the wooden projector workbench, looking down as she carefully feeds a strip of brown 35mm film between the vintage projector's guide rollers, two natural hands holding the film edges. The large metal reel and clear strip visible on LEFT, character at right-center. Closed brown sunflower notebook and vintage compact camera rest on foreground table lower right; window shows blue harbor. A projector beam has not yet switched on. Warm brass practical light, indigo shadow, refined linework and luminous hand-painted background. Leave left lower quadrant clear for animated filmstrip overlay. No readable writing, no logos, watermark, collage, panels or other characters. Landscape 16:9 full HD or higher."
+    }
+  ],
+  "adaptation": "按比例Lanczos放大至1920×1080并居中裁切不足1px的比例差；采用版不将放大尺寸表述为原生生成尺寸。",
+  "review": "逐张检查人物发色、眼睛、标志配饰、服装、尾巴、手与道具关系；保持现有三角色身份及春夜影院的冷蓝／暖金美术。"
+}

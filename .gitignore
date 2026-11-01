@@ -1,0 +1,89 @@
+# Operating systems
+.DS_Store
+Thumbs.db
+Desktop.ini
+/%SystemDrive%/
+*.db
+
+# Editors and IDEs
+.idea/
+.vscode/
+.agents/
+.codex/
+.impeccable/
+*.swp
+*.swo
+*~
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+*.seed
+*.pid.lock
+
+# Dependencies and package-manager caches
+node_modules/
+.pnpm-store/
+.yarn/
+.npm/
+
+# Build, test, and coverage output
+dist/
+dist-main/
+dist-service/
+dist-compiler/
+dist-preview/
+dist-storybook/
+storybook-static/
+build/
+out/
+coverage/
+test-results/
+playwright-report/
+.cache/
+.parcel-cache/
+.turbo/
+.next/
+.codegraph/
+.galcraft-load/
+
+# TypeScript and Vite
+*.tsbuildinfo
+.vite/
+vite.config.*.timestamp-*
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Temporary and backup files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Prepared external tools
+/tools/fonts/cache/
+/tools/fonts/deps/
+
+/tools/media/cache/
+/tools/media/runtime/
+/tools/motion-canvas/runtime/
+
+# Playwright MCP local evidence
+.playwright-mcp/
+
+# Rebuilt official plugin distributions
+/plugins/*/package/

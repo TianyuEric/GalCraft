@@ -1,0 +1,10 @@
+{
+  "binaryBuildRun": "https://github.com/BtbN/FFmpeg-Builds/actions/runs/41053493863",
+  "dependencyBuildRun": "https://github.com/BtbN/FFmpeg-Builds/actions/runs/40871264069",
+  "binaryBuildRecipeRevision": "5031c6f1082414e53688d39e521849905071070d",
+  "cacheReuseEvidence": "The 2026-10-30 win64-lgpl-9.0 image job124057305737 reports the rav1e build stage CACHED. Its exported build-cache records reuse the rav1e layer created 2026-10-29T15:19:26.914423003Z; the original job123535205173 ends that build stage 2026-10-29T15:19:27.0109574Z.",
+  "rav1eOriginalBuildJob": "https://github.com/BtbN/FFmpeg-Builds/actions/runs/40871264069/job/123535205173",
+  "rustOriginalBaseJob": "https://github.com/BtbN/FFmpeg-Builds/actions/runs/40871264069/job/123438662529",
+  "crosstoolNgSource": "https://github.com/crosstool-ng/crosstool-ng/commit/b1a94f65c5187d99037a4e2f57aefbdf995a9677",
+  "scope": "Upstream build-log and retained layer metadata identify reused inputs. The source archive collection has not been rebuilt."
+}

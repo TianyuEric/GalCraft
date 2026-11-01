@@ -1,0 +1,96 @@
+{
+  "manifest": {
+    "schemaVersion": 2,
+    "id": "org.example.vector-shape",
+    "name": "Vector shapes",
+    "version": "0.1.0",
+    "description": "A real extensible polygon asset type",
+    "author": "GalCraft SDK example",
+    "license": "MPL-2.0",
+    "homepage": null,
+    "engineRange": "^0.1.0",
+    "sdkMajor": 0,
+    "targets": [
+      "web",
+      "windows"
+    ],
+    "dependencies": [],
+    "contributions": [
+      {
+        "kind": "assetType",
+        "key": "org.example.vector-shape/shape",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "resource",
+        "key": "org.example.vector-shape/parser",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "stage",
+        "key": "org.example.vector-shape/canvas",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "command",
+        "key": "org.example.vector-shape/show",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "assetEditor",
+        "key": "org.example.vector-shape/properties",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "assetPreview",
+        "key": "org.example.vector-shape/preview",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "assetThumbnail",
+        "key": "org.example.vector-shape/thumbnail",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      }
+    ],
+    "stateVersions": {
+      "document": 1,
+      "progress": 1,
+      "longTerm": 1
+    },
+    "native": []
+  },
+  "sources": {
+    "definition": "src/definition.ts",
+    "services": "src/services.ts",
+    "runtime": "src/runtime.ts",
+    "editor": "src/editor.ts"
+  }
+}

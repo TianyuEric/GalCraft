@@ -1,0 +1,60 @@
+{
+  "manifest": {
+    "schemaVersion": 2,
+    "id": "org.galcraft.animation-generation",
+    "name": "GCA 动画制作",
+    "version": "0.1.0",
+    "description": "使用已配置的兼容文字连接新建、局部修改或重写 GCA 动画，并在审阅后采用候选。",
+    "localizations": {
+      "en": {
+        "name": "GCA Animation",
+        "description": "Use a configured compatible text connection to create, partially edit or rewrite GCA animations, then review and adopt candidates."
+      },
+      "ja": {
+        "name": "GCA アニメーション制作",
+        "description": "設定済みの対応テキスト接続で GCA アニメーションを新規作成・部分修正・全体書き換えし、候補を確認して採用します。"
+      }
+    },
+    "author": "GalCraft",
+    "license": "MPL-2.0",
+    "homepage": null,
+    "engineRange": "^0.1.0",
+    "sdkMajor": 0,
+    "targets": [
+      "web",
+      "windows"
+    ],
+    "dependencies": [],
+    "contributions": [
+      {
+        "kind": "productionOperation",
+        "key": "org.galcraft.animation-generation/generateGca",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "textPreparation",
+        "key": "org.galcraft.animation-generation/text",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      }
+    ],
+    "stateVersions": {
+      "document": 0,
+      "progress": 0,
+      "longTerm": 0
+    },
+    "native": []
+  },
+  "sources": {
+    "definition": "src/definition.ts",
+    "services": "src/services.ts"
+  },
+  "nativeSources": []
+}

@@ -1,0 +1,14 @@
+Source: https://github.com/BtbN/FFmpeg-Builds/actions/runs/40871264069/job/123535205173
+Selected original build-log lines:
+
+2026-10-29T15:16:33.8538935Z #23 0.264 + cargo update cc
+2026-10-29T15:16:34.5055161Z #23 1.057      Locking 3 packages to highest compatible versions
+2026-10-29T15:16:34.5055801Z #23 1.064     Updating cc v1.2.26 -> v1.10.0
+2026-10-29T15:16:34.5056629Z #23 1.073       Adding find-msvc-tools v0.1.15
+2026-10-29T15:16:34.5057021Z #23 1.103       Adding shlex v2.0.1
+2026-10-29T15:16:35.2181280Z #23 1.775   Downloaded shlex v2.0.1
+2026-10-29T15:16:35.2181916Z #23 1.777   Downloaded find-msvc-tools v0.1.15
+2026-10-29T15:16:35.5833128Z #23 2.077   Downloaded cc v1.10.0
+2026-10-29T15:16:36.0875980Z #23 2.632    Compiling find-msvc-tools v0.1.15
+2026-10-29T15:16:36.2374073Z #23 2.699    Compiling shlex v2.0.1
+2026-10-29T15:16:38.1701189Z #23 4.544    Compiling cc v1.10.0

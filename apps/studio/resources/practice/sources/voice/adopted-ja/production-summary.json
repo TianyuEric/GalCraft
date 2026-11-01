@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "producedAt": "2026-10-29",
+  "locale": "ja",
+  "textLocale": "zh-CN",
+  "lineCount": 39,
+  "tool": "GalCraft M10 / org.galcraft.voice-comfy@0.1.0",
+  "model": "Aratako/Irodori-TTS-v4.1-Small",
+  "format": "MP3",
+  "scope": "39 adopted finished Japanese recordings and Chinese/Japanese dialogue correspondence.",
+  "license": "CC-BY-4.0",
+  "attribution": "TianyuEric / GalCraft contributors"
+}

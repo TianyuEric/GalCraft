@@ -1,0 +1,25 @@
+const path = require('node:path');
+module.exports = {
+  appId: 'org.galcraft.studio', productName: 'GalCraft Studio', electronVersion: '43.7.0',
+  directories: { app: 'build/studio-package/app', output: 'out/studio', buildResources: 'assets/branding' },
+  files: ['**/*'], asar: false, npmRebuild: false,
+  copyright: 'Copyright © GalCraft',
+  extraResources: [
+    { from: 'build/studio-package/resources/engines', to: 'engines' },
+    { from: 'build/studio-package/resources/media', to: 'media' },
+    { from: 'build/studio-package/resources/plugins', to: 'plugins' },
+    { from: 'build/studio-package/resources/motion-canvas', to: 'motion-canvas' },
+    { from: 'build/studio-package/resources/distribution.json', to: 'distribution.json' },
+  ],
+  win: { target: [{ target: 'nsis', arch: ['x64', 'arm64'] }], icon: 'assets/branding/galcraft.ico', forceCodeSigning: true,
+    executableName: 'GalCraft Studio', signtoolOptions: { sign: path.join(__dirname, 'tools/windows-sign.cjs'), signingHashAlgorithms: ['sha256'], publisherName: 'GalCraft' } },
+  linux: { target: [{ target: 'AppImage', arch: ['x64', 'arm64'] }], icon: 'assets/branding/galcraft.png',
+    maintainer: 'GalCraft', vendor: 'GalCraft', category: 'Development', artifactName: 'GalCraft-Studio-${version}-linux-${arch}.${ext}' },
+  mac: { target: [{ target: 'dmg', arch: ['x64', 'arm64'] }], icon: 'assets/branding/galcraft.png',
+    category: 'public.app-category.developer-tools', artifactName: 'GalCraft-Studio-${version}-macos-${arch}.${ext}' },
+  nsis: { oneClick: false, perMachine: false, allowToChangeInstallationDirectory: true,
+    installerIcon: 'assets/branding/galcraft.ico', uninstallerIcon: 'assets/branding/galcraft.ico',
+    installerLanguages: ['zh_CN', 'en_US'], language: '2052', createDesktopShortcut: true,
+    createStartMenuShortcut: true, shortcutName: 'GalCraft Studio', runAfterFinish: false,
+    deleteAppDataOnUninstall: false, artifactName: 'GalCraft-Studio-${version}-windows-${arch}-setup.${ext}' },
+};

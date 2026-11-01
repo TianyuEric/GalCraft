@@ -1,0 +1,881 @@
+{
+  "breezeDesign": {
+    "id": "00000000-0000-4000-8000-000000003001",
+    "revision": 1,
+    "name": "breezeDesign",
+    "modelFamily": "breeze-tts-2",
+    "purpose": "org.galcraft.voice-comfy/breezeDesign",
+    "imageUsages": null,
+    "graphVersion": "0.1.0",
+    "apiGraph": {
+      "1": {
+        "class_type": "BreezeTTS2LoadModel",
+        "inputs": {
+          "model": "bf16 (best quality)",
+          "dtype": "auto",
+          "device": "auto",
+          "attention": "auto",
+          "decode_mode": "eager",
+          "download_if_missing": false
+        }
+      },
+      "2": {
+        "class_type": "BreezeTTS2VoiceDesign",
+        "inputs": {
+          "text": "",
+          "instruction": "",
+          "cfg_scale": 4,
+          "max_new_tokens": 1500,
+          "temperature": 0.9,
+          "top_k": 50,
+          "top_p": 1,
+          "repetition_penalty": 1.1,
+          "depth_temperature": 0.9,
+          "depth_top_k": 50,
+          "depth_top_p": 1,
+          "seed": 42,
+          "breeze_model": [
+            "1",
+            0
+          ]
+        }
+      },
+      "4": {
+        "class_type": "SaveAudioAdvanced",
+        "inputs": {
+          "filename_prefix": "GalCraft/voice/breezeDesign",
+          "format": "mp3",
+          "format.quality": "V0",
+          "audio": [
+            "2",
+            0
+          ]
+        }
+      }
+    },
+    "editorWorkflowPath": null,
+    "inputs": [
+      {
+        "port": "text",
+        "nodeId": "2",
+        "classType": "BreezeTTS2VoiceDesign",
+        "input": "text",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "seed",
+        "nodeId": "2",
+        "classType": "BreezeTTS2VoiceDesign",
+        "input": "seed",
+        "valueType": "number",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "voiceDescription",
+        "nodeId": "2",
+        "classType": "BreezeTTS2VoiceDesign",
+        "input": "instruction",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      }
+    ],
+    "uploads": [],
+    "outputs": [
+      {
+        "nodeId": "4",
+        "key": "audio",
+        "kind": "audio",
+        "decoder": "comfyFileList",
+        "group": "voice",
+        "role": "primary",
+        "background": "unknown",
+        "port": "audio"
+      }
+    ],
+    "requiredNodes": [
+      {
+        "classType": "BreezeTTS2VoiceDesign",
+        "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+      },
+      {
+        "classType": "SaveAudioAdvanced",
+        "versionNote": "ComfyUI 0.35.2"
+      },
+      {
+        "classType": "BreezeTTS2LoadModel",
+        "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+      }
+    ],
+    "modelNotes": [
+      {
+        "name": "Breeze TTS 2",
+        "source": "https://huggingface.co/BreezeBlue/Breeze-TTS-2",
+        "license": "Research/non-commercial weights; verify output authorization"
+      }
+    ]
+  },
+  "breezeClone": {
+    "id": "00000000-0000-4000-8000-000000003002",
+    "revision": 1,
+    "name": "breezeClone",
+    "modelFamily": "breeze-tts-2",
+    "purpose": "org.galcraft.voice-comfy/breezeClone",
+    "imageUsages": null,
+    "graphVersion": "0.1.0",
+    "apiGraph": {
+      "1": {
+        "class_type": "BreezeTTS2LoadModel",
+        "inputs": {
+          "model": "bf16 (best quality)",
+          "dtype": "auto",
+          "device": "auto",
+          "attention": "auto",
+          "decode_mode": "eager",
+          "download_if_missing": false
+        }
+      },
+      "4": {
+        "class_type": "SaveAudioAdvanced",
+        "inputs": {
+          "filename_prefix": "GalCraft/voice/breezeClone",
+          "format": "mp3",
+          "format.quality": "V0",
+          "audio": [
+            "6",
+            0
+          ]
+        }
+      },
+      "6": {
+        "class_type": "BreezeTTS2VoiceClone",
+        "inputs": {
+          "text": "",
+          "reference_text": "",
+          "cfg_scale": 1,
+          "max_new_tokens": 1500,
+          "temperature": 0.9,
+          "top_k": 50,
+          "top_p": 1,
+          "repetition_penalty": 1.1,
+          "depth_temperature": 0.9,
+          "depth_top_k": 50,
+          "depth_top_p": 1,
+          "seed": 42,
+          "breeze_model": [
+            "1",
+            0
+          ],
+          "reference_audio": [
+            "8",
+            0
+          ]
+        }
+      },
+      "8": {
+        "class_type": "LoadAudio",
+        "inputs": {
+          "audio": ""
+        }
+      }
+    },
+    "editorWorkflowPath": null,
+    "inputs": [
+      {
+        "port": "text",
+        "nodeId": "6",
+        "classType": "BreezeTTS2VoiceClone",
+        "input": "text",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "seed",
+        "nodeId": "6",
+        "classType": "BreezeTTS2VoiceClone",
+        "input": "seed",
+        "valueType": "number",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "referenceAudio",
+        "nodeId": "8",
+        "classType": "LoadAudio",
+        "input": "audio",
+        "valueType": "audioFile",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "referenceText",
+        "nodeId": "6",
+        "classType": "BreezeTTS2VoiceClone",
+        "input": "reference_text",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      }
+    ],
+    "uploads": [
+      {
+        "port": "referenceAudio",
+        "method": "comfyImage",
+        "subfolder": "GalCraft/voice",
+        "serverRoot": null,
+        "serverPathFormat": "relative"
+      }
+    ],
+    "outputs": [
+      {
+        "nodeId": "4",
+        "key": "audio",
+        "kind": "audio",
+        "decoder": "comfyFileList",
+        "group": "voice",
+        "role": "primary",
+        "background": "unknown",
+        "port": "audio"
+      }
+    ],
+    "requiredNodes": [
+      {
+        "classType": "SaveAudioAdvanced",
+        "versionNote": "ComfyUI 0.35.2"
+      },
+      {
+        "classType": "BreezeTTS2LoadModel",
+        "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+      },
+      {
+        "classType": "LoadAudio",
+        "versionNote": "ComfyUI 0.35.2"
+      },
+      {
+        "classType": "BreezeTTS2VoiceClone",
+        "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+      }
+    ],
+    "modelNotes": [
+      {
+        "name": "Breeze TTS 2",
+        "source": "https://huggingface.co/BreezeBlue/Breeze-TTS-2",
+        "license": "Research/non-commercial weights; verify output authorization"
+      }
+    ]
+  },
+  "breezeDirection": {
+    "id": "00000000-0000-4000-8000-000000003003",
+    "revision": 1,
+    "name": "breezeDirection",
+    "modelFamily": "breeze-tts-2",
+    "purpose": "org.galcraft.voice-comfy/breezeDirection",
+    "imageUsages": null,
+    "graphVersion": "0.1.0",
+    "apiGraph": {
+      "1": {
+        "class_type": "BreezeTTS2LoadModel",
+        "inputs": {
+          "model": "bf16 (best quality)",
+          "dtype": "auto",
+          "device": "auto",
+          "attention": "auto",
+          "decode_mode": "eager",
+          "download_if_missing": false
+        }
+      },
+      "4": {
+        "class_type": "SaveAudioAdvanced",
+        "inputs": {
+          "filename_prefix": "GalCraft/voice/breezeDirection",
+          "format": "mp3",
+          "format.quality": "V0",
+          "audio": [
+            "7",
+            0
+          ]
+        }
+      },
+      "7": {
+        "class_type": "BreezeTTS2VoiceDirection",
+        "inputs": {
+          "text": "",
+          "reference_text": "",
+          "instruction": "",
+          "cfg_scale": 4,
+          "stitch_reference": "none",
+          "max_new_tokens": 1500,
+          "temperature": 0.9,
+          "top_k": 50,
+          "top_p": 1,
+          "repetition_penalty": 1.1,
+          "depth_temperature": 0.9,
+          "depth_top_k": 50,
+          "depth_top_p": 1,
+          "seed": 42,
+          "breeze_model": [
+            "1",
+            0
+          ],
+          "reference_audio": [
+            "8",
+            0
+          ]
+        }
+      },
+      "8": {
+        "class_type": "LoadAudio",
+        "inputs": {
+          "audio": ""
+        }
+      }
+    },
+    "editorWorkflowPath": null,
+    "inputs": [
+      {
+        "port": "text",
+        "nodeId": "7",
+        "classType": "BreezeTTS2VoiceDirection",
+        "input": "text",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "seed",
+        "nodeId": "7",
+        "classType": "BreezeTTS2VoiceDirection",
+        "input": "seed",
+        "valueType": "number",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "performanceInstruction",
+        "nodeId": "7",
+        "classType": "BreezeTTS2VoiceDirection",
+        "input": "instruction",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "referenceAudio",
+        "nodeId": "8",
+        "classType": "LoadAudio",
+        "input": "audio",
+        "valueType": "audioFile",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "referenceText",
+        "nodeId": "7",
+        "classType": "BreezeTTS2VoiceDirection",
+        "input": "reference_text",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      }
+    ],
+    "uploads": [
+      {
+        "port": "referenceAudio",
+        "method": "comfyImage",
+        "subfolder": "GalCraft/voice",
+        "serverRoot": null,
+        "serverPathFormat": "relative"
+      }
+    ],
+    "outputs": [
+      {
+        "nodeId": "4",
+        "key": "audio",
+        "kind": "audio",
+        "decoder": "comfyFileList",
+        "group": "voice",
+        "role": "primary",
+        "background": "unknown",
+        "port": "audio"
+      }
+    ],
+    "requiredNodes": [
+      {
+        "classType": "SaveAudioAdvanced",
+        "versionNote": "ComfyUI 0.35.2"
+      },
+      {
+        "classType": "BreezeTTS2LoadModel",
+        "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+      },
+      {
+        "classType": "LoadAudio",
+        "versionNote": "ComfyUI 0.35.2"
+      },
+      {
+        "classType": "BreezeTTS2VoiceDirection",
+        "versionNote": "3461ca6011b7e833147b2e7edb779da7a08c6259"
+      }
+    ],
+    "modelNotes": [
+      {
+        "name": "Breeze TTS 2",
+        "source": "https://huggingface.co/BreezeBlue/Breeze-TTS-2",
+        "license": "Research/non-commercial weights; verify output authorization"
+      }
+    ]
+  },
+  "irodoriDesign": {
+    "id": "00000000-0000-4000-8000-000000003004",
+    "revision": 1,
+    "name": "irodoriDesign",
+    "modelFamily": "irodori-v4.1-small",
+    "purpose": "org.galcraft.voice-comfy/irodoriDesign",
+    "imageUsages": null,
+    "graphVersion": "0.1.0",
+    "apiGraph": {
+      "1": {
+        "class_type": "kjranyone.IrodoriTTS.ModelLoader",
+        "inputs": {
+          "model": "Irodori-TTS-v4.1-Small\\model.safetensors",
+          "model_device": "cuda",
+          "model_precision": "bf16",
+          "codec_device": "cpu",
+          "codec_precision": "fp32",
+          "enable_watermark": false,
+          "enable_silentcipher": false,
+          "compile_model": false,
+          "compile_dynamic": false,
+          "runtime_cache_policy": "offload_after_use"
+        }
+      },
+      "3": {
+        "class_type": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+        "inputs": {
+          "caption": "",
+          "max_caption_len": 0
+        }
+      },
+      "4": {
+        "class_type": "kjranyone.IrodoriTTS.Sampler",
+        "inputs": {
+          "text": "",
+          "seed": 42,
+          "seconds": 0,
+          "num_steps": 40,
+          "batch_size": 1,
+          "decode_mode": "sequential",
+          "context_kv_cache": true,
+          "max_text_len": 0,
+          "trim_tail": true,
+          "model_config": [
+            "1",
+            0
+          ],
+          "voice_design_config": [
+            "3",
+            0
+          ]
+        }
+      },
+      "6": {
+        "class_type": "SaveAudioAdvanced",
+        "inputs": {
+          "filename_prefix": "GalCraft/voice/irodoriDesign",
+          "format": "mp3",
+          "format.quality": "V0",
+          "audio": [
+            "4",
+            0
+          ]
+        }
+      }
+    },
+    "editorWorkflowPath": null,
+    "inputs": [
+      {
+        "port": "text",
+        "nodeId": "4",
+        "classType": "kjranyone.IrodoriTTS.Sampler",
+        "input": "text",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "seed",
+        "nodeId": "4",
+        "classType": "kjranyone.IrodoriTTS.Sampler",
+        "input": "seed",
+        "valueType": "number",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "voiceDescription",
+        "nodeId": "3",
+        "classType": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+        "input": "caption",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      }
+    ],
+    "uploads": [],
+    "outputs": [
+      {
+        "nodeId": "6",
+        "key": "audio",
+        "kind": "audio",
+        "decoder": "comfyFileList",
+        "group": "voice",
+        "role": "primary",
+        "background": "unknown",
+        "port": "audio"
+      }
+    ],
+    "requiredNodes": [
+      {
+        "classType": "kjranyone.IrodoriTTS.ModelLoader",
+        "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+      },
+      {
+        "classType": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+        "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+      },
+      {
+        "classType": "kjranyone.IrodoriTTS.Sampler",
+        "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+      },
+      {
+        "classType": "SaveAudioAdvanced",
+        "versionNote": "ComfyUI 0.35.2"
+      }
+    ],
+    "modelNotes": [
+      {
+        "name": "Irodori v4.1 Small",
+        "source": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small",
+        "license": "MIT model card and stated usage restrictions"
+      }
+    ]
+  },
+  "irodoriClone": {
+    "id": "00000000-0000-4000-8000-000000003005",
+    "revision": 1,
+    "name": "irodoriClone",
+    "modelFamily": "irodori-v4.1-small",
+    "purpose": "org.galcraft.voice-comfy/irodoriClone",
+    "imageUsages": null,
+    "graphVersion": "0.1.0",
+    "apiGraph": {
+      "1": {
+        "class_type": "kjranyone.IrodoriTTS.ModelLoader",
+        "inputs": {
+          "model": "Irodori-TTS-v4.1-Small\\model.safetensors",
+          "model_device": "cuda",
+          "model_precision": "bf16",
+          "codec_device": "cpu",
+          "codec_precision": "fp32",
+          "enable_watermark": false,
+          "enable_silentcipher": false,
+          "compile_model": false,
+          "compile_dynamic": false,
+          "runtime_cache_policy": "offload_after_use"
+        }
+      },
+      "2": {
+        "class_type": "kjranyone.IrodoriTTS.ReferenceAudio",
+        "inputs": {
+          "audio": "",
+          "ref_latent": "None",
+          "ref_normalize_db": -16,
+          "max_ref_seconds": 0
+        }
+      },
+      "4": {
+        "class_type": "kjranyone.IrodoriTTS.Sampler",
+        "inputs": {
+          "text": "",
+          "seed": 42,
+          "seconds": 0,
+          "num_steps": 40,
+          "batch_size": 1,
+          "decode_mode": "sequential",
+          "context_kv_cache": true,
+          "max_text_len": 0,
+          "trim_tail": true,
+          "model_config": [
+            "1",
+            0
+          ],
+          "ref_config": [
+            "2",
+            0
+          ]
+        }
+      },
+      "6": {
+        "class_type": "SaveAudioAdvanced",
+        "inputs": {
+          "filename_prefix": "GalCraft/voice/irodoriClone",
+          "format": "mp3",
+          "format.quality": "V0",
+          "audio": [
+            "4",
+            0
+          ]
+        }
+      }
+    },
+    "editorWorkflowPath": null,
+    "inputs": [
+      {
+        "port": "text",
+        "nodeId": "4",
+        "classType": "kjranyone.IrodoriTTS.Sampler",
+        "input": "text",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "seed",
+        "nodeId": "4",
+        "classType": "kjranyone.IrodoriTTS.Sampler",
+        "input": "seed",
+        "valueType": "number",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "referenceAudio",
+        "nodeId": "2",
+        "classType": "kjranyone.IrodoriTTS.ReferenceAudio",
+        "input": "audio",
+        "valueType": "audioFile",
+        "required": true,
+        "transform": "identity"
+      }
+    ],
+    "uploads": [
+      {
+        "port": "referenceAudio",
+        "method": "comfyImage",
+        "subfolder": "GalCraft/voice",
+        "serverRoot": null,
+        "serverPathFormat": "relative"
+      }
+    ],
+    "outputs": [
+      {
+        "nodeId": "6",
+        "key": "audio",
+        "kind": "audio",
+        "decoder": "comfyFileList",
+        "group": "voice",
+        "role": "primary",
+        "background": "unknown",
+        "port": "audio"
+      }
+    ],
+    "requiredNodes": [
+      {
+        "classType": "kjranyone.IrodoriTTS.ModelLoader",
+        "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+      },
+      {
+        "classType": "kjranyone.IrodoriTTS.ReferenceAudio",
+        "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+      },
+      {
+        "classType": "kjranyone.IrodoriTTS.Sampler",
+        "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+      },
+      {
+        "classType": "SaveAudioAdvanced",
+        "versionNote": "ComfyUI 0.35.2"
+      }
+    ],
+    "modelNotes": [
+      {
+        "name": "Irodori v4.1 Small",
+        "source": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small",
+        "license": "MIT model card and stated usage restrictions"
+      }
+    ]
+  },
+  "irodoriDirection": {
+    "id": "00000000-0000-4000-8000-000000003006",
+    "revision": 1,
+    "name": "irodoriDirection",
+    "modelFamily": "irodori-v4.1-small",
+    "purpose": "org.galcraft.voice-comfy/irodoriDirection",
+    "imageUsages": null,
+    "graphVersion": "0.1.0",
+    "apiGraph": {
+      "1": {
+        "class_type": "kjranyone.IrodoriTTS.ModelLoader",
+        "inputs": {
+          "model": "Irodori-TTS-v4.1-Small\\model.safetensors",
+          "model_device": "cuda",
+          "model_precision": "bf16",
+          "codec_device": "cpu",
+          "codec_precision": "fp32",
+          "enable_watermark": false,
+          "enable_silentcipher": false,
+          "compile_model": false,
+          "compile_dynamic": false,
+          "runtime_cache_policy": "offload_after_use"
+        }
+      },
+      "2": {
+        "class_type": "kjranyone.IrodoriTTS.ReferenceAudio",
+        "inputs": {
+          "audio": "",
+          "ref_latent": "None",
+          "ref_normalize_db": -16,
+          "max_ref_seconds": 0
+        }
+      },
+      "3": {
+        "class_type": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+        "inputs": {
+          "caption": "",
+          "max_caption_len": 0
+        }
+      },
+      "4": {
+        "class_type": "kjranyone.IrodoriTTS.Sampler",
+        "inputs": {
+          "text": "",
+          "seed": 42,
+          "seconds": 0,
+          "num_steps": 40,
+          "batch_size": 1,
+          "decode_mode": "sequential",
+          "context_kv_cache": true,
+          "max_text_len": 0,
+          "trim_tail": true,
+          "model_config": [
+            "1",
+            0
+          ],
+          "ref_config": [
+            "2",
+            0
+          ],
+          "voice_design_config": [
+            "3",
+            0
+          ]
+        }
+      },
+      "6": {
+        "class_type": "SaveAudioAdvanced",
+        "inputs": {
+          "filename_prefix": "GalCraft/voice/irodoriDirection",
+          "format": "mp3",
+          "format.quality": "V0",
+          "audio": [
+            "4",
+            0
+          ]
+        }
+      }
+    },
+    "editorWorkflowPath": null,
+    "inputs": [
+      {
+        "port": "text",
+        "nodeId": "4",
+        "classType": "kjranyone.IrodoriTTS.Sampler",
+        "input": "text",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "seed",
+        "nodeId": "4",
+        "classType": "kjranyone.IrodoriTTS.Sampler",
+        "input": "seed",
+        "valueType": "number",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "performanceInstruction",
+        "nodeId": "3",
+        "classType": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+        "input": "caption",
+        "valueType": "string",
+        "required": true,
+        "transform": "identity"
+      },
+      {
+        "port": "referenceAudio",
+        "nodeId": "2",
+        "classType": "kjranyone.IrodoriTTS.ReferenceAudio",
+        "input": "audio",
+        "valueType": "audioFile",
+        "required": true,
+        "transform": "identity"
+      }
+    ],
+    "uploads": [
+      {
+        "port": "referenceAudio",
+        "method": "comfyImage",
+        "subfolder": "GalCraft/voice",
+        "serverRoot": null,
+        "serverPathFormat": "relative"
+      }
+    ],
+    "outputs": [
+      {
+        "nodeId": "6",
+        "key": "audio",
+        "kind": "audio",
+        "decoder": "comfyFileList",
+        "group": "voice",
+        "role": "primary",
+        "background": "unknown",
+        "port": "audio"
+      }
+    ],
+    "requiredNodes": [
+      {
+        "classType": "kjranyone.IrodoriTTS.ModelLoader",
+        "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+      },
+      {
+        "classType": "kjranyone.IrodoriTTS.VoiceDesignConfig",
+        "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+      },
+      {
+        "classType": "kjranyone.IrodoriTTS.ReferenceAudio",
+        "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+      },
+      {
+        "classType": "kjranyone.IrodoriTTS.Sampler",
+        "versionNote": "60b57245c2a6a9544c62c91166c8b80cca141ef7"
+      },
+      {
+        "classType": "SaveAudioAdvanced",
+        "versionNote": "ComfyUI 0.35.2"
+      }
+    ],
+    "modelNotes": [
+      {
+        "name": "Irodori v4.1 Small",
+        "source": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small",
+        "license": "MIT model card and stated usage restrictions"
+      }
+    ]
+  }
+}

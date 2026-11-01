@@ -1,0 +1,24 @@
+.dialogue-portrait-editor { display: grid; gap: 14px; min-width: 0; }
+.dialogue-portrait-editor > label { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.dialogue-portrait-detail:not([hidden]) { display: grid; gap: 12px; min-width: 0; }
+.dialogue-portrait-detail .field-help { margin: 0; line-height: 1.6; }
+.dialogue-portrait-crop { position: relative; width: fit-content; max-width: calc(100% - 16px); margin: 8px auto; background: repeating-conic-gradient(#d4d4d4 0% 25%, #f5f5f5 0% 50%) 50% / 16px 16px; border: 1px solid var(--border, #d4d4d4); touch-action: none; }
+.dialogue-portrait-crop img { display: block; max-height: 280px; max-width: 100%; user-select: none; }
+.dialogue-portrait-crop-rect { position: absolute; box-sizing: border-box; border: 2px solid #fff; background: #00000018; outline: 1px solid #171717; cursor: move; touch-action: none; }
+.dialogue-portrait-crop-rect:focus-visible { outline: 3px solid var(--focus, #171717); outline-offset: 3px; }
+.dialogue-portrait-editor .dialogue-portrait-handle { position: absolute; width: 14px; height: 14px; min-width: 0; min-height: 0; padding: 0; border: 1px solid #171717; border-radius: 3px; background: #fff; box-shadow: 0 0 0 1px #fff; font-size: 0; touch-action: none; }
+.dialogue-portrait-handle:focus-visible { outline: 3px solid var(--focus, #171717); outline-offset: 3px; }
+.handle-nw { left: -8px; top: -8px; cursor: nwse-resize; }
+.handle-ne { right: -8px; top: -8px; cursor: nesw-resize; }
+.handle-sw { left: -8px; bottom: -8px; cursor: nesw-resize; }
+.handle-se { right: -8px; bottom: -8px; cursor: nwse-resize; }
+.dialogue-portrait-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.dialogue-portrait-values > label { display: grid; gap: 5px; font-size: 12px; color: var(--muted-foreground, #666); }
+.dialogue-portrait-values input { width: 100%; min-width: 0; }
+.dialogue-portrait-editor input[type="checkbox"] { accent-color: var(--foreground, #171717); }
+.dialogue-portrait-values input[type="number"] { box-sizing: border-box; min-height: 34px; padding: 6px 9px; border: 1px solid var(--border, #dedede); border-radius: 6px; background: var(--background, #fff); color: var(--foreground, #171717); font: inherit; font-size: 13px; }
+.dialogue-portrait-summary { font-size: 12px; color: var(--muted-foreground, #666); font-variant-numeric: tabular-nums; }
+.dialogue-portrait-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dialogue-portrait-actions button { min-height: 32px; padding: 6px 10px; border: 1px solid var(--border, #dedede); border-radius: 6px; background: var(--background, #fff); color: var(--foreground, #171717); font: inherit; font-size: 12px; cursor: pointer; }
+.dialogue-portrait-editor button:focus-visible, .dialogue-portrait-editor input:focus-visible { outline: 2px solid var(--ring, #171717); outline-offset: 2px; }
+.dialogue-portrait-editor .portrait-apply { background: var(--foreground, #171717); color: var(--background, #fff); border-color: var(--foreground, #171717); }

@@ -1,0 +1,38 @@
+.tree-workspace { display:grid; grid-template-columns:240px minmax(0,1fr); flex:1; min-height:0; }
+.tree-explorer { display:flex; flex-direction:column; min-height:0; border-right:1px solid var(--border); background:var(--workbench-explorer); }
+.tree-explorer > header { display:flex; justify-content:space-between; padding:12px; font-size:13px; }
+.tree-explorer > header span { font-size:12px; color:var(--foreground-secondary); }
+.tree-search { display:flex; align-items:center; gap:6px; margin:0 8px; padding:0 8px; height:32px; border:1px solid var(--border); border-radius:4px; background:var(--background); }
+.tree-search:focus-within { outline:2px solid var(--ring); outline-offset:-1px; }
+.tree-search input { min-width:0; width:100%; border:0; outline:0!important; background:transparent; color:var(--foreground); font:13px var(--font-sans); }
+.tree-search button, .tree-selection-info button, .tree-no-results button { border:0; background:none; color:var(--primary); cursor:pointer; font:inherit; }
+.tree-selection-info { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:2px; padding:6px 8px; font-size:11px; color:var(--foreground-secondary); min-height:32px; }
+.tree-selection-info strong { font-weight:500; }
+.tree-selection-info button { padding:2px; }
+.tree-viewport { flex:1; min-height:100px; overflow:auto; position:relative; }
+.tree-instance { height:100%; }
+.tree-explorer-footer { border-top:1px solid var(--border); padding:8px; font-size:11px; line-height:16px; color:var(--foreground-secondary); }
+.tree-empty { display:flex; flex-direction:column; align-items:flex-start; gap:8px; padding:24px 12px; }
+.tree-empty p, .tree-no-results { font-size:13px; color:var(--foreground-secondary); }
+.tree-no-results { position:absolute; top:8px; left:12px; right:12px; }
+.tree-document { display:flex; flex-direction:column; min-width:0; min-height:0; }
+.tree-document .candidate-document strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tree-document .candidate-document > span { white-space:nowrap; }
+.tree-document-body { padding:20px 24px; overflow:auto; }
+.tree-context { margin-bottom:16px; }
+.tree-context > span, .tree-inspect span { display:block; font-size:12px; color:var(--foreground-secondary); }
+.tree-context h2 { margin:4px 0!important; font-size:20px; line-height:28px; font-weight:600; overflow-wrap:anywhere; }
+.tree-context p { font-size:13px; color:var(--foreground-secondary); }
+.tree-scene-preview { position:relative; height:clamp(160px,25vh,260px); overflow:hidden; }
+.tree-scene-preview img { width:100%; height:100%; object-fit:cover; }
+.tree-scene-preview > div { position:absolute; bottom:16px; left:24px; right:24px; padding:12px 16px; color:white; background:#24364be6; border-radius:4px; font-size:13px; }
+.tree-inspect { display:flex; gap:16px; align-items:center; justify-content:space-between; padding:16px 0; }
+.tree-inspect > div:first-child { min-width:0; }
+.tree-inspect strong { display:block; font-size:13px; font-weight:500; overflow-wrap:anywhere; }
+.tree-order-buttons { display:flex; gap:4px; flex:none; }
+.tree-lab .candidate-guide li { margin-bottom:4px; }
+.tree-fixture-options { display:flex; flex-wrap:wrap; gap:12px; margin-block:8px; }
+.tree-fixture-options label { display:flex; gap:8px; align-items:center; font-size:13px; }
+.tree-fixture-options select { font:13px var(--font-sans); background:var(--background); color:var(--foreground); border:1px solid var(--border); border-radius:4px; padding:4px; }
+.tree-lab pre { overflow-wrap:anywhere; white-space:pre-wrap; font-size:11px; color:var(--foreground-secondary); }
+@media (max-width:960px) { .tree-document-body { padding:16px; } .tree-lab .candidate-comparison-bar { gap:8px; } }

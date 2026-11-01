@@ -1,0 +1,94 @@
+/* Palette is shared by Studio and its portals in styles/studio-theme.css. */
+.authoring-pilot-toolbar { display:flex; align-items:center; gap:8px; min-width:0; width:100%; height:40px; color:var(--foreground); }
+.authoring-mode-switch { display:flex; align-items:center; gap:4px; flex:none; }
+.authoring-mode-switch button { display:flex; align-items:center; justify-content:center; gap:4px; height:28px; padding:0 8px; font:500 13px/20px var(--font-sans); border:0; border-radius:4px; background:transparent; color:var(--muted-foreground); }
+.authoring-mode-switch button[data-pressed] { color:var(--primary); background:var(--selection); }
+.authoring-mode-switch button:hover { background:var(--surface-hover); }
+.authoring-pilot-toolbar svg { width:16px; height:16px; flex:none; }
+.authoring-history-tools { display:flex; gap:0; border-left:1px solid var(--border); padding-left:8px; }
+.authoring-history-tools button { position:relative; }
+.authoring-save-dot { position:absolute; right:3px; top:3px; width:4px; height:4px; border-radius:50%; background:var(--warning-foreground); }
+.authoring-save-state { color:var(--foreground-tertiary); font-size:12px; white-space:nowrap; }
+.authoring-save-state[data-dirty="true"] { color:var(--warning-foreground); }
+.authoring-play-tools { display:flex; flex:none; gap:1px; margin-left:auto; }
+.authoring-play-tools > button { border-radius:6px 0 0 6px; }
+.authoring-play-tools .authoring-play-range { width:28px; min-width:28px; padding:0; border-radius:0 6px 6px 0; }
+.authoring-pilot-menu { min-width:220px; max-height:var(--available-height); overflow:auto; font:13px/20px var(--font-sans); box-shadow:var(--shadow); }
+.authoring-pilot-menu [role="menuitem"] { min-height:32px; font-size:13px; }
+.authoring-pilot-toolbar :focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
+.command-center-positioner { z-index:1400; }
+.command-center-positioner .command-center-popup { position:relative; top:auto; left:auto; translate:none; width:min(560px,var(--available-width)); max-height:var(--available-height); border-radius:8px; }
+.command-center-positioner .command-center-results { max-height:min(420px,calc(var(--available-height) - 112px)); }
+.authoring-pilot-scope { font:14px/22px var(--font-sans); background:var(--workbench-editor); color:var(--foreground); }
+#app[data-authoring-pilot="true"] {
+  --workbench-resize-width:8px;
+  & .authoring-header { height:44px; }
+  & .gc-wb-document[data-active="true"]::before { top:auto; bottom:0; }
+  & .gc-wb-pane-heading { height:36px; }
+  & .gc-wb-toolbar { min-height:40px; padding:0 8px; gap:8px; }
+  & .gc-wb-object-tools { flex-wrap:nowrap; }
+  & .gc-wb-object-tools > .gc-wb-dom-region { width:100%; }
+  & .gc-wb-object-tools > .authoring-toolbar { padding:0; border:0; width:100%; }
+  & .gc-wb-layout-tools { align-self:center; }
+  & .gc-wb-status { height:24px; }
+  & .authoring-center { padding:0 12px; background:var(--workbench-editor); }
+  & :is(.authoring-card-list,.authoring-writing-list) { display:grid; grid-template-columns:28px minmax(0,1fr); column-gap:4px; row-gap:0; padding:8px 0; }
+  & .authoring-card { grid-column:2; display:flex; flex-wrap:wrap; gap:8px; margin:0; padding:8px; min-height:44px; border:0; border-bottom:1px solid var(--border); border-radius:0; background:transparent; box-shadow:none; }
+  & .authoring-card:hover { background:var(--surface-hover); }
+  & .authoring-card.selected { background:var(--selection); box-shadow:inset 2px 0 var(--primary); }
+  & .authoring-card-summary { flex:1 1 200px; min-width:0; white-space:normal; overflow:visible; text-overflow:clip; color:var(--foreground); font:400 14px/22px var(--font-sans); overflow-wrap:anywhere; }
+  & .authoring-card strong, & .authoring-speaker-name { min-width:64px; font-size:13px; font-weight:600; }
+  & .authoring-command-icon { width:20px; height:24px; background:transparent; border-radius:0; }
+  & .authoring-direction-preview { width:56px; height:36px; flex:none; padding:0; order:0; border:0; border-radius:4px; }
+  & .authoring-direction-thumbnail { width:56px; height:36px; object-fit:contain; }
+  & .authoring-voice-state { font-size:12px; color:var(--foreground-tertiary); }
+  & :is(.authoring-grip,.authoring-object-more) { display:grid; place-items:center; width:28px; height:28px; min-width:28px; padding:0; border:0; background:transparent; opacity:0; color:var(--foreground-secondary); }
+  & .authoring-card:is(:hover,:focus-within,.selected) :is(.authoring-grip,.authoring-object-more) { opacity:1; }
+  & .authoring-drop-gap { grid-column:1; align-self:stretch; height:auto; min-height:28px; display:flex; align-items:flex-start; justify-content:center; padding-top:8px; border:0; outline:0; border-radius:0; }
+  & .authoring-drop-gap:last-child { grid-column:1/-1; justify-content:flex-start; padding-top:4px; }
+  & .authoring-drop-gap .authoring-insert-icon { min-width:28px; width:28px; height:28px; padding:0; opacity:0; border:0; background:var(--workbench-editor); color:var(--primary); z-index:2; }
+  & .authoring-insert-label { display:none; font:400 12px/18px var(--font-sans); white-space:nowrap; }
+  & .authoring-insert-icon:is(:hover,:focus-visible), & .authoring-drop-gap[data-position="end"] .authoring-insert-icon { width:max-content; gap:4px; padding-inline:4px 8px; }
+  & .authoring-insert-icon:is(:hover,:focus-visible) .authoring-insert-label, & .authoring-drop-gap[data-position="end"] .authoring-insert-label { display:inline; }
+  & .authoring-drop-gap:is(:hover,:focus-within) .authoring-insert-icon, & .authoring-drop-gap:last-child .authoring-insert-icon { opacity:1; }
+  & .authoring-drop-gap:has(+ .authoring-card:is(:hover,:focus-within)) .authoring-insert-icon { opacity:1; }
+  & .authoring-drop-gap .authoring-insert-icon:hover { background:var(--surface-hover); }
+  & .authoring-insertion-draft { grid-column:2; margin:4px 0; }
+  & .authoring-center > .authoring-selection-tools { position:sticky; bottom:0; padding:4px 0; min-height:36px; margin-top:0; flex-wrap:nowrap; gap:4px; background:var(--workbench-editor); border:0; border-top:1px solid var(--border); border-radius:0; box-shadow:none; }
+  & .authoring-center > .authoring-selection-tools button { height:28px; min-height:28px; padding:0 8px; border:0; background:transparent; font-size:13px; }
+  & .authoring-selection-count { margin-left:auto; white-space:nowrap; font-variant-numeric:tabular-nums; font-size:12px; color:var(--foreground-secondary); }
+  & .authoring-selection-tools .authoring-delete-selected { color:var(--danger-foreground); }
+  & .authoring-inspector { padding:12px; }
+  & .authoring-inspector h2 { font-size:14px; margin:16px 0 4px; }
+  & .authoring-inspector-context { font-size:12px; line-height:18px; color:var(--foreground-secondary); margin-bottom:8px; }
+  & .authoring-field { margin:12px 0; gap:4px; font-size:13px; line-height:20px; }
+  & .authoring-field > span { color:var(--foreground-secondary); font-weight:500; }
+  & .authoring-field :is(input,textarea,select):not([type="checkbox"]):not([type="range"]):not([type="color"]) { font:400 14px/22px var(--font-sans); border-color:var(--control-border); background:var(--input); }
+  & :is(input,textarea)::placeholder { color:var(--foreground-tertiary); opacity:1; }
+  & .authoring-card[data-view="writing"][data-command="say"] { display:grid; grid-template-columns:28px 104px minmax(0,1fr) 28px; gap:8px; padding:8px; }
+  & .authoring-card[data-view="writing"][data-command="say"] .authoring-writing-input { grid-column:3; grid-row:1; font:400 14px/22px var(--font-sans); min-height:52px; padding:4px 8px; }
+  & .authoring-card[data-view="writing"][data-command="say"] .authoring-object-more { grid-column:4; grid-row:1; align-self:start; }
+  & .authoring-card[data-view="writing"] .authoring-speaker-select { margin:4px 0 0; font-size:13px; }
+  & .authoring-card[data-view="writing"].selected { background:var(--selection); box-shadow:inset 2px 0 var(--primary); }
+  & .studio-mini-stage { margin-bottom:12px; }
+  & .studio-mini-stage > strong { font-size:13px; font-weight:500; }
+  & .studio-mini-stage > p { font-size:12px; line-height:18px; color:var(--foreground-secondary); }
+  & .authoring-preview-state { font-size:12px; color:var(--foreground-tertiary); }
+  & .command-more { margin-top:16px; border-top:1px solid var(--border); padding-top:12px; }
+  & .scene-graph-document { height:100%; min-height:0; display:flex; }
+  & .scene-graph-document .scene-relations { flex:1; display:flex; flex-direction:column; min-height:0; height:100%; }
+  & .scene-graph-document .scene-relations-canvas { flex:1; height:auto; min-height:200px; }
+}
+@media(max-width:1200px) {
+  #app[data-authoring-pilot="true"] .authoring-save-state { display:none; }
+  #app[data-authoring-pilot="true"] .authoring-mode-switch button { padding-inline:6px; }
+  #app[data-authoring-pilot="true"] .authoring-mode-switch svg { display:none; }
+}
+@media(max-width:1000px) {
+  #app[data-authoring-pilot="true"] .authoring-selection-tools button { padding-inline:4px; }
+  #app[data-authoring-pilot="true"] .authoring-history-tools { padding-left:4px; }
+}
+
+.scene-visual-fields { display: grid; gap: 6px; min-width: 0; }
+.background-object-field { display: grid; gap: 6px; min-width: 0; }
+.background-object-field .candidate-object-trigger { width: 100%; }

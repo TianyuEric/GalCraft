@@ -1,0 +1,23 @@
+{
+  "key": "spring-projector-bell",
+  "kind": "bell",
+  "seconds": 7.2,
+  "seed": null,
+  "file": "audio/spring-projector-bell.wav",
+  "source": "GalCraft original procedural audio; no third party recordings or samples",
+  "author": "GalCraft sample media",
+  "distribution": "Retained under the repository copyright and sample distribution terms; no external media license dependency",
+  "script": "tools/artwork/synthesize-practice-effects.mjs",
+  "method": "Three struck sine partial clusters, exponential decays, equal-power stereo pan, final 0.5 s fade",
+  "sampleRate": 48000,
+  "channels": 2,
+  "format": "PCM signed 16-bit WAV",
+  "loop": null,
+  "recommendedVolume": 0.5,
+  "metrics": {
+    "rms": 0.039305313739693294,
+    "peak": 0.231184720993042
+  },
+  "boundaryDelta": null,
+  "listeningStatus": "requires human listening; waveform analysis does not assert perceived quality"
+}

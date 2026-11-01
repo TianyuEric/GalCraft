@@ -1,0 +1,31 @@
+.candidate-arborist { outline:none!important; }
+.candidate-arborist-row { outline:none; }
+.arborist-node { display:flex; align-items:center; gap:4px; height:28px; padding-right:6px; cursor:default; position:relative; }
+.arborist-node:hover { background:var(--surface-hover); }
+.arborist-node.is-selected { background:var(--selection); color:var(--foreground); }
+.candidate-arborist:focus-within .arborist-node.is-focused { outline:2px solid var(--ring); outline-offset:-2px; }
+.arborist-node[aria-current="page"]::after { content:''; position:absolute; left:0; top:7px; bottom:7px; width:2px; background:var(--primary); }
+.arborist-node.is-drop-target { outline:2px solid var(--ring); outline-offset:-2px; }
+.arborist-node.is-dragging { opacity:.5; }
+.arborist-toggle, .arborist-indent { display:flex; align-items:center; justify-content:center; flex:0 0 28px; height:28px; padding:0; border:0; background:none; color:var(--foreground-secondary); }
+.arborist-indent::before { content:''; width:8px; height:28px; border-left:1px solid var(--border); }
+.tree-icon { flex:none; color:var(--foreground-secondary); }
+.arborist-name { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:13px; }
+.arborist-count { color:var(--foreground-secondary); font-size:11px; }
+.arborist-more { display:flex; align-items:center; justify-content:center; flex:0 0 28px; height:28px; padding:0; border:0; background:none; color:var(--foreground-secondary); cursor:pointer; }
+.arborist-more:hover { color:var(--foreground); background:var(--surface-hover); }
+.tree-rename { display:flex; flex:1; min-width:0; position:relative; gap:2px; }
+.tree-rename input { width:100%; min-width:0; padding:2px 4px; border:1px solid var(--ring); background:var(--background); color:var(--foreground); border-radius:3px; font:13px var(--font-sans); }
+.tree-rename .gc-button { flex:none; height:24px; min-height:24px; }
+.tree-rename-error { position:absolute; z-index:5; top:28px; left:0; width:180px; padding:6px 8px; background:var(--background); color:var(--destructive); border:1px solid var(--border); box-shadow:0 2px 6px #0002; font-size:12px; line-height:18px; }
+.tree-drop-cursor { position:absolute; height:2px; background:var(--primary); pointer-events:none; }
+.tree-menu-position { z-index:50; }
+.tree-menu { min-width:210px; max-width:300px; max-height:320px; overflow:auto; padding:4px; color:var(--foreground); background:var(--popover); border:1px solid var(--border); border-radius:6px; box-shadow:0 6px 20px #0002; font:13px/20px var(--font-sans); }
+.tree-menu p { margin:4px 8px; font-size:11px; color:var(--foreground-secondary); }
+.tree-menu [role="menuitem"] { display:flex; gap:16px; justify-content:space-between; padding:5px 8px; border-radius:3px; cursor:default; outline:none; }
+.tree-menu [data-highlighted] { background:var(--selection); }
+.tree-menu [data-disabled] { opacity:.5; }
+.tree-menu kbd { font:11px var(--font-sans); color:var(--foreground-secondary); }
+
+.candidate-arborist-row { min-width:0; }
+.scene-tree-selection { font-size:12px; padding:4px 8px; color:var(--foreground-secondary); }

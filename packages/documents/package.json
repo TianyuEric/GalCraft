@@ -1,0 +1,19 @@
+{
+  "name": "@galcraft/documents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }, "./authoring": { "types": "./dist/authoring.d.ts", "default": "./dist/authoring.js" }, "./backup": { "types": "./dist/backup/index.d.ts", "default": "./dist/backup/index.js" } },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.backup.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.backup.json",
+    "test": "pnpm build && vitest run src backup"
+  },
+  "dependencies": { "@galcraft/contracts": "workspace:*", "@galcraft/dsl": "workspace:*", "@galcraft/templates": "workspace:*", "@galcraft/plugins": "workspace:*", "fflate": "0.8.2", "zod": "4.6.5" },
+  "devDependencies": { "@types/node": "24.13.6" },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "packages/documents"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

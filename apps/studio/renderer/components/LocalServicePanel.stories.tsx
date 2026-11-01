@@ -1,0 +1,13 @@
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { LocalFileBrowser, LocalServicePanel } from './LocalServicePanel.js';
+import { ShellHeader } from './shell-header.js';
+import '../authoring/workspace.css';
+import '../authoring/shell.css';
+import '../authoring/refinements.css';
+import './workbench/workbench.css';
+const service = {status:async()=>({pid:1240,origin:'http://127.0.0.1:43127',state:'running',project:null}),stop:async()=>{},listDirectory:async(directory:string|null)=>({directory:directory??'D:\\Stories',parent:'D:\\',entries:[{name:'春日来信',path:'D:\\Stories\\春日来信',kind:'directory' as const},{name:'项目备份.galproject',path:'D:\\Stories\\项目备份.galproject',kind:'file' as const}]}),onDialog:()=>()=>{},answerDialog:async()=>{},dispose:()=>{}};
+const meta = {title:'Product/Studio/Host/Local service',component:LocalServicePanel,args:{service,flush:async()=>{}},decorators:[Story=><div className="authoring-shell"><div id="studio-portals" lang="zh-CN"/><Story/></div>]} satisfies Meta<typeof LocalServicePanel>;
+export default meta;type Story=StoryObj<typeof meta>;
+export const Connected:Story={};
+export const Header:Story={render:args=><header className="authoring-header" style={{display:'flex'}}><ShellHeader locale="zh-CN" theme="light" project="今晚，让春天亮起来" dirty={false} action={()=>{}} preferences={()=>{}} collapsed={false} toggleSidebar={()=>{}} service={<LocalServicePanel {...args}/>}/></header>};
+export const FileSelection:Story={render:()=> <LocalFileBrowser service={service} dialog={{id:1,kind:'open',title:'打开作品文件夹',properties:['openDirectory']}} close={()=>{}}/>};

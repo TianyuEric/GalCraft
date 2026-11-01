@@ -1,0 +1,17 @@
+.gc-data-table { min-width:0; width:100%; }
+.gc-table-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:10px; }
+.gc-table-scroll { overflow:auto; min-width:0; border:1px solid var(--border); border-radius:8px; background:var(--card); }
+.gc-table-scroll:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.gc-table { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; line-height:1.5; text-align:left; color:var(--foreground); }
+.gc-table th { position:sticky; top:0; z-index:1; background:var(--secondary); color:var(--muted-foreground); font-weight:500; }
+.gc-table :is(th,td) { padding:9px 12px; vertical-align:top; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
+.gc-table tr:last-child td { border-bottom:0; }
+.gc-table tr[data-state='selected'] td { background:var(--secondary); }
+.gc-table tr:focus-within td { background:color-mix(in srgb,var(--primary) 5%,var(--card)); }
+.gc-table td :is(input:not([type='checkbox']),textarea,select) { width:100%; min-width:0; }
+.gc-table td :is(button,input,textarea,select):focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.gc-table td :is(p,small) { margin:0; }
+.gc-table td small { display:block; color:var(--muted-foreground); }
+.gc-table-sort { display:inline-flex; align-items:center; gap:6px; padding:0; border:0; background:none; color:inherit; font:inherit; cursor:pointer; text-align:left; }
+.gc-table-sort svg { flex:none; }
+.gc-table-empty { text-align:center; color:var(--muted-foreground); padding:24px!important; }

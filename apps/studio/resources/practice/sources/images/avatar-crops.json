@@ -1,0 +1,5 @@
+{
+  "deepseek": { "source": "figures/deepseek-neutral.png", "sourceWidth": 1024, "sourceHeight": 1536, "x": 304, "y": 0, "size": 384 },
+  "chatgpt": { "source": "figures/chatgpt-neutral.png", "sourceWidth": 1024, "sourceHeight": 1536, "x": 296, "y": 0, "size": 400 },
+  "claude": { "source": "figures/claude-neutral.png", "sourceWidth": 1024, "sourceHeight": 1536, "x": 320, "y": 0, "size": 368 }
+}

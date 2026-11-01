@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="title">
+  <title id="title">今晚，让春天亮起来 · 春灯与星光</title>
+  <rect x="16" y="16" width="480" height="480" rx="104" fill="#17283e"/>
+  <path d="M216 144v-24a40 40 0 0 1 80 0v24" fill="none" stroke="#f4d7a3" stroke-width="24" stroke-linecap="round"/>
+  <path d="M176 152h160a16 16 0 0 1 0 32H176a16 16 0 0 1 0-32Z" fill="#f4d7a3"/>
+  <path d="M164 200h184l22 76-22 84H164l-22-84Z" fill="#e8ab65"/>
+  <path d="m256 218 17 36 39 5-28 28 7 39-35-19-35 19 7-39-28-28 39-5Z" fill="#17283e"/>
+  <path d="M176 376h160a16 16 0 0 1 0 32H176a16 16 0 0 1 0-32Z" fill="#f4d7a3"/>
+  <path d="M256 408v32" fill="none" stroke="#e8ab65" stroke-width="24" stroke-linecap="round"/>
+  <path d="m402 94 9 25 25 9-25 9-9 25-9-25-25-9 25-9Z" fill="#fff8ef"/>
+  <path d="m94 246 6 17 17 6-17 6-6 17-6-17-17-6 17-6Z" fill="#f4d7a3"/>
+</svg>

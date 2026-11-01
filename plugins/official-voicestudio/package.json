@@ -1,0 +1,21 @@
+{
+  "name": "@galcraft/official-voicestudio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && galcraft-plugin build .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run src"
+  },
+  "dependencies": { "@galcraft/contracts": "workspace:^", "@galcraft/plugins": "workspace:^" },
+  "devDependencies": { "@types/node": "24.13.6", "typescript": "7.0.2" },
+  "exports": {
+    "./definition": { "types": "./dist/definition.d.ts", "default": "./dist/definition.js" },
+    "./editor": { "types": "./dist/editor.d.ts", "default": "./dist/editor.js" },
+    "./services": { "types": "./dist/services.d.ts", "default": "./dist/services.js" }
+  },
+  "license": "MPL-2.0",
+  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "plugins/official-voicestudio"},
+  "homepage": "https://github.com/TianyuEric/GalCraft#readme"
+}

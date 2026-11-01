@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {resolve} from 'node:path';
+import {chromium} from 'playwright';
+
+const out=resolve('test-results/latest/sample-reading-collaboration/w4');await mkdir(out,{recursive:true});
+const browser=await chromium.launch({channel:'msedge',headless:true}),page=await browser.newPage({viewport:{width:1440,height:900}});
+const report={environment:'Formal Storybook 6007; real Edge; memory configuration/service providers. Disk and native dialogs are verified separately in native-report.json.',checks:[],errors:[],result:'failed'};
+page.on('pageerror',error=>report.errors.push(error.message));
+const record=(id,expected,actual)=>report.checks.push({id,target:'SRC-F06/E02 / A7',environment:report.environment,data:'Formal Collaboration stories',expected,actual,result:'passed',evidence:'storybook-report.json'});
+try{
+  const index=await (await fetch('http://127.0.0.1:6007/index.json')).json();
+  const open=async(story,width=1440)=>{const id=`product-studio-collaboration-collaboration--${story}`;assert(index.entries[id],id);await page.setViewportSize({width,height:900});await page.goto(`http://127.0.0.1:6007/iframe.html?id=${id}&viewMode=story`);await page.locator('.collaboration-workspace h2').first().waitFor();};
+  const screenshot=name=>page.screenshot({path:resolve(out,name+'.png')});
+  for(const [story,width]of [['configuration-local-edits',1440],['configuration-local-edits-dark',900]]){
+    await open(story,width);await page.getByText(/本地编辑已保留，官方更新已另存为/).waitFor();assert(await page.getByText(/更新待审阅：.*\.galcraft-update/).isVisible());assert(await page.getByRole('button',{name:'保存官方更新供审阅'}).isDisabled());assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await screenshot(story+'-'+width);
+  }
+  record('local-edit-review-layout','Show preserved state and actual update path with no duplicate write; light 1440 and dark 900 fit','Both themes show local edits and the .galcraft-update review entry beside the completed action');
+  await page.locator('.collaboration-preserved-file summary').click();await page.getByText('保留的本地内容',{exact:true}).waitFor();assert(await page.getByText('官方更新',{exact:true}).isVisible());
+  await page.getByRole('button',{name:'本机服务',exact:true}).click();await page.getByRole('heading',{name:'让外部助手参与当前创作'}).waitFor();await page.getByRole('button',{name:'Harness 配置',exact:true}).click();await page.getByText(/更新待审阅：.*\.galcraft-update/).waitFor();assert.equal(await page.getByText(/本地编辑已保留，官方更新已另存为/).count(),0);
+  record('configuration-reentry','Reenter reads persistent provider facts without stale operation messages','Pending update remains; previous write success is cleared by leaving the configuration document');
+  await open('configuration-write-failed');await page.locator('.collaboration-config-operation [role=alert]').waitFor();await page.waitForTimeout(3200);assert.match(await page.locator('.collaboration-config-operation [role=alert]').innerText(),/配置文件已变化/);await screenshot('configuration-write-failed-1440');await page.getByRole('button',{name:'生成配置预览',exact:true}).click();await page.getByRole('button',{name:'安装 / 更新 MCP 配置',exact:true}).click();await page.getByText('正在安装 / 更新 MCP 配置…',{exact:true}).waitFor();assert(await page.getByRole('button',{name:'安装 / 更新 MCP 配置',exact:true}).isDisabled());await screenshot('configuration-progress-1440');await page.getByText('配置已写入',{exact:true}).waitFor();assert(await page.getByRole('button',{name:'MCP 配置已写入',exact:true}).isDisabled());assert.equal(await page.locator('.collaboration-file-diff').count(),1);await page.getByText('查看当前文件内容',{exact:true}).click();await page.getByText(/MCP 配置已写入。/).waitFor();
+  record('write-failure-retry-readback','Polling preserves errors; explicit preview and retry read current content and replace the write action','Error persisted across two polls; retry reached matching state with an inspectable current file and disabled repeated merge');
+  await open('configuration-write-failed-dark',900);await page.locator('.collaboration-config-operation [role=alert]').waitFor();await screenshot('configuration-write-failed-dark-900');
+  await open('configuration-export-cancelled');await page.getByText('已取消导出，文件保持原样。',{exact:true}).waitFor();await page.waitForTimeout(1700);await screenshot('configuration-export-cancelled-1440');assert.equal(await page.getByText(/配置已导出到/).count(),0);
+  await open('configuration-exported');await page.getByText('配置已导出到：D:/导出目录/助手连接配置.yml',{exact:true}).waitFor();await screenshot('configuration-exported-1440');
+  record('export-receipts','Cancellation is neutral; successful export displays the provider returned destination','Cancelled status survives overview polling; success uses D:/导出目录/助手连接配置.yml');
+  await open('service-stop-failed',900);const dialog=page.getByRole('alertdialog');await dialog.getByRole('alert').waitFor();await page.waitForTimeout(3200);assert.match(await dialog.getByRole('alert').innerText(),/无法保存服务设置/);assert(await page.getByText('服务运行中',{exact:true}).isVisible());await screenshot('service-stop-failed-900');await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});assert(await page.getByRole('button',{name:'关闭服务',exact:true}).evaluate(element=>element===document.activeElement));await page.keyboard.press('Enter');await dialog.waitFor();await dialog.getByRole('button',{name:'关闭服务',exact:true}).click();await dialog.waitFor({state:'hidden'});await page.getByText('服务已关闭',{exact:true}).waitFor();
+  record('stop-failure-keyboard-and-polling','Failure remains in the current confirmation, polling shows running, Escape restores focus and retry succeeds','The persistent dialog retained its error; keyboard cancel returned to the source; retry reached stopped state');
+  await open('configuration-installed');await page.getByText('已安装 · 与当前版本一致',{exact:true}).waitFor();assert(await page.getByRole('button',{name:'项目 skill 已安装',exact:true}).isDisabled());await screenshot('configuration-installed-1440');
+  for(const [story,message]of [['configuration-readback-english','Local edits are preserved. Official updates are saved as .galcraft-update for review.'],['configuration-readback-japanese','ローカルの編集を保持し、公式更新を .galcraft-update に保存しました。内容を確認してください。']]){await open(story,900);await page.getByText(message,{exact:false}).waitFor();assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await screenshot(story+'-900');}
+  record('localized-readback','English light and Japanese dark preserve readable 900px state, receipt and review paths','Both localized skill update stories completed without horizontal overflow');
+  assert.deepEqual(report.errors,[]);report.result='passed';console.log('PASS: configuration feedback, readback, review, export and stop recovery');
+}catch(error){report.error=String(error.stack??error);throw error;}
+finally{await writeFile(resolve(out,'storybook-report.json'),JSON.stringify(report,null,2));await browser.close();}

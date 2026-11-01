@@ -1,0 +1,186 @@
+{
+  "manifest": {
+    "schemaVersion": 2,
+    "id": "org.example.complete",
+    "name": "org.example.complete",
+    "version": "0.1.0",
+    "description": "Public SDK example",
+    "author": "Plugin author",
+    "license": "MPL-2.0",
+    "homepage": null,
+    "engineRange": "^0.1.0",
+    "sdkMajor": 0,
+    "targets": [
+      "web",
+      "windows"
+    ],
+    "dependencies": [],
+    "environmentDependencies": {
+      "definition": [],
+      "editor": [],
+      "services": [],
+      "runtime": []
+    },
+    "contributions": [
+      {
+        "kind": "document",
+        "key": "org.example.complete/settings",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "tool",
+        "key": "org.example.complete/report",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "fieldEditor",
+        "key": "org.example.complete/titleEditor",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "command",
+        "key": "org.example.complete/increment",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "condition",
+        "key": "org.example.complete/positive",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "system",
+        "key": "org.example.complete/state",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "page",
+        "key": "org.example.complete/dialog",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "component",
+        "key": "org.example.complete/counter",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "platform",
+        "key": "org.example.complete/external",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "resource",
+        "key": "org.example.complete/plainGroup",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "stage",
+        "key": "org.example.complete/canvas",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "resourceProcessor",
+        "key": "org.example.complete/copy",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "command",
+        "key": "org.example.complete/present",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "generationProvider",
+        "key": "org.example.complete/textProvider",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      },
+      {
+        "kind": "publishCheck",
+        "key": "org.example.complete/settingsCheck",
+        "targets": [
+          "web",
+          "windows"
+        ],
+        "required": true
+      }
+    ],
+    "stateVersions": {
+      "document": 1,
+      "progress": 1,
+      "longTerm": 1
+    },
+    "native": []
+  },
+  "sources": {
+    "definition": "src/definition.ts",
+    "editor": "src/editor.ts",
+    "runtime": "src/runtime.ts",
+    "services": "src/services.ts"
+  },
+  "nativeSources": [
+    {
+      "target": "windows",
+      "arch": "x64",
+      "source": "src/native.ts"
+    },
+    {
+      "target": "windows",
+      "arch": "arm64",
+      "source": "src/native.ts"
+    }
+  ]
+}

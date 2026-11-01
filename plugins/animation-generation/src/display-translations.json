@@ -1,0 +1,82 @@
+{
+  "GCA animation": [
+    "GCA 动画",
+    "GCA アニメーション"
+  ],
+  "Create a new animation (new), edit selected frozen tracks/time range (patch), or rewrite the whole animation (replace). patch requires paths and currentAnimation; range must be within its duration. Deletion requires allowDelete. Freeze assetId and assetRevision for an existing asset. Review NativeAnimation candidates and AnimationTrackChange facts before adoption; invalid raw output remains editable with diagnostics.": [
+    "新建动画、修改冻结的选定轨道／时间范围，或重写完整动画。局部修改需要轨道和原动画，时间范围须在原时长内；删除需明确授权。编辑已有素材时固定素材身份及修订。采用前检查动画候选及轨道变更；无效原文可继续编辑并查看诊断。",
+    "新規作成、固定したトラック／時間範囲の部分編集、または全体の書き直しを行います。部分編集にはトラックと元のアニメーションが必要です。時間範囲は元の長さ以内、削除には明示的な許可が必要です。既存素材の識別子とリビジョンを固定し、採用前に候補と変更内容を確認します。不正な原文も診断を見ながら編集できます。"
+  ],
+  "Animation request": [
+    "动画要求",
+    "アニメーションの要望"
+  ],
+  "Edit mode": [
+    "编辑模式",
+    "編集モード"
+  ],
+  "new": [
+    "新建",
+    "新規"
+  ],
+  "patch": [
+    "局部修改",
+    "部分編集"
+  ],
+  "replace": [
+    "完整重写",
+    "全体の書き直し"
+  ],
+  "Original animation": [
+    "原动画",
+    "元のアニメーション"
+  ],
+  "Editable tracks": [
+    "可编辑轨道",
+    "編集可能なトラック"
+  ],
+  "Track": [
+    "轨道",
+    "トラック"
+  ],
+  "Time range": [
+    "时间范围",
+    "時間範囲"
+  ],
+  "Start (ms)": [
+    "开始（毫秒）",
+    "開始（ミリ秒）"
+  ],
+  "End (ms)": [
+    "结束（毫秒）",
+    "終了（ミリ秒）"
+  ],
+  "Target and framing": [
+    "对象与构图",
+    "対象と構図"
+  ],
+  "Preserve duration": [
+    "保留时长",
+    "長さを保持"
+  ],
+  "Allow selected-track deletion": [
+    "允许删除选定轨道",
+    "選択したトラックの削除を許可"
+  ],
+  "Original asset": [
+    "原素材",
+    "元の素材"
+  ],
+  "Asset revision": [
+    "素材修订",
+    "素材のリビジョン"
+  ],
+  "GCA animation preparation": [
+    "GCA 动画制作",
+    "GCA アニメーション制作"
+  ],
+  "Use an actual compatible text connection. Prepare a request, then inspect the candidate before adoption.": [
+    "选择实际兼容的文字连接，准备要求，并在采用前检查候选。",
+    "対応するテキスト接続を選び、要望を準備して採用前に候補を確認します。"
+  ]
+}

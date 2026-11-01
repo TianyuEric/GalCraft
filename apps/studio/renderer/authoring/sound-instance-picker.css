@@ -1,0 +1,17 @@
+.sound-instance-picker { display: grid; gap: 8px; min-width: 0; }
+.sound-instance-trigger { display: flex; align-items: center; gap: 8px; min-height: 32px; width: 100%; padding: 4px 8px; border: 1px solid var(--control-border); border-radius: 4px; background: var(--input); color: var(--foreground); text-align: start; }
+.sound-instance-trigger span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sound-instance-trigger:hover { background: var(--surface-hover); }
+.sound-instance-trigger:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sound-instance-trigger:disabled { color: var(--foreground-disabled); cursor: default; }
+.sound-instance-positioner { z-index: 100; width: min(400px, calc(100vw - 24px)); }
+.sound-instance-popup { border: 1px solid var(--border); border-radius: 8px; background: var(--popover); color: var(--foreground); box-shadow: var(--shadow-popover, 0 8px 24px rgb(24 43 67 / 16%)); overflow: hidden; }
+.sound-instance-search { display: flex; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid var(--border); }
+.sound-instance-search input { width: 100%; min-height: 32px; background: var(--input); color: var(--foreground); border: 0; }
+.sound-instance-help { margin: 0; padding: 8px 12px; color: var(--foreground-secondary); font-size: 12px; line-height: 18px; }
+.sound-instance-list { max-height: min(320px, 50vh); overflow: auto; }
+.sound-instance-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 64px; padding: 8px 12px; cursor: pointer; }
+.sound-instance-item[data-highlighted] { background: var(--selection); }
+.sound-instance-item strong { display: block; font-size: 14px; line-height: 22px; font-weight: 500; }
+.sound-instance-item small { display: block; color: var(--foreground-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.sound-instance-picker summary { min-height: 28px; color: var(--foreground-secondary); font-size: 12px; cursor: pointer; }
