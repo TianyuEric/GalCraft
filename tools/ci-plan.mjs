@@ -25,6 +25,10 @@ export function planChecks(paths, packages) {
   const documentation = path => /\.(?:md|txt)$/i.test(path) || /^docs\//.test(path) || /^(?:LICENSE|NOTICE|COPYING)(?:\.|$)/.test(path);
   for (const file of files) {
     if (documentation(file) && !/^tools\/.*\.txt$/.test(file)) continue;
+    if (/^tools\/(?:ci-(?:plan|checks)(?:\.test)?|studio-npm-entry(?:\.test)?|package-studio-npm-entry)\.mjs$/.test(file)) {
+      tools = true;
+      continue;
+    }
     const owner = packages.find(pkg => file.startsWith(`${pkg.path}/`));
     if (owner) selected.add(owner.name);
     else if (/^(?:tools|tests)\//.test(file)) { tools = true; selected.add('@galcraft/studio'); }

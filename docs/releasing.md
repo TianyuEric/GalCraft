@@ -33,12 +33,26 @@ The maintainer checks final tarballs, staged and unpacked installer files and wo
 2. 维护者创建私有空仓库`TianyuEric/GalCraft`，推送同一初始提交的`main`与`dev`，核对后切换公开，默认分支设为`main`。 / The maintainer creates the empty private repository, pushes both branches at the same initial commit, verifies them, makes the repository public and selects `main` as default.
 3. 维护者为`main`与`dev`要求PR和固定`CI`检查，批准人数为0，阻止强推与删除，采用手动合并，并启用私人漏洞报告。 / The maintainer requires PRs and the fixed `CI` check with zero approvals, blocks force pushes and deletion, merges manually, and enables private vulnerability reporting.
 4. 维护者从明确的`main`发行提交建立`v0.1.0`，在Draft Release收齐附件与教学链接，再发布为Pre-release。 / The maintainer tags the selected `main` commit, collects artifacts and tutorial links in a draft release, then publishes a pre-release.
-5. 维护者向`https://registry.npmjs.org/`发布已检查的精确tarball：contracts、plugins与dsl、Studio；四包均使用public access、0.1.0和`latest`标签。 / The maintainer publishes the checked exact tarballs in that dependency order, with public access, version 0.1.0 and the `latest` tag.
+5. 维护者向`https://registry.npmjs.org/`发布已检查的三个SDK tarball和Studio轻量入口，使用public access、0.1.0和`latest`标签；轻量入口从精确Release URL安装完整应用。 / The maintainer publishes the three checked SDK tarballs and small Studio entry with public access, version 0.1.0 and the `latest` tag; the entry installs the full application from its exact release URL.
 6. 负责人从真实入口安装精确npm版本，下载教学包并完成恢复、编译试玩、编辑保存重开，随后更新及部署中英官网。 / The maintainer installs exact npm versions, downloads and restores the shared tutorial, compiles and playtests it, edits, saves and reopens it, then updates and deploys the bilingual website.
 
 维护者启用Squash和Merge commit，采用0位强制批准、无常驻绕过、无强制追平分支、无强制线性历史及手动合并。任务分支以Squash合入`dev`，`dev`以Merge commit合入`main`。普通PR说明具体问题、最终变化和实际验证。
 
 The maintainer enables squash and merge commits, requires zero approvals, grants no standing bypass, permits checks without forcing an up-to-date branch, preserves merge history and merges manually. Task branches enter `dev` through squash merges; `dev` enters `main` through merge commits. PRs describe the concrete problem, final change and actual validation.
+
+## npm启动入口与源码 / npm entry and source
+
+维护者使用`node tools/package-studio-npm-entry.mjs`准备`build/npm-studio-entry/`，在该目录执行`npm pack`，把生成包保存为`galcraft-studio-npm-entry-0.1.0.tgz`。registry与该附件分发相同轻量入口。`galcraft-studio-0.1.0.tgz`继续作为完整应用附件，安装器和完整应用保持已发布内容。
+
+The maintainer prepares `build/npm-studio-entry/` with the command above, runs `npm pack` there, and saves the result as `galcraft-studio-npm-entry-0.1.0.tgz`. The registry and that attachment distribute the same small entry. The original full application tarball and installer retain their published contents.
+
+首次命令从精确GitHub Release URL下载完整应用（约326 MiB）并安装现有npm依赖，存入`%LOCALAPPDATA%/GalCraft/npm-studio/0.1.0`；后续命令复用完成的安装。准备失败后，用户执行相同命令重试。入口将参数交给完整应用的现有CLI，个人资料继续由现有Studio目录管理。首次准备要求GitHub与npm网络访问；已完成安装后的普通启动复用本机内容。
+
+The first command downloads the exact full application release (about 326 MiB), installs its existing npm dependencies, and stores it in the stated user version cache. Later commands reuse the completed installation. Users retry failed preparation with the same command. The entry forwards arguments to the existing application CLI; Studio retains its personal-data directory. First preparation requires GitHub and npm access; subsequent ordinary startup reuses local files.
+
+完整应用与安装器的源码标签为`v0.1.0`；轻量入口的源码标签为`studio-npm-v0.1.0`。维护者保留两个标签与各自附件，在发行说明分别链接。0.1.0的轻量入口让registry传送启动命令，GitHub Release传送完整运行输入；负责人检查首次安装、失败重试、缓存复用与参数转交，并复用完整应用的已有有效结果。
+
+The full application and installer use source tag `v0.1.0`; the small entry uses `studio-npm-v0.1.0`. The maintainer retains both tags and their artifacts and links each source in the release notes. The registry supplies the command while GitHub supplies the complete runtime inputs. Validation covers first installation, retry, cache reuse and argument forwarding and reuses applicable full-application results.
 
 ## 0.1.0发布项 / 0.1.0 release artifacts
 
@@ -49,7 +63,8 @@ The maintainer lists the following files in the [GitHub release](https://github.
 | 文件 / File | 用途 / Purpose |
 |---|---|
 | `GalCraft-Studio-0.1.0-windows-x64-setup.exe` | Windows x64安装器，自带运行时。 / Windows x64 installer with its runtime. |
-| `galcraft-studio-0.1.0.tgz` | 与registry相同的Studio应用包。 / The same Studio tarball published to npm. |
+| `galcraft-studio-0.1.0.tgz` | 完整Studio应用；轻量入口从此文件安装到用户版本缓存。 / Full Studio application, installed into the user version cache by the small entry. |
+| `galcraft-studio-npm-entry-0.1.0.tgz` | 与registry相同的轻量启动入口。 / The same small launch entry published to npm. |
 | `galcraft-contracts-0.1.0.tgz`、`galcraft-plugins-0.1.0.tgz`、`galcraft-dsl-0.1.0.tgz` | 与registry相同的SDK包。 / The same SDK tarballs published to npm. |
 | `ffmpeg-n9.0.2-39-g7adfbe40dc-win64-lgpl-9.0-sources.tar` | 媒体运行时对应源码、构建输入、许可及来源。 / Corresponding media runtime source, build inputs, licenses and provenance. |
 

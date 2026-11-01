@@ -10,10 +10,12 @@ const report = { result: 'running', packages: plan.packages, checks: [] };
 await mkdir(output, { recursive: true });
 const commands = execFileSync(process.platform === 'win32' ? 'where.exe' : 'which', ['pnpm'], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/);
 const candidates = [process.env.npm_execpath, ...commands.flatMap(command => [
-  join(dirname(command), 'pnpm.cjs'), join(dirname(command), '../pnpm/bin/pnpm.cjs'),
-  join(dirname(command), 'node_modules/pnpm/bin/pnpm.cjs'), join(dirname(command), 'node_modules/corepack/dist/pnpm.js'),
+  join(dirname(command), 'pnpm.cjs'), join(dirname(command), 'pnpm.mjs'),
+  join(dirname(command), '../pnpm/bin/pnpm.cjs'), join(dirname(command), '../pnpm/bin/pnpm.mjs'),
+  join(dirname(command), 'node_modules/pnpm/bin/pnpm.cjs'), join(dirname(command), 'node_modules/pnpm/bin/pnpm.mjs'),
+  join(dirname(command), 'node_modules/corepack/dist/pnpm.js'),
 ])];
-const pnpm = candidates.find(path => path && /(?:pnpm\.(?:c?js))$/.test(path) && existsSync(path));
+const pnpm = candidates.find(path => path && /(?:pnpm\.[cm]?js)$/.test(path) && existsSync(path));
 if (!pnpm) throw new Error('Prepare pnpm 12.3.4 on PATH before running CI checks.');
 const run = args => {
   console.log(`pnpm ${args.join(' ')}`);
@@ -24,7 +26,10 @@ const run = args => {
 const filters = plan.packages.flatMap(name => ['--filter', name]);
 try {
   if (plan.packages.length) {
-    run(['-r', ...plan.packages.flatMap(name => ['--filter', `${name}...`]), '--if-present', 'run', 'build']);
+    const studio = plan.packages.includes('@galcraft/studio');
+    const players = studio ? ['--filter', '@galcraft/player-web', '--filter', '@galcraft/player-windows'] : [];
+    run(['-r', ...plan.packages.flatMap(name => ['--filter', `${name}...`]), ...players, '--if-present', 'run', 'build']);
+    if (studio) run(['exec', 'node', 'tools/prepare-desktop-engine.mjs']);
     run(['-r', ...filters, '--if-present', 'run', 'typecheck']);
     run(['-r', '--workspace-concurrency=1', ...filters, '--if-present', 'run', 'test']);
   }
