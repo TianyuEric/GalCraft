@@ -2,6 +2,45 @@
 
 M09 管理本机精确包、作品依赖计划、公开贡献和装载租约。贡献所属模块解释业务；官方与外部插件使用同一 schema、SDK、入口和生命周期。完整字段由 `packages/plugins/`、`packages/contracts/` 及实际插件清单维护。
 
+## 当前能力与官方插件索引（0.1.0）
+
+Studio 内置作品编辑、MCP 协作、制作任务与候选采用、素材管理及 Web／Windows 发行管理。作者使用[中文插件手册](https://galcraft.dev/docs/zh-CN/plugins/)或[English plugin manual](https://galcraft.dev/docs/en/plugins/)查阅具体用途、使用入口和准备条件；本索引提供稳定 ID 与源码位置。
+
+维护者通过[随附目录](../../plugins/catalog.json)选择13个官方插件。目录中的 `studioService: true` 标记以下6个 Studio 默认装配包；宿主按需装载这些包，作者配置实际服务连接或选择发行目标。
+
+### Studio 默认装配
+
+| 名称 | 插件 ID | 作用 | 源码目录 |
+|---|---|---|---|
+| 常用生成服务 | `org.galcraft.generation-services` | 作者连接文字、图像、语音和音乐服务，执行制作任务并收集候选。 | [official-generation-services](../../plugins/official-generation-services/) |
+| ComfyUI 执行能力 | `org.galcraft.comfyui` | 作者执行 ComfyUI API 工作流，配置输入／输出映射并取回候选。 | [official-comfyui](../../plugins/official-comfyui/) |
+| NovelAI 创作能力 | `org.galcraft.novelai` | 作者编辑结构化提示与参考参数，生成图像候选，并可通过文字连接辅助编写提示词。 | [official-novelai](../../plugins/official-novelai/) |
+| VoiceStudio | `org.galcraft.voicestudio` | 作者发现实际引擎与声音，制作配音、设计样音、参考克隆和录音逐字稿。 | [official-voicestudio](../../plugins/official-voicestudio/) |
+| Android 发行目标 | `org.galcraft.android` | 作者导出 Android 工程，或调用 JDK／Android SDK／Gradle 构建 APK／AAB。 | [official-android](../../plugins/official-android/) |
+| iOS 发行目标 | `org.galcraft.ios` | 作者导出 Xcode 工程，并在 macOS 工具链下生成 Xcode 归档。 | [official-ios](../../plugins/official-ios/) |
+
+### 在作品中启用
+
+Studio 同时提供以下7个普通作品插件。作者或作品模板选择所需精确版本，M09 将其记录在作品依赖中。
+
+| 名称 | 插件 ID | 作用 | 源码目录 |
+|---|---|---|---|
+| Motion Canvas 视频 | `org.galcraft.motion-canvas` | 作者编辑 TS／TSX 动画源，使用作品素材在本机渲染标准 MP4，并保留可继续编辑的源。 | [motion-canvas](../../plugins/motion-canvas/) |
+| GCA 动画制作 | `org.galcraft.animation-generation` | 作者使用兼容文字连接新建、局部修改或重写 GCA 动画，审阅后采用候选。 | [animation-generation](../../plugins/animation-generation/) |
+| 可编辑编曲 | `org.galcraft.music-composition` | 作者编辑多轨乐谱、试听采样音色并渲染音乐，也可通过文字连接辅助作曲。 | [music-composition](../../plugins/music-composition/) |
+| Breeze／Irodori 配音 | `org.galcraft.voice-comfy` | 作者通过 ComfyUI 制作 Breeze 中英配音和 Irodori 日语配音，按模式使用声音设计、参考克隆或表演描述。 | [official-voice-comfy](../../plugins/official-voice-comfy/) |
+| Live2D | `org.galcraft.live2d` | 作者导入 Cubism 模型，配置动作和表情，并在舞台演出中使用模型。 | [official-live2d](../../plugins/official-live2d/) |
+| Steam | `org.galcraft.steam` | 作者从剧情触发 Windows x64 Steam 成就解锁；Studio 试玩使用模拟结果。 | [official-steam](../../plugins/official-steam/) |
+| AI 后日谈 · 作者配置 | `org.galcraft.ai-epilogue` | 作者配置路线角色、结局、许可范围与素材白名单，并预览发送上下文；当前交付范围为作者配置与上下文预览。 | [ai-epilogue](../../plugins/ai-epilogue/) |
+
+### 源码提供的可选插件示例
+
+| 名称 | 插件 ID | 作用 | 源码目录 |
+|---|---|---|---|
+| 好感度（可选 SDK 示例） | `org.galcraft.affection` | 作者配置关系数值，使用增减、设值、比较条件和关系页展示；作者按源码 README 单独构建、安装并在作品启用。 | [official-affection](../../plugins/official-affection/) |
+
+好感度采用单独构建和安装方式；上面的两组定义 Studio 的13项随附清单。[插件开发示例](../../plugins/development-examples/)提供 SDK 用法，开发者按[插件开发教程](https://galcraft.dev/docs/zh-CN/plugin-development/)创建自己的包。
+
 ## 包、身份与入口
 
 插件包声明稳定 ID、精确版本、引擎范围、SDK 主版本、目标、依赖、入口、文件及贡献键。`.galplugin` 是可安装 ZIP，JS 入口为 ESM。定义入口提供无 DOM 的 schema 和声明；服务、编辑、运行及原生入口按实际环境装载。插件交付完整依赖图，React/Pixi 从公开 SDK 的同实例入口获得。
