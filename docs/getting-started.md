@@ -4,6 +4,8 @@
 
 GalCraft 0.1.0 is an early preview for Windows x64. Download the Windows installer from the [0.1.0 release](https://github.com/TianyuEric/GalCraft/releases/tag/v0.1.0), or start the npm application with `npx --yes --package=@galcraft/studio@0.1.0 galcraft-studio`.
 
+The npm command prepares the full application from the exact GitHub release on its first run (about 326 MiB plus npm dependencies). First preparation requires GitHub and npm access; subsequent commands reuse the user version cache. Retry interrupted preparation with the same command.
+
 | Your goal | Entry |
 |---|---|
 | Try a finished work | [Play Light up spring tonight](https://galcraft.dev/en/examples/) |

@@ -40,6 +40,8 @@ GalCraft combines an authoring workbench, production tools and a standalone Play
 
 Download the recommended Windows x64 installer from the [0.1.0 release](https://github.com/TianyuEric/GalCraft/releases/tag/v0.1.0). Node users can run `npx --yes --package=@galcraft/studio@0.1.0 galcraft-studio` to open the browser workbench. The [Examples page](https://galcraft.dev/en/examples/) provides the playable story and tutorial downloads.
 
+The npm entry installs the full application from this release into a user version cache on its first command. Preparation needs GitHub and npm access and downloads about 326 MiB plus runtime dependencies; later starts reuse the installation. The [release guide](docs/releasing.md) identifies separate source tags for the small entry and full application.
+
 Once you have the tutorial `.galproject` backup, restore it as an independent copy in Studio, check its exact dependencies, change one line, save and play from that line. Follow [Your first project](https://galcraft.dev/docs/en/first-project/) for the maintained walkthrough. You can also create a new project from the Standard template.
 
 Source archives contain development inputs. The Studio installer runs the editor, the separately prepared npm application provides a local service and browser UI, and a tutorial backup restores an editable project. Their release entries describe each artifact separately.

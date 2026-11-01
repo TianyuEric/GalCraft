@@ -4,6 +4,8 @@
 
 GalCraft 0.1.0 是面向 Windows x64 的早期预览。创作者从[0.1.0 Release](https://github.com/TianyuEric/GalCraft/releases/tag/v0.1.0)下载安装器；Node 用户执行 `npx --yes --package=@galcraft/studio@0.1.0 galcraft-studio` 启动 npm 应用。
 
+npm 命令首次运行时从精确 GitHub Release 准备完整应用，下载约 326 MiB 及运行依赖。首次准备要求访问 GitHub 与 npm；后续命令复用用户版本缓存。准备中断后，用户执行相同命令重试。
+
 | 目标 | 入口 |
 |---|---|
 | 试玩成品 | [试玩《今晚，让春天亮起来》](https://galcraft.dev/examples/) |
