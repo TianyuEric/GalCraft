@@ -52,6 +52,7 @@ vi.mock('./view.js', () => ({ PlayerView: class {
   async start() {} render() {} showError = mocks.showError; updateMediaFrame() {} navigation = mocks.navigation; setStageError = mocks.stageError;
   completeVideoPresentation = mocks.videoHandoff;
   holdVideoPresentation = () => () => {};
+  holdResourcePreparation = () => () => {};
 } }));
 vi.mock('./restore.js', () => ({ RestoreCoordinator: class {
   subscribe(listener: NonNullable<typeof mocks.restored>) { mocks.restored = listener; }
@@ -68,6 +69,7 @@ async function setup(preview=false, movie=false) {
   vi.stubGlobal('document', { createElement: (tag: string) => { const element = { append() {}, hidden: false, style: {}, dataset: {}, readyState: 4, paused: false }; if (tag === 'video') mocks.videoElement = element; return element; }, addEventListener() {}, removeEventListener() {} });
   vi.stubGlobal('matchMedia', () => ({ matches: false }));
   vi.stubGlobal('AudioContext', class { async close() {} });
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob(['complete movie'], { type: 'video/mp4' }))));
   vi.stubGlobal('requestAnimationFrame', (frame: FrameRequestCallback) => { mocks.frame = frame; return 0; });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   vi.stubGlobal('MutationObserver', class { observe() {} disconnect() {} });
@@ -102,6 +104,20 @@ async function setup(preview=false, movie=false) {
 }
 
 describe('mounted Player stage diagnostic ownership', () => {
+  it('starts the prepared voice after the matching stage finishes preparing', async () => {
+    const { sessionId, state, token } = await setup();
+    state.presentation.voice = { assetId: 'Voice01', variantId: 'Vari01', statementId: token.statementId, volume: 1, targetObjectId: null };
+    let finish!: (result: Awaited<ReturnType<StageController['prepareStage']>>) => void;
+    mocks.prepare.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const committed = mocks.ports!.onCommitted!({ sessionId, sequence: 1, token, state,
+      delta: { objects: [], effects: [], audio: [], voiceBinding: { token, resolution: {} } as never } });
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    expect(mocks.audioPlay).not.toHaveBeenCalled();
+    finish(success({ id: 'Stage01', sessionId, state: state.presentation, restoreKey: null, voiceBinding: null, resources: [] }));
+    expect(await committed).toEqual({ presentationEntered: true, mediaStarted: true });
+    expect(mocks.audioPlay).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ sessionId, token, bus: 'voice' }));
+  });
+
   it('retains the prepared voice resolution when inspection reveals the full dialogue',async()=>{
     const {player,sessionId,state,token}=await setup(true);
     state.wait={kind:'say'} as typeof state.wait;
@@ -133,7 +149,8 @@ describe('mounted Player stage diagnostic ownership', () => {
     expect(mocks.confirmMedia).not.toHaveBeenCalled();
     vi.mocked(host.resources.resolve).mockResolvedValueOnce(success({ uri: 'review://exact-video', mime: 'video/mp4', bytes: 1, rangeSupported: true, release() {} }));
     expect((await mocks.viewOptions!.retryVideo!()).ok).toBe(true);
-    expect(mocks.videoStart).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ token, url: 'review://exact-video' }));
+    expect(fetch).toHaveBeenCalledWith('review://exact-video', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(mocks.videoStart).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ token, url: expect.stringMatching(/^blob:/) }));
     expect(mocks.confirmMedia).toHaveBeenCalledExactlyOnceWith(token); expect(mocks.dispatch).not.toHaveBeenCalled();
     expect(await mocks.ports!.onCommitted!({ sessionId, sequence: 3, token, state, delta: null })).toEqual({ presentationEntered: true, mediaStarted: false });
   });

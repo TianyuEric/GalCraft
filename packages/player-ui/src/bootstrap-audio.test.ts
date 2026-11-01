@@ -22,6 +22,18 @@ describe('mounted Player audio decode reuse', () => {
     await loader.load('Music01', 'Variant2'); expect(decodeAudioData).toHaveBeenCalledTimes(2);
   });
 
+  it('marks voice ready only after decoding has finished', async () => {
+    const { loader, decodeAudioData } = setup();
+    let decoded!: (buffer: AudioBuffer) => void;
+    decodeAudioData.mockImplementationOnce(() => new Promise(resolve => { decoded = resolve; }));
+    const pending = loader.load('VoiceAA', 'Normal01');
+    await vi.waitFor(() => expect(decoded).toBeDefined());
+    expect(loader.ready('VoiceAA', 'Normal01')).toBe(false);
+    decoded({ length: 16, numberOfChannels: 2 } as AudioBuffer); await pending;
+    expect(loader.ready('VoiceAA', 'Normal01')).toBe(true);
+    loader.clear(); expect(loader.ready('VoiceAA', 'Normal01')).toBe(false);
+  });
+
   it('retries failed decoding and releases each resolved location', async () => {
     const { loader, release, decodeAudioData } = setup();
     decodeAudioData.mockRejectedValueOnce(new Error('decode failed'));

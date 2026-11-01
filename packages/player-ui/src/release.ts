@@ -9,6 +9,7 @@ import { reportCompatibility, type CompatibilityFile } from './compatibility.js'
 import type { EngineRestorePort } from './restore.js';
 import { loadReleaseFonts } from './fonts.js';
 import { installPluginRuntimes } from './plugin-runtimes.js';
+import { reportPlayerPreparation } from './preparation.js';
 
 async function readJson(url: URL) {
   const response = await fetch(url); if (!response.ok) throw new Error(`Unable to read ${url.pathname}: ${response.status}`); return response.json();
@@ -38,6 +39,7 @@ export async function mountRelease(root: HTMLElement, base: URL, host: PlayerHos
   const contributions = emptyContributions();
   let releaseFonts: (() => void) | null = null;
   try {
+    reportPlayerPreparation(root, 'fonts');
     releaseFonts = await loadReleaseFonts(root, base);
     let externalRuntime: { url: string; expected: import('@galcraft/contracts').Json } | null = null;
     if (snapshot.assets.some(asset => asset.kind === 'live2d')) {
@@ -116,15 +118,16 @@ export async function mountRelease(root: HTMLElement, base: URL, host: PlayerHos
       }
     }
     const styles: Record<string, string> = {};
-    for (const style of snapshot.template.styles) if (style.compiledPath) {
-      const response = await fetch(new URL(style.compiledPath, base)); if (!response.ok) throw new Error(`Missing stylesheet: ${style.compiledPath}`);
+    await Promise.all(snapshot.template.styles.filter(style => style.compiledPath).map(async style => {
+      const path = style.compiledPath!;
+      const response = await fetch(new URL(path, base)); if (!response.ok) throw new Error(`Missing stylesheet: ${path}`);
       let css = await response.text();
       for (const id of style.assets) {
         const asset = snapshot.assets.find(item => item.assetId === id); if (!asset) throw new Error(`Missing CSS asset: ${id}`);
         css = css.replaceAll(`asset:${id}`, new URL(asset.entry, base).href);
       }
-      styles[style.compiledPath] = css;
-    }
+      styles[path] = css;
+    }));
     const conversions = manifest.files.some(file => file.path === 'runtime/engine-conversions.json')
       ? await readJson(new URL('runtime/engine-conversions.json', base)) as { from: string; to: string; entry: string }[] : [];
     const engineRestore: EngineRestorePort = { prepare: async (source, target) => {

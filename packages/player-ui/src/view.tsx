@@ -8,6 +8,7 @@ import { GalleryPage, galleryState, formatTime } from './gallery.js';
 import { PageTransition } from './page-animation.js';
 import { holdPlayerVisual, waitForPresentedMedia } from './visual-handoff.js';
 import { choiceFirstAssets } from './choice-resources.js';
+import { reportPlayerPreparation } from './preparation.js';
 import { countNameCharacters, createId } from '@galcraft/contracts';
 import { currentMainStory, initialNameProgress, mainStoryName, shouldConfirmPlayerName } from './player-name.js';
 import { PluginSurface } from './plugin-surface.js';
@@ -73,6 +74,7 @@ export type PlayerViewOptions = { root: HTMLElement; host: PlayerHost; snapshot:
   previewStyleIds?: Id[];
   retryVideo?: () => Promise<Result<unknown>>;
   prepareChoiceAssets?: (assetIds: Id[]) => Promise<void>;
+  prepareOpeningAssets?: (position: import('@galcraft/contracts').Position) => Promise<void>;
   onSoundEnabled?: () => Promise<Result<unknown>>;
   waitForStage: () => Promise<void>; syncStage: () => Promise<Result<void>>;
   commitSessionStage: (preparedStageId: Id, owner: ExecutionToken, previousSessionId: Id | null) => Result<void>;
@@ -156,6 +158,8 @@ export class PlayerView {
   private visualHoldUsers = 0;
   private endingTask: Promise<void> | null = null;
   private starting = false;
+  private resourcePreparations = 0;
+  private deferredResourceRender = false;
   private selecting: Id | null = null;
   private startingAfterstory: Id | null = null;
   private warmedChoice: string | null = null;
@@ -203,6 +207,7 @@ export class PlayerView {
       if (this.startupMode !== 'splash' && !this.startupRevealing) this.pageAudio.start(this.previewDisplay ?? options.snapshot.project.display);
       else { this.previewDisplay = null; this.startupMode = 'startup'; }
       this.render(); this.content.querySelector<HTMLElement>('[data-focus-key="title.start"]')?.focus();
+      reportPlayerPreparation(options.root, 'ready');
     }, message => { this.startupError = message; }, () => {
       if (this.disposed || this.startupMode === 'splash' || this.startupRevealing) return;
       this.startupRevealing = true; this.pageAudio.start(this.previewDisplay ?? options.snapshot.project.display); this.render();
@@ -261,7 +266,7 @@ export class PlayerView {
     }, { signal: this.visualEvents.signal });
     options.root.tabIndex = 0;
     options.root.addEventListener('pointerup', event => {
-      if(this.emergencyCover?.active||event.button!==0||this.visualHold||this.navigation.page!=='story'||this.startup.active||this.options.entryPresentation?.active||this.options.video.state==='playing')return;
+      if(this.preparingResources||this.emergencyCover?.active||event.button!==0||this.visualHold||this.navigation.page!=='story'||this.startup.active||this.options.entryPresentation?.active||this.options.video.state==='playing')return;
       if(event.target instanceof Element&&event.target.closest('.gc-toolbar,button,a,input,textarea,select,summary,video,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="slider"],[data-gc-plugin-component]'))return;
       const bounds=this.canvasRoot.getBoundingClientRect();
       if(event.clientX<bounds.left||event.clientX>bounds.right||event.clientY<bounds.top||event.clientY>bounds.bottom)return;
@@ -290,7 +295,20 @@ export class PlayerView {
     if(sample==='viewer'){const entry=this.options.snapshot.gallery.find(entry=>entry.kind==='cg');this.galleryView.viewer=entry?.id??null;}
     this.render();
   }
-  get playTimeActive(): boolean { return !this.emergencyCover?.active && !this.disposed && !this.startup.active && !this.transition.busy && ['story','choice','input'].includes(this.navigation.page) && !this.blurred && document.visibilityState==='visible' && this.options.session.inspect()?.status!=='paused'; }
+  get playTimeActive(): boolean { return !this.preparingResources && !this.emergencyCover?.active && !this.disposed && !this.startup.active && !this.transition.busy && ['story','choice','input'].includes(this.navigation.page) && !this.blurred && document.visibilityState==='visible' && this.options.session.inspect()?.status!=='paused'; }
+  get preparingResources(): boolean { return this.resourcePreparations > 0; }
+  /** Keep the mounted frame, without a new overlay, screenshot or loading message. */
+  holdResourcePreparation() {
+    this.resourcePreparations++; this.content.inert = true; this.portal.inert = true;
+    let released = false;
+    return () => {
+      if (released) return; released = true; this.resourcePreparations--;
+      if (this.preparingResources || this.disposed) return;
+      this.content.inert = this.startup.active || this.transition.busy || !!this.visualHold || ['confirm','error','dataImport','dataClear'].includes(this.navigation.page);
+      this.portal.inert = this.startup.active || this.transition.busy || !!this.visualHold;
+      if (this.deferredResourceRender) { this.deferredResourceRender = false; this.render(); }
+    };
+  }
   private pageAnimation(direction:'enter'|'exit') {const root=this.options.snapshot.template.pages.find(page=>page.key===this.navigation.page)?.root;return this.options.snapshot.template.animations.find(animation=>animation.id===root?.animations[direction]);}
   private canOpen(page:string) {
     if (page === 'characters') return this.options.data.domain.kind === 'sample' || afterstoryDirectoryUnlocked(this.options.snapshot, this.options.data.current()!.longTerm.endings);
@@ -392,7 +410,7 @@ export class PlayerView {
   }
   get stageElement(): HTMLElement { return this.stageRoot; }
   get isDisposed(): boolean { return this.disposed; }
-  get storyActive(): boolean { return !this.emergencyCover?.active && !this.disposed && !this.startup.active && !this.transition.busy && this.navigation.page === 'story' &&
+  get storyActive(): boolean { return !this.preparingResources && !this.emergencyCover?.active && !this.disposed && !this.startup.active && !this.transition.busy && this.navigation.page === 'story' &&
     !this.options.entryPresentation?.active &&
     this.options.session.inspect()?.status !== 'paused' && (!this.blurred || !this.preferences().pauseOnBlur); }
   private get uiScale() { return Math.min(this.options.root.clientWidth / this.options.snapshot.project.canvas.width, this.options.root.clientHeight / this.options.snapshot.project.canvas.height); }
@@ -491,6 +509,7 @@ export class PlayerView {
     }
   }
   private async prepareStartupTitle() {
+    reportPlayerPreparation(this.options.root, 'title');
     // Allow the title underneath the opening layer to request its authored fonts and images first.
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     const display=this.previewDisplay??this.options.snapshot.project.display;
@@ -526,7 +545,7 @@ export class PlayerView {
   }
   stopStartupPreview() { this.previewGeneration++; this.startup.stop(); this.pageAudio.stop(); this.previewDisplay = null; this.startupMode = 'startup'; this.render(); }
   updateMediaFrame(deltaMs: number) {
-    if (this.disposed) return;
+    if (this.disposed || this.preparingResources) return;
     const globalPaused = this.emergencyCover?.active || this.options.session.inspect()?.status === 'paused' || this.blurred && this.preferences().pauseOnBlur;
     this.startup.setPaused(globalPaused); this.startup.setVideoVolume(this.preferences().volumes.master * this.preferences().volumes.video / 10000);
     this.options.entryPresentation?.setPreferences(globalPaused,this.preferences().reducedMotion,this.preferences().chapterNotice);
@@ -547,6 +566,7 @@ export class PlayerView {
   }
   private keydown(event: KeyboardEvent) {
     if (this.emergencyCover?.active) return;
+    if (this.preparingResources) { event.preventDefault(); return; }
     if(!!this.selecting||this.visualHold&&!this.options.entryPresentation?.active&&!['playing','loading','error'].includes(this.options.video.state)){event.preventDefault();return;}
     if (event.isComposing || this.composing || event.target instanceof HTMLElement && (event.target.isContentEditable || !!event.target.closest('input,textarea,select,[contenteditable=true],[contenteditable=""],[role=textbox]'))) return;
     if (event.key === 'Control' && !event.repeat && !this.ctrlDown && this.storyActive) { this.ctrlDown=true; this.ctrlFast=true; this.auto=false; event.preventDefault(); this.render(); return; }
@@ -590,6 +610,7 @@ export class PlayerView {
       wheelUp: this.preferences().wheelUp, wheelDown: this.preferences().wheelDown }; }
   private wheel(event: WheelEvent) {
     if (this.emergencyCover?.active) { event.preventDefault(); return; }
+    if (this.preparingResources) { event.preventDefault(); return; }
     if(this.visualHold||!!this.selecting){event.preventDefault();return;}
     const bounds=this.canvasRoot.getBoundingClientRect();
     if(event.clientX<bounds.left||event.clientX>bounds.right||event.clientY<bounds.top||event.clientY>bounds.bottom)return;
@@ -607,6 +628,7 @@ export class PlayerView {
     event.preventDefault(); event.stopPropagation(); this.applyInputAction(action);
   }
   private applyInputAction(action: InputAction) {
+    if (this.preparingResources) return;
     if (action === 'videoSkip') this.options.video.input('physicalEsc');
     if (action === 'advance') void this.advance();
     if (action === 'back') this.back();
@@ -851,6 +873,7 @@ export class PlayerView {
   }
   render() {
     if (this.emergencyCover?.active) { this.renderEmergency(); return; }
+    if (this.preparingResources) { this.deferredResourceRender = true; return; }
     if (this.disposed || !this.options.data.current() || this.handleEnding()) return;
     const pending=this.options.session.inspect();
     if(pending?.pendingLongTerm||pending?.state.wait&&['choice','input','plugin'].includes(pending.state.wait.kind))this.stopModes();
@@ -1156,6 +1179,7 @@ export class PlayerView {
       this.showError(!playerName.trim()?this.t('请填写姓名。','Enter a name.','名前を入力してください。'):this.t(`姓名最多 ${name.maxLength} 个可见字符，请缩短后确认。`,`Use at most ${name.maxLength} visible characters, then confirm.`,`名前は${name.maxLength}文字以内で入力してください。`));this.render();return;
     }
     this.starting=true;this.startingAfterstory=afterstoryCharacterId??null;this.render();
+    reportPlayerPreparation(this.options.root, 'opening');
     const release=this.holdVisual();
     try {
     if(afterstory&&!await this.syncCurrentMainStory(true))return;
@@ -1164,6 +1188,7 @@ export class PlayerView {
     const scene = snapshot.scenes.find(item => item.scene.id === entry.sceneId);
     const position = { sceneId: entry.sceneId, statementId: entry.labelId ? scene?.labels[entry.labelId] ?? null : scene?.instructions[0]?.statementId ?? null };
     if (!position.statementId) { this.showError('起始剧情不可用'); return; }
+    await this.options.prepareOpeningAssets?.(position);
     const scenario = { schemaVersion: 1 as const, id: createId(), name: 'New game', projectId: snapshot.projectId,
       entry: position, target: position, initialProgress: afterstory
         ? {...afterstory.initialProgress,...initialNameProgress(name,this.options.data.current()!.currentMainStory)}
@@ -1194,7 +1219,7 @@ export class PlayerView {
     this.showStory();
     await this.waitForTargetPresentation();
     } catch(error) { if(!this.disposed)this.showError(issueFromError(error,'M07')); }
-    finally {release();this.starting=false;this.startingAfterstory=null;if(!this.disposed)this.render();}
+    finally {release();this.starting=false;this.startingAfterstory=null;if(!this.disposed){this.render();reportPlayerPreparation(this.options.root,'ready');}}
   }
   private story(choices?: ReactNode) {
     const inspection = this.options.session.inspect(); if (!inspection) { this.mountPage(<p>{this.t('没有活动剧情','No active story','進行中の物語はありません')}</p>); return; }

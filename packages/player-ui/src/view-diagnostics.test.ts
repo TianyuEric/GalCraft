@@ -50,7 +50,7 @@ async function setup(target: PlayerHost['target'] = 'windows') {
     message: { textContent: '' }, operationMessage: '', templateImageIssues: [], stageError: null, saving: false, disposed: false,
     render: vi.fn(), showStory: vi.fn(), ask: vi.fn(async () => true), navigation: { replace: vi.fn() },
     options: { host, data, snapshot: structuredClone(FixtureSnapshot), session, stage, video,
-      root: { focus:vi.fn(), setAttribute: vi.fn() }, waitForStage: async () => {}, syncStage: async () => success(undefined),
+      root: { focus:vi.fn(), setAttribute: vi.fn(), dataset: {}, dispatchEvent: vi.fn() }, waitForStage: async () => {}, syncStage: async () => success(undefined),
       audio: { disposeSession: vi.fn(), setPause: vi.fn() }, longTerm: { setActiveSession: vi.fn() }, onSessionEnd: vi.fn() } as unknown as PlayerViewOptions,
   });
   const leaveChoices:('cancel'|'retry'|'direct')[]=[];

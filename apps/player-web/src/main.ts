@@ -11,6 +11,11 @@ declare global { interface Window {
 
 const root = document.getElementById('app')!;
 const base = new URL('./', document.baseURI);
+root.addEventListener('galcraft:preparation', event => {
+  const phase = (event as CustomEvent<{ phase: import('@galcraft/player-ui').PlayerPreparationPhase }>).detail.phase;
+  if (window.parent !== window) window.parent.postMessage({ type: 'galcraft:preparation', phase }, location.origin);
+});
+root.dataset.preparation = 'release';
 void readRelease(base).then(async ({ manifest, snapshot }) => {
   document.title = snapshot.project.name;
   const validation = new URL(location.href).searchParams.has('galcraft-validation');
@@ -21,6 +26,8 @@ void readRelease(base).then(async ({ manifest, snapshot }) => {
   if (validation) window.reportCompatibility = (files, signal) => player.reportCompatibility(files.map(file => ({ ...file, bytes: new Uint8Array(file.bytes) })), signal);
   if (validation) window.validateScenarios = player.validateScenarios;
 }).catch(error => {
+  root.dataset.preparation = 'error';
+  if (window.parent !== window) window.parent.postMessage({ type: 'galcraft:preparation', phase: 'error' }, location.origin);
   const locale = document.documentElement.lang || navigator.language, t = (zh: string, en: string, ja: string) => locale.startsWith('en') ? en : locale.startsWith('ja') ? ja : zh;
   const panel = document.createElement('section'), message = document.createElement('p'), retry = document.createElement('button'), details = document.createElement('details'), summary = document.createElement('summary'), technical = document.createElement('pre');
   panel.className = 'player-load-error'; message.role = 'alert'; message.textContent = t('作品无法加载。请确认发行文件完整、保留原目录结构，然后重新加载。', 'The game could not load. Check that all release files are present in their original folders, then reload.', '作品を読み込めません。配布ファイルと元のフォルダー構成を確認し、再読み込みしてください。');
