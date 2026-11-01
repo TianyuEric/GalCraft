@@ -149,7 +149,7 @@ it('keeps definition-only fixed variants through saved compilation, both release
     expect(await readFile(join(input.outputDirectory, assetFilePath(asset.id, fixedId, 'fixed.png')), 'utf8')).toBe('f');
     expect(releaseManifest.files.some(file => file.path.includes(activeId) || file.path.includes(originalId))).toBe(false);
     vi.stubGlobal('fetch', async url => new Response(await readFile(fileURLToPath(url)), { status: 200 }));
-    const mounted = await mountRelease({ dataset: {} }, pathToFileURL(`${input.outputDirectory}/`), { target }, releaseSnapshot, releaseManifest);
+    const mounted = await mountRelease({ dataset: {}, dispatchEvent: vi.fn() }, pathToFileURL(`${input.outputDirectory}/`), { target }, releaseSnapshot, releaseManifest);
     const releaseRuntime = await import(pathToFileURL(join(input.outputDirectory, `plugins/runtime/${pluginId}/0.1.0/runtime.mjs`)).href);
     expect(value(releaseRuntime.resolved[0]).variantId).toBe(fixedId); mounted.view.dispose();
     releases.push({ target, plan, manifest: releaseManifest, snapshot: releaseSnapshot, resolved: releaseRuntime.resolved });
@@ -199,7 +199,7 @@ it('keeps definition-only fixed variants through saved compilation, both release
   expect(bothPlan.issues.filter(issue=>issue.severity==='error')).toEqual([]); value(await builds.build(bothPlan.planId));
   const bothManifest = JSON.parse(await readFile(join(outputDirectory, 'release.manifest.json'), 'utf8')), bothSnapshot = JSON.parse(await readFile(join(outputDirectory, bothManifest.snapshot), 'utf8'));
   expect(bothSnapshot.assets.map(item => item.variantId)).toEqual([activeId, fixedId]);
-  const bothMounted = await mountRelease({ dataset: {} }, pathToFileURL(`${outputDirectory}/`), { target: 'web' }, bothSnapshot, bothManifest);
+  const bothMounted = await mountRelease({ dataset: {}, dispatchEvent: vi.fn() }, pathToFileURL(`${outputDirectory}/`), { target: 'web' }, bothSnapshot, bothManifest);
   const bothRuntime = await import(pathToFileURL(join(outputDirectory, `plugins/runtime/${pluginId}/0.1.0/runtime.mjs`)).href);
   expect(bothRuntime.resolved.map(result => value(result).variantId)).toEqual([fixedId, activeId]); bothMounted.view.dispose();
   const docChange = value(await documents.update({ documentId: pluginDocumentId, expectedRevision: 2, data: { selected: originalId } }));
@@ -242,7 +242,7 @@ it('keeps definition-only fixed variants through saved compilation, both release
     const copyManifest = JSON.parse(await readFile(join(copyOutput, 'release.manifest.json'), 'utf8')), copySnapshot = JSON.parse(await readFile(join(copyOutput, copyManifest.snapshot), 'utf8'));
     expect(copySnapshot.assets.map(item => item.variantId)).toContain(copyProps.lockedImage);
     expect(copySnapshot.assets[0].variantId).toBe(componentCopy.idMap[activeId]);
-    const copyMounted = await mountRelease({ dataset: {} }, pathToFileURL(`${copyOutput}/`), { target: 'web' }, copySnapshot, copyManifest);
+    const copyMounted = await mountRelease({ dataset: {}, dispatchEvent: vi.fn() }, pathToFileURL(`${copyOutput}/`), { target: 'web' }, copySnapshot, copyManifest);
     const copyRuntime = await import(pathToFileURL(join(copyOutput, `plugins/runtime/${pluginId}/0.1.0/runtime.mjs`)).href);
     const copyResolved = value(await copyRuntime.assetPort.resolve({ kind: 'variant', id: copyProps.lockedImage }));
     expect(copyResolved.assetId).toBe(copyProps.floatingImage); expect(copyResolved.variantId).toBe(copyProps.lockedImage);

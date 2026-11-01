@@ -11,6 +11,7 @@ export * from './preview-host.js';
 
 export * from './scrollbars.js';
 export * from './release.js';
+export * from './preparation.js';
 export * from './compatibility.js';
 export * from './plugin-components.js';
 export * from './plugin-runtimes.js';

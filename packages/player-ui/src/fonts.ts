@@ -5,13 +5,23 @@ export async function loadReleaseFonts(root: HTMLElement, base: URL) {
   if (!response.ok) throw new Error('Release font policy is missing');
   const policy = await response.json() as { faces: ReleaseFace[]; fallbackAssetId: string | null };
   const loaded: FontFace[] = [];
+  const registered = new Map<string, FontFace>();
   try {
-    for (const face of policy.faces) {
-      for (const source of [{ family: face.family, path: face.fullPath }, ...face.subset ? [face.subset] : []]) {
-        const font = await new FontFace(source.family, `url(${JSON.stringify(new URL(source.path, base).href)})`).load();
-        document.fonts.add(font); loaded.push(font);
+    const register = (source: { family: string; path: string }) => {
+      const key = JSON.stringify([source.family, source.path]);
+      let font = registered.get(key);
+      if (!font) {
+        font = new FontFace(source.family, `url(${JSON.stringify(new URL(source.path, base).href)})`);
+        document.fonts.add(font); loaded.push(font); registered.set(key, font);
       }
-    }
+      return font;
+    };
+    // Register complete faces as browser-managed fallbacks. Only missing glyphs need them.
+    const required = policy.faces.map(face => {
+      const full = register({ family: face.family, path: face.fullPath });
+      return face.subset ? register(face.subset) : full;
+    });
+    await Promise.all([...new Set(required)].map(font => font.load()));
     const family = (face: ReleaseFace) => [face.subset?.family, face.family].filter(Boolean).map(name => JSON.stringify(name)).join(', ');
     const fallback = policy.faces.find(face => face.assetId === policy.fallbackAssetId && face.assetId !== null);
     const defaults = policy.faces.filter(face => !face.assetId);

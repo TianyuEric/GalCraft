@@ -19,10 +19,11 @@ import { savePreparedRecord } from './save-request.js';
 import { installPluginRuntimes } from './plugin-runtimes.js';
 import { emptyContributions, PluginStateAdapter, type Contributions, type PluginManifest } from '@galcraft/plugins/contracts';
 import { waitForTitleFrame } from './title-media.js';
+import { createVideoBufferLoader, upcomingPlaybackAssets } from './playback-resources.js';
 
 /** One mounted Player reuses exact audio variants within a bounded decoded-buffer budget. */
 export function createAudioBufferLoader(context: AudioContext, resources: PlayerHost['resources'], maximumBytes = 64 * 1024 * 1024, maximumEntries = 32) {
-  const entries = new Map<string, { promise: Promise<AudioBuffer>; bytes: number }>();
+  const entries = new Map<string, { promise: Promise<AudioBuffer>; bytes: number; ready: boolean }>();
   const trim = () => {
     let bytes = [...entries.values()].reduce((total, entry) => total + entry.bytes, 0);
     while (entries.size > maximumEntries || bytes > maximumBytes) {
@@ -33,20 +34,21 @@ export function createAudioBufferLoader(context: AudioContext, resources: Player
   const load = (assetId: Id, variantId: Id): Promise<AudioBuffer> => {
     const key = JSON.stringify([assetId, variantId]), cached = entries.get(key);
     if (cached) { entries.delete(key); entries.set(key, cached); return cached.promise; }
-    const entry = { promise: null as unknown as Promise<AudioBuffer>, bytes: 0 };
+    const entry = { promise: null as unknown as Promise<AudioBuffer>, bytes: 0, ready: false };
     entry.promise = (async () => {
       const location = await resources.resolve(assetId, variantId);
       if (!location.ok) throw new Error(location.error.message);
       try {
         const response = await fetch(location.value.uri); if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const buffer = await context.decodeAudioData(await response.arrayBuffer());
-        if (entries.get(key) === entry) { entry.bytes = buffer.length * buffer.numberOfChannels * 4; trim(); }
+        if (entries.get(key) === entry) { entry.bytes = buffer.length * buffer.numberOfChannels * 4; entry.ready = true; trim(); }
         return buffer;
       } finally { location.value.release(); }
     })().catch(error => { if (entries.get(key) === entry) entries.delete(key); throw error; });
     entries.set(key, entry); trim(); return entry.promise;
   };
-  return { load, clear: () => entries.clear() };
+  return { load, ready: (assetId: Id, variantId: Id) => !!entries.get(JSON.stringify([assetId, variantId]))?.ready,
+    clear: () => entries.clear() };
 }
 
 export type PlayerMount = { view: PlayerView; data: PlayerDataService; session: SessionController;
@@ -100,6 +102,49 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
   previewMediaObserver?.observe(root, { childList: true, subtree: true });
   const audioContext = new AudioContext();
   const audioBuffers = createAudioBufferLoader(audioContext, host.resources);
+  const videoBuffers = createVideoBufferLoader(host.resources);
+  const imagePreparations = new Map<Id, Promise<void>>();
+  let preparationDisposed = false, prefetchActive = 0;
+  let prefetchQueue: Id[] = [];
+  const prepareAsset = async (assetId: Id, required = false): Promise<void> => {
+    const asset = snapshot.assets.find(item => item.assetId === assetId); if (!asset || preparationDisposed) return;
+    if (asset.kind === 'audio') {
+      const levels = data.current()!.preferences.volumes;
+      if (levels.master <= 0) return;
+      // Voice failures retain the existing audible-media degradation policy.
+      await audioBuffers.load(asset.assetId, asset.variantId).catch(() => {}); return;
+    }
+    if (asset.kind === 'video') {
+      const bytes = asset.files.find(file => file.path === asset.entry)?.bytes ?? 0;
+      if (bytes <= videoBuffers.maximumBytes) await videoBuffers.warm(asset.assetId, asset.variantId);
+      return;
+    }
+    if (asset.kind !== 'image') return;
+    let pending = imagePreparations.get(assetId);
+    if (!pending) {
+      pending = (async () => {
+        const resolved = await host.resources.resolve(asset.assetId, asset.variantId);
+        if (!resolved.ok) throw new Error(resolved.error.message);
+        try { const image = new Image(); image.src = resolved.value.uri; await image.decode(); }
+        finally { resolved.value.release(); }
+      })().catch(error => { imagePreparations.delete(assetId); throw error; });
+      imagePreparations.set(assetId, pending);
+      if (imagePreparations.size > 32) imagePreparations.delete(imagePreparations.keys().next().value!);
+    }
+    if (required) await pending; else await pending.catch(() => {});
+  };
+  const pumpPrefetch = () => {
+    while (!preparationDisposed && prefetchActive < 2 && prefetchQueue.length) {
+      const id = prefetchQueue.shift()!; prefetchActive++;
+      void prepareAsset(id).catch(() => {}).finally(() => { prefetchActive--; pumpPrefetch(); });
+    }
+  };
+  const prefetchAfter = (statementId: Id) => {
+    const preferences = data.current()!.preferences;
+    prefetchQueue = upcomingPlaybackAssets(snapshot, statementId, preferences.voiceLocale, false, 3,
+      preferences.volumes.master > 0 && preferences.volumes.voice > 0);
+    pumpPrefetch();
+  };
   const audio = new AudioMixer(audioContext, audioBuffers.load);
   const volumes = opened.value.preferences.volumes;
   audio.setLevels(volumes.master / 100, Object.fromEntries(Object.entries(volumes).filter(([key]) => key !== 'master')
@@ -157,7 +202,12 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     const args=instruction?.args as {assetId?:Id;skipFadeMs?:number;volume?:number}|undefined;
     const asset=snapshot.assets.find(item=>item.assetId===args?.assetId);
     if(!inspection||instruction?.opcode!=='video'||!asset)return fail('VIDEO_STALE','影片已失效');
-    const resolved=await host.resources.resolve(asset.assetId,asset.variantId);
+    let resolved: Awaited<ReturnType<typeof host.resources.resolve>>;
+    try {
+      const bytes=asset.files.find(file=>file.path===asset.entry)?.bytes??0;
+      resolved=bytes<=videoBuffers.maximumBytes?ok(await videoBuffers.load(asset.assetId,asset.variantId)):
+        await host.resources.resolve(asset.assetId,asset.variantId);
+    } catch(error) { return fail('VIDEO_PLAY_FAILED',String(error)); }
     if(!resolved.ok)return resolved;
     if(generation!==videoGeneration||session.inspect()?.sessionId!==token.sessionId){resolved.value.release();return fail('VIDEO_STALE','影片已失效');}
     storyVideoVolume=args?.volume??1;videoLocation?.release();videoLocation=resolved.value;
@@ -201,11 +251,20 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
         dispose: () => stage.discardPrepared(prepared.value.id) });
     },
     onCommitted: async ({ sessionId, token, state, delta, presentationPrepared }) => {
-      entryPresentation.begin(sessionId,state);
+      const releaseResources = view.holdResourcePreparation();
+      try {
       const generation = ++renderGeneration;
       stageCurrent = false;
+      const voice = delta?.voiceBinding && state.presentation.voice;
+      if (voice && data.current()!.preferences.volumes.master > 0 && data.current()!.preferences.volumes.voice > 0 &&
+        !audioBuffers.ready(voice.assetId, voice.variantId)) {
+        await audioBuffers.load(voice.assetId, voice.variantId).catch(() => {});
+        if (generation !== renderGeneration || session.inspect()?.sessionId !== sessionId)
+          return { presentationEntered: false, mediaStarted: false };
+      }
+      prefetchAfter(token.statementId);
+      entryPresentation.begin(sessionId,state);
       if (delta?.voiceBinding) voiceBindings.set(sessionId, delta.voiceBinding);
-      audioRouter.applyDialogue({ sessionId, token, state, delta });
       const audioStarts: Promise<boolean>[] = [];
       let movieStart: Promise<boolean> | null = null;
       for (const item of delta?.audio ?? []) {
@@ -246,11 +305,13 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       await stagePending;
       if (generation !== renderGeneration || session.inspect()?.sessionId !== sessionId || !stageCurrent)
         return { presentationEntered: false, mediaStarted: false };
+      audioRouter.applyDialogue({ sessionId, token, state, delta });
       if (movieStart) { const started = await movieStart; return { presentationEntered: started, mediaStarted: started }; }
       const waitingForMovie = state.wait?.kind === 'animation' && snapshot.scenes.flatMap(scene => scene.instructions).some(instruction => instruction.statementId === token.statementId && instruction.opcode === 'video');
       if (waitingForMovie) return { presentationEntered: video.state !== 'error' && enteredVideo?.sessionId === token.sessionId && enteredVideo.occurrence === token.occurrence && enteredVideo.statementId === token.statementId, mediaStarted: false };
       const started = await Promise.all(audioStarts);
       return { presentationEntered: true, mediaStarted: started.length ? started.every(Boolean) : true };
+      } finally { releaseResources(); }
     } });
   const restore = new RestoreCoordinator(snapshot, data, session, stage, new PluginStateAdapter(plugins.contributions, plugins.manifests), entryMappings, engineRestore);
   const importer = new DataImportService(data, restore, snapshot);
@@ -287,14 +348,16 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     pluginPages: plugins.contributions.pages, pluginComponents: plugins.contributions.components, pluginPlatforms: plugins.contributions.platform,
     styles, previewStyleIds,
     waitForStage: () => stagePending, syncStage,
+    prepareOpeningAssets: async position => {
+      const preferences = data.current()!.preferences;
+      const assets = upcomingPlaybackAssets(snapshot, position.statementId!, preferences.voiceLocale, true, 1,
+        preferences.volumes.master > 0 && preferences.volumes.voice > 0);
+      // The actual stage/video entry owns errors and retry. A failed warm-up leaves that path available.
+      await Promise.all(assets.map(id => prepareAsset(id, true).catch(() => {})));
+    },
     prepareChoiceAssets: async assetIds => {
       // The selected branch supplies only its first screen. This never runs script or starts media.
-      const assets = [...new Set(assetIds)].slice(0, 12).flatMap(id => snapshot.assets.find(asset => asset.assetId === id) ?? []);
-      await Promise.all(assets.map(async asset => {
-        if (asset.kind === 'audio') { await audioBuffers.load(asset.assetId, asset.variantId); return; }
-        const resolved = await resolve(asset.assetId, asset.variantId); if (!resolved.ok) throw new Error(resolved.error.message);
-        if (asset.kind === 'image') { const image = new Image(); image.src = resolved.value.url; await image.decode(); }
-      }));
+      prefetchQueue = [...new Set(assetIds)].slice(0, 12); pumpPrefetch();
     },
     commitSessionStage: (preparedStageId, owner, previousSessionId) => {
       const committed = stage.commitStage(preparedStageId, owner);
@@ -313,7 +376,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       view.setStageError(null); },
     onDispose: () => {previewMediaObserver?.disconnect();releaseClock();document.removeEventListener('visibilitychange',resetPlayClock);videoFrameLifetime?.abort();videoLocation?.release(); for (const location of locations.values()) location.release(); locations.clear();
       audioRouter.clear();
-      audioBuffers.clear();
+      preparationDisposed = true; prefetchQueue = []; imagePreparations.clear(); videoBuffers.clear(); audioBuffers.clear();
       void audioContext.close(); resizeObserver.disconnect(); } });
   let stageAnimationCompleting=false;
   let pendingAnimationCompletion: {token:ExecutionToken}|null=null;
@@ -345,7 +408,9 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     const prefs=data.current()!.preferences;
     videoElement.volume=Math.min(1,Math.max(0,storyVideoVolume*prefs.volumes.master*prefs.volumes.video/10000));stage.setVisualPreferences(prefs.effects,prefs.reducedMotion);
     const elapsedMs = Math.max(0, now - prior); const deltaMs = Math.min(100, elapsedMs); prior = now;
-    if(view.playTimeActive)session.elapsePlayTime(elapsedMs); stage.tick(deltaMs, audio.voiceLevel(), audio.voicePCM(deltaMs)); video.tick(deltaMs); audio.tick(deltaMs); view.updateMediaFrame(deltaMs);
+    if(view.playTimeActive)session.elapsePlayTime(elapsedMs);
+    if(!view.preparingResources)stage.tick(deltaMs, audio.voiceLevel(), audio.voicePCM(deltaMs));
+    video.tick(deltaMs); audio.tick(deltaMs); view.updateMediaFrame(deltaMs);
     if (video.state === 'error' && !videoElement.hidden) {
       videoElement.hidden = true; root.classList.remove('gc-video-active'); audio.setPause('video', false);
       view.showError({code:'VIDEO_PLAY_FAILED',owner:'M06',severity:'error',message:videoElement.error?.message||'影片读取失败，请重试或返回标题。',related:[],actions:['retry','returnTitle'],...(videoElement.error?{details:{mediaCode:videoElement.error.code}}:{})});

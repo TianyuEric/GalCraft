@@ -79,7 +79,7 @@ async function setup(withName=false) {
     disposed: false, saving: false, transition:{busy:false}, startup: { active: false }, message: { textContent: '' }, operationMessage: '', stageError: null,
     render: vi.fn(), mountPage: vi.fn(), ask: vi.fn(async () => true), navigation: new PageNavigator(),animateNavigation:async(change:()=>void)=>{change();return true;},
     options: { host, data, snapshot, longTerm, session, stage, audio, onSessionEnd, commitSessionStage, restore,
-      video: { state: 'idle', returnTitle: vi.fn() }, root: { focus:vi.fn(), setAttribute: vi.fn() }, waitForStage: async () => {}, syncStage: async () => {
+      video: { state: 'idle', returnTitle: vi.fn() }, root: { focus:vi.fn(), setAttribute: vi.fn(), dataset: {}, dispatchEvent: vi.fn() }, waitForStage: async () => {}, syncStage: async () => {
         const active = session.inspect();
         return active && registeredSessionId === active.sessionId && stageSessionId === active.sessionId
           ? session.syncPresentation(active.sessionId, stageState) : failure();
