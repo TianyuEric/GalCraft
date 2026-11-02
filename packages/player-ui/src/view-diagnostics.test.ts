@@ -40,7 +40,9 @@ async function setup(target: PlayerHost['target'] = 'windows') {
   expect((await data.open()).ok).toBe(true);
   const inspection = { sessionId: crypto.randomUUID(), sequence: 1, status: 'active', pendingLongTerm: null as object|null,
     state: structuredClone(FixtureSaveRecord.state), history: structuredClone(FixtureSaveRecord.history), token: null };
-  const session = { inspect: vi.fn(() => inspection), dispose: vi.fn(), waitForIdle:vi.fn(async()=>{}), retryLongTerm:vi.fn(async()=>failure('Long-term write failed')), pluginWaitPolicy: () => ({ restorable: true }),
+  const session = { inspect: vi.fn(() => inspection), inspectActivity: vi.fn(() => ({ sessionId: inspection.sessionId, sequence: inspection.sequence,
+    token: inspection.token, status: inspection.status, pendingLongTerm: inspection.pendingLongTerm, waitKind: inspection.state.wait?.kind ?? null })),
+    dispose: vi.fn(), waitForIdle:vi.fn(async()=>{}), retryLongTerm:vi.fn(async()=>failure('Long-term write failed')), pluginWaitPolicy: () => ({ restorable: true }),
     checkpointsFor: vi.fn((): { state: typeof inspection.state }[] => []), prepareSession: vi.fn(), activate: vi.fn(), start: vi.fn(async () => success(undefined)), replayVoice: vi.fn(() => success(null)) };
   const stage = { capture: vi.fn(() => success(inspection.state.presentation)), pause: vi.fn(),
     captureFrame: vi.fn(() => ({ toBlob: (callback: (blob: null) => void) => callback(null) })), prepareStage: vi.fn(), commitStage: vi.fn() };

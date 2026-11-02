@@ -35,6 +35,35 @@ function host() {
 }
 
 describe('PlayerDataService', () => {
+  it('isolates settings reads and observes committed, failed, reloaded and cleared preferences', async () => {
+    const memory = host(), create = () => new PlayerDataService({ target: 'web', storage: memory.storage }, FixtureDomains[0]!, 'zh-CN', 'zh-CN');
+    const data = create(); expect(data.preferences()).toBeNull();
+    const opened = await data.open(); if (!opened.ok) throw opened.error;
+    const initial = data.preferences()!;
+    initial.volumes.master = 0; initial.confirmations.load = false;
+    opened.value.preferences.menuLocale = 'ja';
+    expect(data.preferences()).toMatchObject({ menuLocale: 'zh-CN', volumes: { master: 100 }, confirmations: { load: true } });
+    const current = data.preferences()!;
+    const saved = await data.savePreferences({ ...current, menuLocale: 'en', voiceLocale: 'ja',
+      volumes: { ...current.volumes, master: 25, voice: 40 }, pauseOnBlur: false }, current.revision);
+    if (!saved.ok) throw saved.error;
+    saved.value.volumes.master = 0;
+    expect(data.preferences()).toMatchObject({ revision: 1, menuLocale: 'en', voiceLocale: 'ja',
+      volumes: { master: 25, voice: 40 }, pauseOnBlur: false });
+    const committed = data.preferences()!;
+    memory.rejectNext();
+    expect((await data.savePreferences({ ...committed, menuLocale: 'ja' }, committed.revision)).ok).toBe(false);
+    expect(data.preferences()).toEqual(committed);
+    const other = create(); expect((await other.open()).ok).toBe(true);
+    const external = other.preferences()!;
+    expect((await other.savePreferences({ ...external, menuLocale: 'ja' }, external.revision)).ok).toBe(true);
+    expect(data.preferences()!.menuLocale).toBe('en');
+    expect((await data.reload()).ok).toBe(true); expect(data.preferences()!.menuLocale).toBe('ja');
+    expect((await data.clear(['preferences'])).ok).toBe(true);
+    expect(data.preferences()).toMatchObject({ revision: 3, menuLocale: 'zh-CN', voiceLocale: 'zh-CN',
+      volumes: { master: 100, voice: 100 }, pauseOnBlur: true });
+    expect(committed).toMatchObject({ revision: 1, menuLocale: 'en', volumes: { master: 25 } });
+  });
   it('persists current main-story context independently of an older continue save and resets it with saves', async () => {
     const memory=host(),domain=FixtureDomains[0]!,create=()=>new PlayerDataService({target:'web',storage:memory.storage},domain,'zh-CN','zh-CN');
     const data=create();expect((await data.open()).ok).toBe(true);expect(data.current()!.currentMainStory).toBeNull();

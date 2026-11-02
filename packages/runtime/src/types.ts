@@ -56,6 +56,9 @@ export type RuntimePorts = { longTerm: LongTermService; stage: StageService; con
 export type RuntimeInspection = { sessionId: Id; snapshotId: Id; sequence: number; state: RuntimeState; history: HistoryEntry[];
   token: ExecutionToken | null; status: 'ready' | 'waiting' | 'paused' | 'error' | 'ended'; issue: Issue | null;
   pendingLongTerm: boolean; trace: { token: ExecutionToken; source: Source }[] };
+export type RuntimeActivity = Pick<RuntimeInspection, 'sessionId' | 'sequence' | 'token' | 'status' | 'pendingLongTerm'> & {
+  waitKind: NonNullable<RuntimeState['wait']>['kind'] | null;
+};
 export type ExpressionContext = { state: RuntimeState; longTerm: LongTerm; variables?: readonly Variable[];
   input?: string; functions?: Record<string, (args: Scalar[]) => Result<Scalar>> };
 export type EvaluatedCondition = { value: boolean; root: ConditionNode };
