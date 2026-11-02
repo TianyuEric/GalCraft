@@ -29,6 +29,30 @@ function timerSnapshot(skippable = false) {
 }
 
 describe('Player wait and skip lifecycle', () => {
+  it('isolates activity tokens and observes timer, cover pause and session disposal immediately', async () => {
+    const session = await start(timerSnapshot()), initial = session.inspect()!, activity = session.inspectActivity()!;
+    expect(activity).toMatchObject({ sessionId: initial.sessionId, sequence: initial.sequence,
+      token: initial.token, status: 'waiting', pendingLongTerm: false, waitKind: 'timer' });
+    expect(session.inspectActivity(crypto.randomUUID())).toBeNull();
+    activity.token!.statementId = crypto.randomUUID();
+    initial.state.wait = null; initial.token!.occurrence = -1;
+    const current = session.inspectActivity()!, before = session.inspect()!;
+    expect(current.token!.occurrence).toBeGreaterThan(0);
+    expect(current.token!.statementId).not.toBe(activity.token!.statementId);
+    expect(before.state.wait?.kind).toBe('timer');
+    unwrap(await session.setPauseReason('emergency', true));
+    expect(session.inspectActivity()!.status).toBe('paused');
+    expect(unwrap(session.elapseTimer({ token: current.token!, deltaMs: 1000 }))).toBe(false);
+    expect(session.inspect()!.state.wait).toEqual(before.state.wait);
+    unwrap(await session.setPauseReason('emergency', false));
+    expect(session.inspectActivity()!.status).toBe('waiting');
+    expect(unwrap(session.elapseTimer({ token: current.token!, deltaMs: 1000 }))).toBe(true);
+    expect(session.inspectActivity()!.sequence).toBeGreaterThan(current.sequence);
+    unwrap(await session.dispatch({ kind: 'timer', token: current.token! }));
+    expect(session.inspectActivity()!.waitKind).toBe('say');
+    expect(session.inspect()!.history).toHaveLength(1);
+    session.dispose(); expect(session.inspectActivity()).toBeNull(); expect(session.inspect()).toBeNull();
+  });
   it('ends the preceding one-shot voice in a movie entry checkpoint while retaining its history', async () => {
     const snapshot = timerSnapshot(), [video, say] = snapshot.scenes[0]!.instructions;
     video!.opcode = 'video'; video!.args = { assetId: snapshot.assets[0]!.assetId };

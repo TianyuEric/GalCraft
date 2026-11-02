@@ -295,7 +295,7 @@ export class PlayerView {
     if(sample==='viewer'){const entry=this.options.snapshot.gallery.find(entry=>entry.kind==='cg');this.galleryView.viewer=entry?.id??null;}
     this.render();
   }
-  get playTimeActive(): boolean { return !this.preparingResources && !this.emergencyCover?.active && !this.disposed && !this.startup.active && !this.transition.busy && ['story','choice','input'].includes(this.navigation.page) && !this.blurred && document.visibilityState==='visible' && this.options.session.inspect()?.status!=='paused'; }
+  get playTimeActive(): boolean { return !this.preparingResources && !this.emergencyCover?.active && !this.disposed && !this.startup.active && !this.transition.busy && ['story','choice','input'].includes(this.navigation.page) && !this.blurred && document.visibilityState==='visible' && this.options.session.inspectActivity()?.status!=='paused'; }
   get preparingResources(): boolean { return this.resourcePreparations > 0; }
   /** Keep the mounted frame, without a new overlay, screenshot or loading message. */
   holdResourcePreparation() {
@@ -412,7 +412,7 @@ export class PlayerView {
   get isDisposed(): boolean { return this.disposed; }
   get storyActive(): boolean { return !this.preparingResources && !this.emergencyCover?.active && !this.disposed && !this.startup.active && !this.transition.busy && this.navigation.page === 'story' &&
     !this.options.entryPresentation?.active &&
-    this.options.session.inspect()?.status !== 'paused' && (!this.blurred || !this.preferences().pauseOnBlur); }
+    this.options.session.inspectActivity()?.status !== 'paused' && (!this.blurred || !this.preferences().pauseOnBlur); }
   private get uiScale() { return Math.min(this.options.root.clientWidth / this.options.snapshot.project.canvas.width, this.options.root.clientHeight / this.options.snapshot.project.canvas.height); }
   private mountPage(node: ReactNode, authored = false) {
     authored = authored || React.isValidElement<{compose?:unknown}>(node) && (!!node.props.compose || node.type === ComponentInstances);
@@ -458,8 +458,8 @@ export class PlayerView {
       <TemplateImages root={this.options.root} host={this.options.host} part={(key,element)=>{const owner=element.closest<HTMLElement>('[data-gc-page]')?.dataset.gcPage??page;return element.dataset.gcComponent?this.componentById(owner,element.dataset.gcComponent):this.part(owner,key);}} onIssues={issues=>this.setTemplateImageIssues(issues)} scale={1} sequence={this.renderSequence}/></>));
   }
   private partRef(page: string, key: string, position = false) { return Object.assign((node: HTMLElement | null) => { if (node) {this.stylePart(page, key, node, position);if(node.matches("button,input,select,textarea,summary,[tabindex]")&&!node.dataset.focusKey)node.dataset.focusKey=`${page}:${key}`;} },{gcPart:key}); }
-  private preferences(): PlayerPreferences { return this.options.data.current()!.preferences; }
-  private t(zh:string,en:string,ja:string) { return this.preferences().menuLocale==='en'?en:this.preferences().menuLocale==='ja'?ja:zh; }
+  private preferences(): PlayerPreferences { return this.options.data.preferences()!; }
+  private t(zh:string,en:string,ja:string) { const locale=this.preferences().menuLocale; return locale==='en'?en:locale==='ja'?ja:zh; }
   private locale(key: string): string { const template = this.options.snapshot.template;
     const locale = this.preferences().menuLocale;
     return template.locales[locale]?.[key] ?? defaultLocales[locale as keyof typeof defaultLocales]?.strings[key] ?? template.locales['zh-CN']?.[key] ?? key; }
@@ -486,7 +486,7 @@ export class PlayerView {
   private renderMessage() {
     const operation=this.navigation.page==='input'&&!this.operationIssue?'':this.operationMessage;
     const message=[...new Set([operation,this.stageError,this.portraitError,...this.templateImageIssues.map(issue=>localizeIssue(issue,this.preferences().menuLocale))].filter(Boolean))].join('\n');
-    if(!this.options.session.inspect()?.pendingLongTerm){
+    if(!this.options.session.inspectActivity()?.pendingLongTerm){
       const issues=this.inspectDiagnostics();
       if(issues.length){const detail=issues.map(issue=>issueDetails(issue)).join('\n\n');if(typeof this.message.replaceChildren==='function'){
         let details=this.message.querySelector<HTMLDetailsElement>('details[data-gc-diagnostic]');
@@ -546,9 +546,10 @@ export class PlayerView {
   stopStartupPreview() { this.previewGeneration++; this.startup.stop(); this.pageAudio.stop(); this.previewDisplay = null; this.startupMode = 'startup'; this.render(); }
   updateMediaFrame(deltaMs: number) {
     if (this.disposed || this.preparingResources) return;
-    const globalPaused = this.emergencyCover?.active || this.options.session.inspect()?.status === 'paused' || this.blurred && this.preferences().pauseOnBlur;
-    this.startup.setPaused(globalPaused); this.startup.setVideoVolume(this.preferences().volumes.master * this.preferences().volumes.video / 10000);
-    this.options.entryPresentation?.setPreferences(globalPaused,this.preferences().reducedMotion,this.preferences().chapterNotice);
+    const preferences = this.preferences();
+    const globalPaused = this.emergencyCover?.active || this.options.session.inspectActivity()?.status === 'paused' || this.blurred && preferences.pauseOnBlur;
+    this.startup.setPaused(globalPaused); this.startup.setVideoVolume(preferences.volumes.master * preferences.volumes.video / 10000);
+    this.options.entryPresentation?.setPreferences(globalPaused,preferences.reducedMotion,preferences.chapterNotice);
     this.options.entryPresentation?.tick(deltaMs);
     this.startup.tick(deltaMs); this.pageAudio.tick();
     this.fullscreenElapsed+=deltaMs;
@@ -668,11 +669,11 @@ export class PlayerView {
     if(page==='dataClear')this.clearScopes.clear();
     if (page !== 'story') { this.options.stage.pause(true); this.options.audio.setPause('systemPage', true); }
     this.navigation.open(page, { focusKey: this.pendingConfirm?.originFocus ?? (document.activeElement as HTMLElement | null)?.dataset.focusKey ?? '',
-      scroll: this.content.scrollTop, sessionId: this.options.session.inspect()?.sessionId ?? null }); }
+      scroll: this.content.scrollTop, sessionId: this.options.session.inspectActivity()?.sessionId ?? null }); }
   private showStory() {
     if (this.options.video.state === 'error') { this.navigation.replace('videoError'); return; }
     this.options.stage.pause(false); this.options.audio.setPause('systemPage', false);
-    this.navigation.replace('story', this.options.session.inspect()?.sessionId ?? null); this.options.stage.pause(!this.storyActive); this.render(); if(this.navigation.page==='story')this.options.root.focus({preventScroll:true}); }
+    this.navigation.replace('story', this.options.session.inspectActivity()?.sessionId ?? null); this.options.stage.pause(!this.storyActive); this.render(); if(this.navigation.page==='story')this.options.root.focus({preventScroll:true}); }
   private action(label: string, run: () => void, disabled = false, focusKey = label) {
     const control = button(label, run, disabled); control.dataset.focusKey = focusKey; return control;
   }
@@ -738,7 +739,7 @@ export class PlayerView {
         try {
           // Paint acceptance before the synchronous stage readback and branch preparation.
           if(this.canvasRoot?.isConnected)await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
-          if(this.disposed||!sameToken(this.options.session.inspect()?.token??null,inspection.token))return;
+          if(this.disposed||!sameToken(this.options.session.inspectActivity()?.token??null,inspection.token))return;
           release=this.holdVisual();
           const synced=await this.options.syncStage();this.report(synced);if(!synced.ok)return;
           const result=await this.options.session.dispatch({kind:'choose',token:inspection.token,optionId:action.optionId});this.report(result);
@@ -768,16 +769,16 @@ export class PlayerView {
   }
   private instances(page: string, overrides: Partial<ComponentInstanceProps> = {}): ReactNode {
     const config = this.options.snapshot.template.pages.find(item => item.key === page); if (!config) return null;
-    const context = this.instanceContext(page);
+    const context = overrides.context ?? this.instanceContext(page);
     return <ComponentInstances externalVisualStates root={config.root} page={{id:config.id,key:config.key}} context={context} label={key => this.locale(key)} textOverride={component => componentTextOverride(component, this.options.snapshot.template.locales, this.preferences().menuLocale)} action={(action, value) => this.instanceAction(action, value)}
       register={(component, element, instance) => { if (!element) return; element.dataset.gcComponent = component.id; element.dataset.gcPart = component.part; element.dataset.gcInstance = instance;
         if(element.matches('button,input,select,textarea,[tabindex]')&&!element.dataset.focusKey)element.dataset.focusKey=instance;
         if (component.part.startsWith('title.menu.')) element.dataset.focusKey = component.part.replace('menu.', ''); }}
       activate={async (component, value) => { if (this.emergencyCover?.active) { if (component.part === 'emergency.restore') this.setEmergency(false); return; } const action = componentDefinition(component.part)?.action; if (!action) return; if(action==='startAfterstory'){const id=(value.item as {id?:Id}|undefined)?.id;if(id)await this.newGame(undefined,id);return;} if(component.part==='settings.titleAction'){await this.returnTitle(true,true);return;} if (action.startsWith('open:')) { this.open(action.slice(5)); return; } if (action === 'selectOption') { const id = (value.item as { id?: Id } | undefined)?.id; if (id) await this.dispatchPageAction({ kind: 'selectOption', optionId: id }); return; } if (action === 'playHistoryVoice' || action === 'jumpHistory') { const id = (value.item as { id?: Id } | undefined)?.id; if (id) await this.dispatchPageAction(action === 'jumpHistory' ? { kind: 'jumpHistory', historyId: id } : { kind: 'playHistoryVoice', historyId: id }); return; } if (['start', 'continue', 'back', 'exit', 'toggleAuto', 'toggleSkip', 'advance', 'quickSave', 'quickLoad', 'replayVoice', 'returnTitle', 'toolbarReveal', 'cancelInput'].includes(action)) await this.dispatchPageAction({ kind: action } as OfficialAction); }}
-      state={(component, value) => { const item = value.item as Record<string, unknown> | undefined, profile = this.options.data.current()!;
+      state={(component, value) => { const item = value.item as Record<string, unknown> | undefined;
         if (component.part === 'title.workTitle') return { text: this.options.snapshot.project.name };
         if (component.part === 'title.description') return { text: this.options.snapshot.project.description };
-        if (component.part === 'title.menu.continue') return { disabled: !profile.index.continueRecordId };
+        if (component.part === 'title.menu.continue') return { disabled: !this.options.data.current()!.index.continueRecordId };
         if (component.part === 'title.menu.exit') return { visible: this.options.host.target === 'windows' };
         if (/^title\.menu\.(cg|music|flow|characters)$/.test(component.part)) return { disabled: !this.canOpen(component.part.split('.').at(-1)!) };
         if (component.part === 'choice.list.item') return { disabled: item?.disabled === true || !!this.selecting, selected:item?.id===this.selecting };
@@ -875,23 +876,23 @@ export class PlayerView {
     if (this.emergencyCover?.active) { this.renderEmergency(); return; }
     if (this.preparingResources) { this.deferredResourceRender = true; return; }
     if (this.disposed || !this.options.data.current() || this.handleEnding()) return;
-    const pending=this.options.session.inspect();
-    if(pending?.pendingLongTerm||pending?.state.wait&&['choice','input','plugin'].includes(pending.state.wait.kind))this.stopModes();
+    const pending=this.options.session.inspectActivity();
+    if(pending?.pendingLongTerm||pending?.waitKind&&['choice','input','plugin'].includes(pending.waitKind))this.stopModes();
     this.renderMessage();
     const renderSequence = ++this.renderSequence;
-    const sessionId = this.options.session.inspect()?.sessionId ?? null;
+    const sessionId = pending?.sessionId ?? null;
     const source = this.navigation.audioSource;
     this.pageAudio.setContext(this.navigation.page, source.kind === 'stage' && sessionId && (!source.sessionId || source.sessionId === sessionId)
       ? { kind: 'stage', sessionId } : { kind: 'home' }, (this.navigation.contains('music')||this.navigation.contains('cg')), {
         systemPage: this.navigation.page !== 'story', focus: this.blurred && this.preferences().pauseOnBlur,
-        emergency: this.emergencyCover?.active, debug: this.options.session.inspect()?.status === 'paused',
+        emergency: this.emergencyCover?.active, debug: pending?.status === 'paused',
       });
     this.soundButton.hidden = !this.pageAudio.soundBlocked || this.startup.active;
     this.soundButton.textContent = this.t('启用声音','Enable sound','音声を有効にする');
     this.options.stage.pause(!this.storyActive);
     void this.options.video.setPause(!this.storyActive).then(result => { if (!result.ok && result.error.code !== 'VIDEO_STALE') this.report(result); });
     const pluginPage=['confirm','error','dataImport','dataClear'].includes(this.navigation.page)?this.retainedPage?.page:this.navigation.page;
-    const identity=`${pluginPage}/${sessionId}/${pending?.state.wait?.kind==='plugin'?pending.token?.occurrence:''}`;
+    const identity=`${pluginPage}/${sessionId}/${pending?.waitKind==='plugin'?pending.token?.occurrence:''}`;
     if(identity!==this.pluginIdentity){this.pluginIdentity=identity;this.pluginEpoch++;this.pluginPageNode=null;
       this.pluginRoot?.unmount();this.pluginRoot=null;this.releasePluginRender();this.pluginRenderController=new AbortController();this.clearPluginComponents();}
 
@@ -967,7 +968,7 @@ export class PlayerView {
     if (this.typingTimer) { clearTimeout(this.typingTimer); this.typingTimer = null; }
     if (this.autoTimer) { clearTimeout(this.autoTimer); this.autoTimer = null; }
     void this.options.session.setPauseReason('emergency', enabled).then(result => { if (!result.ok) this.report(result); });
-    if (!enabled) this.options.audio.setPause('debug', this.options.session.inspect()?.status === 'paused');
+    if (!enabled) this.options.audio.setPause('debug', this.options.session.inspectActivity()?.status === 'paused');
     this.options.audio.setPause('emergency', enabled);
     if (enabled) {
       this.emergencyLifetime = new AbortController();
@@ -979,7 +980,7 @@ export class PlayerView {
     } else {
       this.clearEmergencyComponents();
       this.emergencyRoot?.unmount(); this.emergencyRoot = null;
-      this.emergencyCover.close(!(this.blurred && this.preferences().pauseOnBlur) && this.options.session.inspect()?.status !== 'paused');
+      this.emergencyCover.close(!(this.blurred && this.preferences().pauseOnBlur) && this.options.session.inspectActivity()?.status !== 'paused');
       this.render();
     }
   }
@@ -1027,7 +1028,7 @@ export class PlayerView {
               if (separator > 0) { const key = action.slice(0, separator), name = action.slice(separator + 1), platform = this.options.pluginPlatforms?.find(item => item.key === key && item.actions.some(action => action.name === name));
                 if (platform) return platform.invoke(name, args, this.options.data.domain); }
               if (!inspection?.token && this.options.data.domain.kind === 'sample') return { ok: true, value: { status: 'simulated', action, args }, warnings: [] };
-              if (!sameToken(inspection?.token ?? null, this.options.session.inspect()?.token ?? null)) return { ok: false, error: { code: 'TOKEN_STALE', severity: 'error', owner: 'M07', message: '组件属于已结束的会话', related: [], actions: [] }, issues: [] };
+              if (!sameToken(inspection?.token ?? null, this.options.session.inspectActivity()?.token ?? null)) return { ok: false, error: { code: 'TOKEN_STALE', severity: 'error', owner: 'M07', message: '组件属于已结束的会话', related: [], actions: [] }, issues: [] };
               if (action !== 'finish' || inspection?.state.wait?.kind !== 'plugin' || inspection.state.wait.contribution.split('/')[0] !== pluginId || !inspection.token) return { ok: false, error: { code: 'PLUGIN_COMPONENT_ACTION', severity: 'error', owner: 'M07', message: '当前组件没有此活动交互动作', related: [], actions: [] }, issues: [] };
               const outcome = await this.options.session.dispatch({ kind: 'plugin', token: inspection.token, result: args }); this.report(outcome); if (outcome.ok) this.showStory();
               return outcome.ok ? { ok: true, value: null, warnings: outcome.warnings } : outcome;
@@ -1105,7 +1106,7 @@ export class PlayerView {
       finish: result => {
         if (this.emergencyCover?.active || completing || generation !== this.pluginEpoch || this.navigation.page !== key) return;
         if (waiting?.kind !== 'plugin' || waiting.page !== key || !inspection?.token) { this.back(); return; }
-        if (!sameToken(inspection.token, this.options.session.inspect()?.token ?? null)) return;
+        if (!sameToken(inspection.token, this.options.session.inspectActivity()?.token ?? null)) return;
         completing = true;
         void this.options.syncStage().then(synced => synced.ok ? this.options.session.dispatch({ kind: 'plugin', token: inspection.token!, result }) : synced).then(outcome => {
           completing = false;
@@ -1183,7 +1184,7 @@ export class PlayerView {
     const release=this.holdVisual();
     try {
     if(afterstory&&!await this.syncCurrentMainStory(true))return;
-    if(afterstory&&this.options.session.inspect()?.status!=='ended'&&this.options.session.inspect()&&!await this.save('continue'))return;
+    if(afterstory&&this.options.session.inspectActivity()?.status!=='ended'&&this.options.session.inspect()&&!await this.save('continue'))return;
     const snapshot = this.options.snapshot, entry = afterstory?.entry??snapshot.project.entry;
     const scene = snapshot.scenes.find(item => item.scene.id === entry.sceneId);
     const position = { sceneId: entry.sceneId, statementId: entry.labelId ? scene?.labels[entry.labelId] ?? null : scene?.instructions[0]?.statementId ?? null };
@@ -1200,7 +1201,7 @@ export class PlayerView {
       story: afterstory?{kind:'afterstory',entryId:afterstory.id,characterId:character!.id,title:afterstory.title}:{kind:'main'} }); this.report(prepared); if (!prepared.ok) return;
     const stage = await this.options.stage.prepareStage(prepared.value.sessionId, prepared.value.state.presentation, null,
       prepared.value.voiceBinding); if (!stage.ok) { this.setStageError(stage.error); this.options.session.disposePrepared(prepared.value.id); return; }
-    const previousSessionId = this.options.session.inspect()?.sessionId ?? null;
+    const previousSessionId = this.options.session.inspectActivity()?.sessionId ?? null;
     const activated = this.options.session.activate(prepared.value.id); this.report(activated); if (!activated.ok) return;
     if(!afterstory)this.mainStorySessionReady=false;
     this.askingName = false;
@@ -1365,7 +1366,7 @@ export class PlayerView {
       const viewport = readingViewport(body, Array.from(displayed).length);
       if (!viewport.atEnd) this.autoReadyAt = null;
       if (inspection.token && this.navigation.page === 'story' &&
-        sameToken(this.options.session.inspect()?.token ?? null, inspection.token))
+        sameToken(this.options.session.inspectActivity()?.token ?? null, inspection.token))
         this.options.session.updateReadingViewport({ token: inspection.token,
         ...viewport });
     };
@@ -1381,9 +1382,9 @@ export class PlayerView {
       this.autoReadyAt = null;
       const sequence=this.renderSequence;
       const tick = (count:number) => { this.typingTimer = setTimeout(() => {
-        if (this.disposed||sequence!==this.renderSequence||!this.storyActive||this.navigation.page !== 'story' || !sameToken(this.options.session.inspect()?.token ?? null, inspection.token)) return;
+        if (this.disposed||sequence!==this.renderSequence||!this.storyActive||this.navigation.page !== 'story' || !sameToken(this.options.session.inspectActivity()?.token ?? null, inspection.token)) return;
         void this.options.session.updateTextProgress({ token: inspection.token!, textShown: count }).then(result => {
-          if (!sameToken(this.options.session.inspect()?.token ?? null, inspection.token)) return;
+          if (!sameToken(this.options.session.inspectActivity()?.token ?? null, inspection.token)) return;
           if(!result.ok){this.report(result);return;}
           progress.reveal(count);
           if(count<pageEnd)tick(count+1);else this.render(); });
@@ -1394,7 +1395,7 @@ export class PlayerView {
       if (this.autoReadyKey !== key) { this.autoReadyKey = key; this.autoReadyAt = null; }
       const poll = () => {
         if (!this.auto || !body.isConnected || this.navigation.page !== 'story' ||
-          !sameToken(this.options.session.inspect()?.token ?? null, token)) return;
+          !sameToken(this.options.session.inspectActivity()?.token ?? null, token)) return;
         if (this.autoAttempting) { this.autoTimer = setTimeout(poll, 100); return; }
         this.autoAttempting = true;
         void (async () => {
@@ -1415,7 +1416,7 @@ export class PlayerView {
             else if (result.value.advanced) this.render();
           } finally { this.autoAttempting = false;
             if (this.auto && body.isConnected && this.navigation.page === 'story' &&
-              sameToken(this.options.session.inspect()?.token ?? null, token)) this.autoTimer = setTimeout(poll, 100); }
+              sameToken(this.options.session.inspectActivity()?.token ?? null, token)) this.autoTimer = setTimeout(poll, 100); }
         })();
       };
       this.autoTimer = setTimeout(poll, Math.min(this.preferences().autoWaitMs, 100));
@@ -1456,7 +1457,7 @@ export class PlayerView {
       return;
     }
     const synced = await this.options.syncStage(); this.report(synced); if (!synced.ok) return;
-    if(!this.storyActive||!sameToken(this.options.session.inspect()?.token??null,inspection.token))return;
+    if(!this.storyActive||!sameToken(this.options.session.inspectActivity()?.token??null,inspection.token))return;
     const result = await this.options.session.dispatch({ kind: 'advance', token: inspection.token });
     this.report(result); this.render();
   }
@@ -1619,7 +1620,7 @@ export class PlayerView {
       `${item.oldSceneId}/${item.oldStatementId} → ${item.newSceneId}/${item.newStatementId} (${item.reason})`).join('\n')}\n${this.locale('restore.mappingConfirm')}`);
   }
   private async playHistoryVoice(id: Id): Promise<void> {
-    const entry = this.options.session.inspect()?.history.find(item => item.id === id), sessionId = this.options.session.inspect()?.sessionId;
+    const entry = this.options.session.inspect()?.history.find(item => item.id === id), sessionId = this.options.session.inspectActivity()?.sessionId;
     const asset = this.options.snapshot.assets.find(item => item.assetId === entry?.voiceAssetId); if (!entry || !asset || !sessionId) return;
     if (this.auditionId) this.options.audio.stop(this.auditionId);
     const result = await this.options.audio.play({ sessionId, bus: 'ui', preview: true, state: { assetId: asset.assetId, variantId: asset.variantId, stopped: false, volume: 1, startSec: 0, loop: false, loopStartSec: 0, loopEndSec: null, fadeInMs: 0, fadeOutMs: 0 } });
@@ -1641,12 +1642,13 @@ export class PlayerView {
   }
   private historyInstances() {
     const visit = this.navigation.source()?.id ?? null, newVisit = visit !== this.historyNavigationId; this.historyNavigationId = visit;
+    const history = new Map((this.options.session.inspect()?.history ?? []).map(entry => [entry.id, entry]));
     this.mountPage(this.instances('history', { business: (component, children, context) => {
       if (component.part === 'history.list') return <div className="gc-list gc-history-list" onScroll={event => { this.historyScrollTop = event.currentTarget.scrollTop; }}>{children}</div>;
       if (component.part === 'history.list.row') return <article>{children}</article>;
-      if (component.part === 'history.list.row.voice') { const entry=this.options.session.inspect()?.history.find(item=>item.id===(context.item as {id?:Id})?.id);return <button aria-label={this.locale('toolbar.replayVoice')} title={this.locale('toolbar.replayVoice')} disabled={!entry?.voiceAssetId} onClick={()=>{if(entry)void this.playHistoryVoice(entry.id);}}>{component.normal.images?.icon?null:<ToolbarIcon kind="voice"/>}</button>; }
+      if (component.part === 'history.list.row.voice') { const entry=history.get((context.item as {id?:Id}|undefined)?.id ?? '');return <button aria-label={this.locale('toolbar.replayVoice')} title={this.locale('toolbar.replayVoice')} disabled={!entry?.voiceAssetId} onClick={()=>{if(entry)void this.playHistoryVoice(entry.id);}}>{component.normal.images?.icon?null:<ToolbarIcon kind="voice"/>}</button>; }
       if (component.part === 'history.list.row.location') return <details className="gc-history-location"><summary>{this.t('记录详情','Record details','記録の詳細')}</summary>{String((context.item as {location?:string})?.location??'')}</details>;
-      if (component.part === 'history.list.row.text') { const entry = this.options.session.inspect()?.history.find(item => item.id === (context.item as { id?: Id })?.id); return <p>{entry?.segments ? <DialogueText runs={entry.segments} scale={this.preferences().fontScale}/> : entry?.text}{children}</p>; }
+      if (component.part === 'history.list.row.text') { const entry = history.get((context.item as {id?:Id}|undefined)?.id ?? ''); return <p>{entry?.segments ? <DialogueText runs={entry.segments} scale={this.preferences().fontScale}/> : entry?.text}{children}</p>; }
       return undefined;
     } }));
     const list = this.content.querySelector<HTMLElement>('[data-gc-part="history.list"]'); if (list) { list.scrollTop = newVisit ? list.scrollHeight : this.historyScrollTop; this.historyScrollTop = list.scrollTop; }
@@ -1707,11 +1709,11 @@ export class PlayerView {
   private flowEntering = false;
   private flowSources: (SaveRecord | null)[] = [];
   private async activateFlowSession(prepared: PreparedSession, beforeStart: () => void): Promise<boolean> {
-    const previousSessionId = this.options.session.inspect()?.sessionId ?? null;
+    const previousSessionId = this.options.session.inspectActivity()?.sessionId ?? null;
     const page = this.navigation.page;
     const stage = await this.options.stage.prepareStage(prepared.sessionId, prepared.state.presentation, null, prepared.voiceBinding);
     if (!stage.ok) { this.setStageError(stage.error); this.options.session.disposePrepared(prepared.id); return false; }
-    if (this.disposed || this.navigation.page !== page || (this.options.session.inspect()?.sessionId ?? null) !== previousSessionId) {
+    if (this.disposed || this.navigation.page !== page || (this.options.session.inspectActivity()?.sessionId ?? null) !== previousSessionId) {
       this.options.stage.discardPrepared(stage.value.id); this.options.session.disposePrepared(prepared.id); return false;
     }
     const activated = this.options.session.activate(prepared.id); this.report(activated);
@@ -1752,9 +1754,9 @@ export class PlayerView {
       if (!available.ok || !available.value) return;
       const scenarioId = node.entry.debugScenarioId, scenario = snapshot.flowInitials?.find(scenario => scenario.id === scenarioId);
       if (!scenario) { this.showError(this.t('独立初值不可用，请重新检查作品','Initial state unavailable; check the work','初期値を利用できません。作品を確認してください')); return; }
-      const previousSessionId = this.options.session.inspect()?.sessionId ?? null;
+      const previousSessionId = this.options.session.inspectActivity()?.sessionId ?? null;
       let source: SaveRecord | null = null;
-      if (previousSessionId && this.options.session.inspect()?.status !== 'ended') {
+      if (previousSessionId && this.options.session.inspectActivity()?.status !== 'ended') {
         if (this.preferences().confirmations.newGame && !await this.ask(this.t('进入独立回想？当前剧情会保存，返回时继续。','Enter this recollection? Your current story will be saved for your return.','独立した回想を開始しますか？現在の物語は保存され、戻ると続きから再開します。'))) return;
         if(this.flowSources.length){
           const synced=await this.options.syncStage();this.report(synced);if(!synced.ok)return;
@@ -1765,7 +1767,7 @@ export class PlayerView {
           source = saved.value;
         }
       }
-      if (this.navigation.page !== 'flow' || (this.options.session.inspect()?.sessionId ?? null) !== previousSessionId) return;
+      if (this.navigation.page !== 'flow' || (this.options.session.inspectActivity()?.sessionId ?? null) !== previousSessionId) return;
       const prepared = await this.options.session.prepareSession({ snapshot, domain: this.options.data.domain,
         source: { kind: 'entry', scenario:{...scenario,initialProgress:{...scenario.initialProgress,...initialNameProgress(snapshot.project.player.name,this.options.data.current()!.currentMainStory)}} }, target: scenario.target }); this.report(prepared); if (!prepared.ok) return;
       if (!prepared.value.reached) { this.options.session.disposePrepared(prepared.value.id); this.showError(this.t('回想路线未到达配置目标','The recollection route did not reach its target','回想ルートが指定した位置に到達しませんでした')); return; }
@@ -1913,7 +1915,7 @@ export class PlayerView {
     if (applied.ok) { this.importPlan = null; this.options.longTerm.syncFromDisk(); this.back(); }
   }
   private async ensureLongTerm(): Promise<boolean> {
-    if (!this.options.session.inspect()?.pendingLongTerm) return true;
+    if (!this.options.session.inspectActivity()?.pendingLongTerm) return true;
     const retried = await this.options.session.retryLongTerm(); this.report(retried); return retried.ok;
   }
   private async waitForWrites():Promise<void>{

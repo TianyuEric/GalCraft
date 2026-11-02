@@ -62,6 +62,8 @@ export class PlayerDataService {
     });
   }
   current(): Profile | null { return this.profile ? clone(this.profile) : null; }
+  /** Settings readers keep snapshot isolation without copying saves and long-term progress. */
+  preferences(): PlayerPreferences | null { return this.profile ? clone(this.profile.preferences) : null; }
   /** Close/switch consumers wait for all already-started writes in this profile domain. */
   async waitForIdle(): Promise<void> {
     for(;;){const pending=this.queue;await pending;if(this.queue===pending)return;}

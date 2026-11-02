@@ -109,7 +109,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
   const prepareAsset = async (assetId: Id, required = false): Promise<void> => {
     const asset = snapshot.assets.find(item => item.assetId === assetId); if (!asset || preparationDisposed) return;
     if (asset.kind === 'audio') {
-      const levels = data.current()!.preferences.volumes;
+      const levels = data.preferences()!.volumes;
       if (levels.master <= 0) return;
       // Voice failures retain the existing audible-media degradation policy.
       await audioBuffers.load(asset.assetId, asset.variantId).catch(() => {}); return;
@@ -140,7 +140,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     }
   };
   const prefetchAfter = (statementId: Id) => {
-    const preferences = data.current()!.preferences;
+    const preferences = data.preferences()!;
     prefetchQueue = upcomingPlaybackAssets(snapshot, statementId, preferences.voiceLocale, false, 3,
       preferences.volumes.master > 0 && preferences.volumes.voice > 0);
     pumpPrefetch();
@@ -152,7 +152,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
   audio.setDuck(opened.value.preferences.duckBgm ? .35 : 1, opened.value.preferences.interruptOnSilent);
   let session: SessionController;
   const voiceBindings = new Map<Id, VoicePlaybackBinding>();
-  const audioRouter = new PlayerAudioRouter(audio, () => session.inspect()?.sessionId ?? null);
+  const audioRouter = new PlayerAudioRouter(audio, () => session.inspectActivity()?.sessionId ?? null);
   const entryPresentation = new SceneEntryPresentation(root, host, snapshot, stage, audio);
   const longTerm = new PlayerLongTermService(data);
   const stageCommands = new StageCommandService({ character: id => snapshot.characters.find(character => character.id === id), asset: (assetId, variantId) => {
@@ -209,7 +209,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
         await host.resources.resolve(asset.assetId,asset.variantId);
     } catch(error) { return fail('VIDEO_PLAY_FAILED',String(error)); }
     if(!resolved.ok)return resolved;
-    if(generation!==videoGeneration||session.inspect()?.sessionId!==token.sessionId){resolved.value.release();return fail('VIDEO_STALE','影片已失效');}
+    if(generation!==videoGeneration||session.inspectActivity()?.sessionId!==token.sessionId){resolved.value.release();return fail('VIDEO_STALE','影片已失效');}
     storyVideoVolume=args?.volume??1;videoLocation?.release();videoLocation=resolved.value;
     audio.setPause('video',true);videoElement.hidden=false;videoElement.style.opacity='1';root.classList.add('gc-video-active');
     videoElement.style.visibility='hidden';videoElement.dataset.gcMediaStatus='pending';
@@ -242,11 +242,11 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     prepareProviderCommands: async input => {
       await stagePending;
       const prepared = await stage.prepareStage(input.sessionId, input.state, null, voiceBindings.get(input.sessionId) ?? null, input.commands);
-      if (!prepared.ok) { if (session.inspect()?.sessionId === input.sessionId) view.setStageError(prepared.error); return prepared; }
+      if (!prepared.ok) { if (session.inspectActivity()?.sessionId === input.sessionId) view.setStageError(prepared.error); return prepared; }
       return ok({ state: prepared.value.state,
         commit: () => { const result = stage.commitStage(prepared.value.id, input.token);
           if (result.ok) { activeStageSessionId = input.sessionId; stageCurrent = true; }
-          else if (session.inspect()?.sessionId === input.sessionId) view.setStageError(result.error);
+          else if (session.inspectActivity()?.sessionId === input.sessionId) view.setStageError(result.error);
           return result; },
         dispose: () => stage.discardPrepared(prepared.value.id) });
     },
@@ -256,10 +256,11 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       const generation = ++renderGeneration;
       stageCurrent = false;
       const voice = delta?.voiceBinding && state.presentation.voice;
-      if (voice && data.current()!.preferences.volumes.master > 0 && data.current()!.preferences.volumes.voice > 0 &&
+      const preferences = data.preferences()!;
+      if (voice && preferences.volumes.master > 0 && preferences.volumes.voice > 0 &&
         !audioBuffers.ready(voice.assetId, voice.variantId)) {
         await audioBuffers.load(voice.assetId, voice.variantId).catch(() => {});
-        if (generation !== renderGeneration || session.inspect()?.sessionId !== sessionId)
+        if (generation !== renderGeneration || session.inspectActivity()?.sessionId !== sessionId)
           return { presentationEntered: false, mediaStarted: false };
       }
       prefetchAfter(token.statementId);
@@ -274,7 +275,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       }
       const movie = delta?.audio.find(item => item.bus === 'video' && item.state.assetId && item.state.variantId);
       if (movie?.state.assetId && movie.state.variantId) {
-        movieStart=startStoryVideo(token).then(started=>{if(!started.ok&&started.error.code!=='VIDEO_STALE'&&session.inspect()?.sessionId===sessionId){view.showError(started.error);view.navigation.replace('videoError');}return started.ok&&videoElement.readyState>=2&&!videoElement.paused;});
+        movieStart=startStoryVideo(token).then(started=>{if(!started.ok&&started.error.code!=='VIDEO_STALE'&&session.inspectActivity()?.sessionId===sessionId){view.showError(started.error);view.navigation.replace('videoError');}return started.ok&&videoElement.readyState>=2&&!videoElement.paused;});
       } else if (video.state !== 'idle' && video.state !== 'finished' && state.wait?.kind !== 'animation') {
         video.returnTitle(); videoElement.hidden = true; root.classList.remove('gc-video-active');
         videoLocation?.release(); videoLocation = null;
@@ -283,7 +284,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       const binding = state.presentation.voice ? voiceBindings.get(sessionId) ?? null : null;
       const preparation = presentationPrepared ? Promise.resolve(ok({ id: null })) : stage.prepareStage(sessionId, state.presentation, null, binding);
       stagePending = preparation.then(prepared => {
-        if (generation !== renderGeneration || session.inspect()?.sessionId !== sessionId) {
+        if (generation !== renderGeneration || session.inspectActivity()?.sessionId !== sessionId) {
           if (prepared.ok && prepared.value.id) stage.discardPrepared(prepared.value.id); return;
         }
         if (!prepared.ok) { view.setStageError(prepared.error); return; }
@@ -303,7 +304,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
           .then(async result => { if (!result.ok) view.showError(result.error); else await view.syncCurrentMainStory(); });
       });
       await stagePending;
-      if (generation !== renderGeneration || session.inspect()?.sessionId !== sessionId || !stageCurrent)
+      if (generation !== renderGeneration || session.inspectActivity()?.sessionId !== sessionId || !stageCurrent)
         return { presentationEntered: false, mediaStarted: false };
       audioRouter.applyDialogue({ sessionId, token, state, delta });
       if (movieStart) { const started = await movieStart; return { presentationEntered: started, mediaStarted: started }; }
@@ -349,7 +350,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     styles, previewStyleIds,
     waitForStage: () => stagePending, syncStage,
     prepareOpeningAssets: async position => {
-      const preferences = data.current()!.preferences;
+      const preferences = data.preferences()!;
       const assets = upcomingPlaybackAssets(snapshot, position.statementId!, preferences.voiceLocale, true, 1,
         preferences.volumes.master > 0 && preferences.volumes.voice > 0);
       // The actual stage/video entry owns errors and retry. A failed warm-up leaves that path available.
@@ -364,7 +365,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       if (committed.ok) publishSessionStage(owner.sessionId, previousSessionId);
       return committed;
     },
-    retryVideo: async()=>{const token=session.inspect()?.token;if(!token)return fail('VIDEO_STALE','影片已失效');const started=await startStoryVideo(token);return started.ok?session.confirmMediaStarted(token):started;},
+    retryVideo: async()=>{const token=session.inspectActivity()?.token;if(!token)return fail('VIDEO_STALE','影片已失效');const started=await startStoryVideo(token);return started.ok?session.confirmMediaStarted(token):started;},
     onSoundEnabled: async()=>{const inspection=session.inspect();if(!inspection)return ok(undefined);
       const id=audioRouter.bgmInstance(inspection.sessionId),playing=id?audio.inspect({sessionId:inspection.sessionId,source:{kind:'instance',id}}):null;
       if(!playing?.ok||playing.value.status!=='playing')return ok(undefined);
@@ -405,7 +406,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
   stage.onCompletion(completeStageWait);
   let timerCompleting = false;
   const frame = (now: number) => { if (!root.isConnected || view.isDisposed) return;
-    const prefs=data.current()!.preferences;
+    const prefs=data.preferences()!;
     videoElement.volume=Math.min(1,Math.max(0,storyVideoVolume*prefs.volumes.master*prefs.volumes.video/10000));stage.setVisualPreferences(prefs.effects,prefs.reducedMotion);
     const elapsedMs = Math.max(0, now - prior); const deltaMs = Math.min(100, elapsedMs); prior = now;
     if(view.playTimeActive)session.elapsePlayTime(elapsedMs);
@@ -425,14 +426,14 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     }
     if(view.storyActive&&pendingAnimationCompletion&&!stageAnimationCompleting){const pending=pendingAnimationCompletion;pendingAnimationCompletion=null;completeStageWait(pending);}
     if (stageCurrent && view.storyActive && !timerCompleting) {
-      const waiting = session.inspect();
-      if (waiting?.token && waiting.state.wait?.kind === 'timer') {
+      const waiting = session.inspectActivity();
+      if (waiting?.token && waiting.waitKind === 'timer') {
         const elapsed = session.elapseTimer({ token: waiting.token, deltaMs });
         if (elapsed.ok && elapsed.value) {
           timerCompleting = true;
           void syncStage().then(async (synced): Promise<Result<unknown>> => {
             if (!synced.ok) return synced;
-            const current = session.inspect()?.token;
+            const current = session.inspectActivity()?.token;
             if (!view.storyActive || !current || current.sessionId !== waiting.token!.sessionId ||
               current.occurrence !== waiting.token!.occurrence || current.statementId !== waiting.token!.statementId) return ok(undefined);
             return session.dispatch({ kind: 'timer', token: waiting.token! });
@@ -474,7 +475,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     const previewPresentation = mode === 'inspection' ? inspectionPresentation(prepared.state.presentation) : prepared.state.presentation;
     const visual = await stage.prepareStage(prepared.sessionId, previewPresentation, null, prepared.voiceBinding);
     if (!visual.ok) return visual;
-    const previous = session.inspect()?.sessionId;
+    const previous = session.inspectActivity()?.sessionId;
     const activated = session.activate(prepared.id); if (!activated.ok) { stage.discardPrepared(visual.value.id); return activated; }
     const token = activated.value.token ?? { sessionId: activated.value.sessionId, occurrence: activated.value.state.occurrence,
       statementId: activated.value.state.position.statementId! };
@@ -488,7 +489,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     const presentation = activated.value.state.presentation;
     if (!presentation.bgm.stopped) audioRouter.apply(activeStageSessionId, 'bgm', presentation.bgm.assetId, presentation.bgm);
     for (const [id, sound] of Object.entries(presentation.ambience)) if (!sound.stopped) audioRouter.apply(activeStageSessionId, 'ambience', id, sound);
-    if (mode === 'inspection' && session.inspect()?.pendingLongTerm) {
+    if (mode === 'inspection' && session.inspectActivity()?.pendingLongTerm) {
       const reconciled = await session.retryLongTerm(); if (!reconciled.ok) return reconciled;
     }
     if (mode !== 'inspection') view.navigation.replace('story');
