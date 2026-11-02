@@ -105,6 +105,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  pixi.js@8.12.0: 52732d1b53a2eb5bf4076fe720ee98411e401f4c184b20c7a6e8be239b975b01
+
 importers:
 
   .:
@@ -561,7 +564,7 @@ importers:
         version: 0.8.2
       pixi.js:
         specifier: 8.12.0
-        version: 8.12.0
+        version: 8.12.0(patch_hash=52732d1b53a2eb5bf4076fe720ee98411e401f4c184b20c7a6e8be239b975b01)
       react:
         specifier: 19.3.0
         version: 19.3.0
@@ -635,10 +638,10 @@ importers:
         version: link:../runtime
       pixi-filters:
         specifier: 6.1.5
-        version: 6.1.5(pixi.js@8.12.0)
+        version: 6.1.5(pixi.js@8.12.0(patch_hash=52732d1b53a2eb5bf4076fe720ee98411e401f4c184b20c7a6e8be239b975b01))
       pixi.js:
         specifier: 8.12.0
-        version: 8.12.0
+        version: 8.12.0(patch_hash=52732d1b53a2eb5bf4076fe720ee98411e401f4c184b20c7a6e8be239b975b01)
 
   packages/templates:
     dependencies:
@@ -7092,12 +7095,12 @@ snapshots:
 
   picomatch@4.0.7: {}
 
-  pixi-filters@6.1.5(pixi.js@8.12.0):
+  pixi-filters@6.1.5(pixi.js@8.12.0(patch_hash=52732d1b53a2eb5bf4076fe720ee98411e401f4c184b20c7a6e8be239b975b01)):
     dependencies:
       '@types/gradient-parser': 0.1.5
-      pixi.js: 8.12.0
+      pixi.js: 8.12.0(patch_hash=52732d1b53a2eb5bf4076fe720ee98411e401f4c184b20c7a6e8be239b975b01)
 
-  pixi.js@8.12.0:
+  pixi.js@8.12.0(patch_hash=52732d1b53a2eb5bf4076fe720ee98411e401f4c184b20c7a6e8be239b975b01):
     dependencies:
       '@pixi/colord': 2.9.6
       '@types/css-font-loading-module': 0.0.12
