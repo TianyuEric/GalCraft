@@ -5,7 +5,7 @@ import { dialogueInterpolations, parseExpression } from '@galcraft/dsl';
 import { validatePluginData } from '@galcraft/plugins/contracts';
 import { evaluate, evaluateBoolean, evaluateTree, graphemes } from './expression.js';
 import { applyDialogue, chooseVoice, dialogueRuns, formatDialogue } from './voice.js';
-import type { Checkpoint, ConditionExplanation, DebugRequest, DebugResult, DebugScenario, PreparedProviderCommands, PreparedSession, PresentationCommitReceipt, RuntimeEvent, RuntimeInspection, RuntimePorts, SessionInput, RoutePreparation, UpdatePlan } from './types.js';
+import type { Checkpoint, ConditionExplanation, DebugRequest, DebugResult, DebugScenario, PreparedProviderCommands, PreparedSession, PresentationCommitReceipt, RuntimeActivity, RuntimeEvent, RuntimeInspection, RuntimePorts, SessionInput, RoutePreparation, UpdatePlan } from './types.js';
 
 const success = <T>(value: T): Result<T> => ({ ok: true, value, warnings: [] });
 const failure = <T>(problem: Issue): Result<T> => ({ ok: false, error: problem, issues: [problem] });
@@ -351,6 +351,13 @@ export class SessionController {
     return { sessionId: active.id, snapshotId: active.snapshot.snapshotId, sequence: active.sequence, state: clone(active.state),
       history: clone(active.history), token: active.token && clone(active.token), status: this.pauseReasons.size ? 'paused' : active.status, issue: active.issue,
       pendingLongTerm: active.pending !== null, trace: clone(active.trace) };
+  }
+  /** Frame and input checks read only activity, without copying state or execution history. */
+  inspectActivity(sessionId?: Id): RuntimeActivity | null {
+    const active = this.active; if (!active || sessionId && active.id !== sessionId) return null;
+    return { sessionId: active.id, sequence: active.sequence, token: active.token && { ...active.token },
+      status: this.pauseReasons.size ? 'paused' : active.status, pendingLongTerm: active.pending !== null,
+      waitKind: active.state.wait?.kind ?? null };
   }
   pluginWaitPolicy(): { restorable: boolean; reason: string | null } {
     const wait = this.active?.state.wait;

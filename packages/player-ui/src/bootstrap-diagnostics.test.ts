@@ -35,6 +35,8 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('@galcraft/runtime', async importOriginal => ({ ...await importOriginal<typeof import('@galcraft/runtime')>(),
   SessionController: class { constructor(ports: RuntimePorts) { mocks.ports = ports; } inspect() { return mocks.inspection; } syncPresentation = mocks.sync; replayVoice = mocks.replayVoice;
+    inspectActivity() { const current = mocks.inspection; return current && { sessionId: current.sessionId, sequence: current.sequence,
+      token: current.token, status: current.status, pendingLongTerm: current.pendingLongTerm, waitKind: current.state.wait?.kind ?? null }; }
     dispatch = mocks.dispatch; confirmPresentationEntered = mocks.confirmPresentation; confirmMediaStarted = mocks.confirmMedia;
     activate(){return {ok:true,value:mocks.inspection,warnings:[]};} setPreviewPaused(){}
     async updateTextProgress(){const current=mocks.inspection!;await mocks.ports!.onCommitted!({sessionId:current.sessionId,token:current.token!,state:current.state,sequence:2,delta:null});return {ok:true,value:undefined,warnings:[]};}

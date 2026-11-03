@@ -4,7 +4,7 @@
 
 # GalCraft
 
-**Visual novels, from script to release.**
+**An open-source visual novel authoring tool with visual editing.**
 
 Studio 0.1.0 · Early preview · Windows x64
 

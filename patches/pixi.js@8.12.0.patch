@@ -1,0 +1,42 @@
+diff --git a/lib/rendering/renderers/gl/GlBackBufferSystem.js b/lib/rendering/renderers/gl/GlBackBufferSystem.js
+index f946d0104a5d8c6f1461b5f1ec46c487c96a6829..2d03946b7108c06e154dbcaa2647a8ca72ef4fa7 100644
+--- a/lib/rendering/renderers/gl/GlBackBufferSystem.js
++++ b/lib/rendering/renderers/gl/GlBackBufferSystem.js
+@@ -5,6 +5,7 @@ var warn = require('../../../utils/logging/warn.js');
+ var Geometry = require('../shared/geometry/Geometry.js');
+ var Shader = require('../shared/shader/Shader.js');
+ var State = require('../shared/state/State.js');
++var isRenderingToScreen = require('../shared/renderTarget/isRenderingToScreen.js');
+ var TextureSource = require('../shared/texture/sources/TextureSource.js');
+ var Texture = require('../shared/texture/Texture.js');
+ var GlProgram = require('./shader/GlProgram.js');
+@@ -101,6 +102,8 @@ const _GlBackBufferSystem = class _GlBackBufferSystem {
+       shader: this._bigTriangleShader,
+       state: this._state
+     });
++    // postrender systems must observe the final surface, after back-buffer presentation.
++    renderer.renderTarget.renderingToScreen = isRenderingToScreen.isRenderingToScreen(renderer.renderTarget.renderTarget);
+   }
+   _getBackBufferTexture(targetSourceTexture) {
+     this._backBufferTexture = this._backBufferTexture || new Texture.Texture({
+diff --git a/lib/rendering/renderers/gl/GlBackBufferSystem.mjs b/lib/rendering/renderers/gl/GlBackBufferSystem.mjs
+index 032c674a49300ab4b6c0aadda78cdfd98a3c0122..60809661247160779d727374f0f30ce7f5e313f1 100644
+--- a/lib/rendering/renderers/gl/GlBackBufferSystem.mjs
++++ b/lib/rendering/renderers/gl/GlBackBufferSystem.mjs
+@@ -3,6 +3,7 @@ import { warn } from '../../../utils/logging/warn.mjs';
+ import { Geometry } from '../shared/geometry/Geometry.mjs';
+ import { Shader } from '../shared/shader/Shader.mjs';
+ import { State } from '../shared/state/State.mjs';
++import { isRenderingToScreen } from '../shared/renderTarget/isRenderingToScreen.mjs';
+ import { TextureSource } from '../shared/texture/sources/TextureSource.mjs';
+ import { Texture } from '../shared/texture/Texture.mjs';
+ import { GlProgram } from './shader/GlProgram.mjs';
+@@ -99,6 +100,8 @@ const _GlBackBufferSystem = class _GlBackBufferSystem {
+       shader: this._bigTriangleShader,
+       state: this._state
+     });
++    // postrender systems must observe the final surface, after back-buffer presentation.
++    renderer.renderTarget.renderingToScreen = isRenderingToScreen(renderer.renderTarget.renderTarget);
+   }
+   _getBackBufferTexture(targetSourceTexture) {
+     this._backBufferTexture = this._backBufferTexture || new Texture({

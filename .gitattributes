@@ -1,3 +1,6 @@
 # Plugin manifests record byte sizes; preserve distributable files exactly on checkout.
 /plugins/**/package/** -text
 /plugins/**/versions/** -text
+
+# Keep dependency patch line endings consistent across platforms.
+/patches/*.patch text eol=lf

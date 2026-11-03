@@ -4,7 +4,7 @@
 
 # GalCraft
 
-**视觉小说，从创作到发行。**
+**开源、可视化的视觉小说与 Galgame 创作工具。**
 
 Studio 0.1.0 · 早期预览 · Windows x64
 
