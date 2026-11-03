@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url';
 import { studioVersion } from '../apps/studio/main/studio-version.mjs';
+import { bundledEngineVersion } from '../apps/studio/main/bundled-engine-version.mjs';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -42,7 +43,8 @@ try {
   packed = JSON.parse(await run(['pack', '--json', ...(suppliedTarball ? ['--dry-run'] : ['--pack-destination', consumer])], packageDirectory))[0];
   tarball = suppliedTarball ?? join(consumer, packed.filename);
   assert(!packed.files.some(file => /resources\/practice\//.test(file.path)));
-  assert(!packed.files.some(file => /(?:service|dist)\/help\/|resources\/media\/(?:doc|presets)\/|resources\/matting\/src\/.*(?:smoke|test)\.mjs|resources\/engines\/(?!0\.1\.0\/)/.test(file.path)));
+  assert(!packed.files.some(file => /(?:service|dist)\/help\/|resources\/media\/(?:doc|presets)\/|resources\/matting\/src\/.*(?:smoke|test)\.mjs/.test(file.path)
+    || file.path.startsWith('resources/engines/') && !file.path.startsWith(`resources/engines/${bundledEngineVersion}/`)));
   for (const name of ['entry', 'cli', 'worker-entry', 'compiler-utility', 'style-utility']) assert(packed.files.some(file => file.path === `service/${name}.mjs`));
   phase = 'install';
   await writeFile(join(consumer, 'package.json'), JSON.stringify({ name: 'galcraft-isolated-consumer', private: true }));
@@ -50,6 +52,8 @@ try {
   const require = createRequire(join(packageRoot, 'package.json'));
   const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
   assert.equal(manifest.version, studioVersion); assert.equal(packed.version, studioVersion);
+  const engineManifest = JSON.parse(await readFile(join(packageRoot, 'resources/engines', bundledEngineVersion, 'manifest.json'), 'utf8'));
+  assert.equal(engineManifest.version, bundledEngineVersion);
   assert.equal(manifest.bin['galcraft-studio'], 'service/cli.mjs');
   assert.equal(manifest.engines.node, '>=22.12.0');
   assert.deepEqual(manifest.os, ['win32']); assert.deepEqual(manifest.cpu, ['x64']);
@@ -83,10 +87,14 @@ try {
   const call = (group, method, ...args) => fetch(`${origin}/api/bridge`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ group, method, args, clientId: 'NpmOne', entry: 'browser' }) }).then(response => response.json());
   phase = 'create-and-compile';
   const projectParent = join(consumer, 'projects'); await mkdir(projectParent);
-  unwrap(await call('projects', 'create', { path: projectParent, name: 'Independent npm', template: 'standard', width: 960, height: 540, engineVersion: '0.1.0' }));
+  unwrap(await call('projects', 'create', { path: projectParent, name: 'Independent npm', template: 'standard', width: 960, height: 540, engineVersion: bundledEngineVersion }));
   const documents = unwrap(await call('documents', 'list'));
   const project = documents.find(document => document.files['project.json']);
-  const projectId = JSON.parse(project.files['project.json']).data.projectId;
+  const projectData = JSON.parse(project.files['project.json']).data;
+  assert.equal(projectData.engineVersion, bundledEngineVersion);
+  const lock = documents.find(document => document.files['dependencies.lock.json']);
+  assert.equal(JSON.parse(lock.files['dependencies.lock.json']).data.engine.version, bundledEngineVersion);
+  const projectId = projectData.projectId;
   // The driver prepares JSON input from the service's real M02 documents. Only the installed service executes the compiler.
   const input = StudioProduction.prototype.compileInput({ projectId, documents: new Map(documents.map(document => [document.documentId, document])) });
   const compiled = unwrap(await call('language', 'compile', input)); assert(compiled.snapshot, JSON.stringify(compiled.issues));

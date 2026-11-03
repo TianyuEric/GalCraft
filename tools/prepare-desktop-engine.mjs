@@ -2,6 +2,7 @@ import { access, readFile, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { join, resolve, sep } from 'node:path';
 import { prepareMediaTools } from './media/prepare.mjs';
+import { bundledEngineVersion } from '../apps/studio/main/bundled-engine-version.mjs';
 
 const repo = resolve(import.meta.dirname, '..');
 const pluginCatalog = JSON.parse(await readFile(join(repo, 'plugins/catalog.json'), 'utf8'));
@@ -20,7 +21,7 @@ try {
   execFileSync(process.execPath, [join(repo, 'tools/fonts/prepare.mjs'), fonts], { cwd: repo, stdio: 'inherit' });
 }
 const buildRoot = join(repo, 'build/desktop');
-const version = '0.1.0';
+const version = bundledEngineVersion;
 const destination = resolve(buildRoot, 'engines', version);
 if (!destination.startsWith(resolve(buildRoot) + sep)) throw new Error('Engine output must stay inside the desktop build directory');
 await rm(destination, { recursive: true, force: true });

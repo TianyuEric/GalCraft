@@ -1,4 +1,5 @@
 import { studioVersion } from '../apps/studio/main/studio-version.mjs';
+import { bundledEngineVersion } from '../apps/studio/main/bundled-engine-version.mjs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { createRequire } from 'node:module';
@@ -46,8 +47,9 @@ for (const { id, version, directory } of pluginCatalog) {
   if (manifest.id !== id || manifest.version !== version) throw new Error(`Bundled plugin differs: ${id}@${version}`);
   for (const file of manifest.files) if ((await stat(join(pluginsRoot, directory, file.path))).size !== file.size) throw new Error(`Bundled plugin file differs: ${directory}/${file.path}`);
 }
-const engineRoot = join(resources, 'engines/0.1.0'), engineManifest = JSON.parse(await readFile(join(engineRoot, 'manifest.json'), 'utf8'));
-if (JSON.stringify(await readdir(join(resources, 'engines'))) !== JSON.stringify(['0.1.0'])) throw new Error('The unpublished distribution must contain only engine 0.1.0.');
+const engineRoot = join(resources, 'engines', bundledEngineVersion), engineManifest = JSON.parse(await readFile(join(engineRoot, 'manifest.json'), 'utf8'));
+if (JSON.stringify(await readdir(join(resources, 'engines'))) !== JSON.stringify([bundledEngineVersion])) throw new Error(`The distribution must contain only bundled engine ${bundledEngineVersion}.`);
+if (engineManifest.version !== bundledEngineVersion) throw new Error('Bundled engine version differs from its release directory.');
 for (const file of engineManifest.files) if ((await stat(join(engineRoot, file.path))).size !== file.size) throw new Error(`Engine file size differs: ${file.path}`);
 const playerBinary = join(engineRoot, engineManifest.entries.playerWindows), player = await nativeBinaryTarget(playerBinary);
 if (player.platform !== 'win32') throw new Error('The Windows Player entry must be an actual Windows executable.');

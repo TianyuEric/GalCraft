@@ -1,4 +1,5 @@
 import { studioVersion } from '../apps/studio/main/studio-version.mjs';
+import { bundledEngineVersion } from '../apps/studio/main/bundled-engine-version.mjs';
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -11,6 +12,7 @@ import { copyStudioService, copyMattingRuntime, copyMediaRuntime, copyDistributi
 const repo = resolve(import.meta.dirname, '..'), require = createRequire(import.meta.url);
 const target = studioPackageTarget(), stage = join(repo, 'build/studio-package');
 const appRoot = join(stage, 'app'), resources = join(stage, 'resources');
+const engineRoot = join(resources, 'engines', bundledEngineVersion), playerEntry = `engines/${bundledEngineVersion}/windows/electron.exe`;
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 function runPnpm(args, cwd = repo) { execFileSync(pnpm, args, { cwd, stdio: 'inherit', windowsHide: true, shell: process.platform === 'win32' }); }
 function node(script, ...args) { execFileSync(process.execPath, [join(repo, script), ...args], { cwd: repo, stdio: 'inherit', windowsHide: true }); }
@@ -48,7 +50,7 @@ await cp(join(repo, 'apps/studio/main/service-preload.cjs'), join(appRoot, 'main
 await copyStudioService(repo, join(appRoot, 'service'));
 await cp(join(repo, 'apps/studio/resources/branding'), join(appRoot, 'resources/branding'), { recursive: true });
 await copyDistributionLicenses(repo, appRoot);
-await cp(join(repo, 'build/desktop/engines/0.1.0'), join(resources, 'engines/0.1.0'), { recursive: true });
+await cp(join(repo, 'build/desktop/engines', bundledEngineVersion), engineRoot, { recursive: true });
 await copyMediaRuntime(repo, mediaDirectory, join(resources, 'media'), target.platform);
 await mkdir(join(resources, 'motion-canvas'), { recursive: true });
 for (const name of ['render.mjs', 'prepare.mjs']) await cp(join(repo, 'tools/motion-canvas', name), join(resources, 'motion-canvas', name));
@@ -61,14 +63,14 @@ let certificate, playerSignature;
 if (process.platform === 'win32') {
   certificate = signature('prepare'); process.env.GALCRAFT_SIGN_THUMBPRINT = certificate.thumbprint;
   process.env.GALCRAFT_SIGN_EVIDENCE = join(repo, 'test-results/latest/sh9-platform-packaging', `signing-${target.platform}-${target.arch}`);
-  playerSignature = signature('sign', join(resources, 'engines/0.1.0/windows/electron.exe'));
-  const manifestPath = join(resources, 'engines/0.1.0/manifest.json'), manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  for (const file of manifest.files) file.size = (await stat(join(resources, 'engines/0.1.0', file.path))).size;
+  playerSignature = signature('sign', join(engineRoot, 'windows/electron.exe'));
+  const manifestPath = join(engineRoot, 'manifest.json'), manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  for (const file of manifest.files) file.size = (await stat(join(engineRoot, file.path))).size;
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
 }
 await writeFile(join(resources, 'distribution.json'), JSON.stringify({ product: 'GalCraft Studio', author: 'GalCraft', publisher: 'GalCraft', version: studioVersion,
   platform: target.platform, arch: target.arch, nativePackages, media: { executables: mediaToolNames(target.platform) },
-  playerWindows: { ...await nativeBinaryTarget(join(resources, 'engines/0.1.0/windows/electron.exe')), entry: 'engines/0.1.0/windows/electron.exe' }, browser: { runtime: 'distributed-electron', serviceOwned: true, mainWindowRequired: false, dependency: 'playwright', version: dependencies.playwright, bundled: true },
+  playerWindows: { ...await nativeBinaryTarget(join(resources, playerEntry)), entry: playerEntry }, browser: { runtime: 'distributed-electron', serviceOwned: true, mainWindowRequired: false, dependency: 'playwright', version: dependencies.playwright, bundled: true },
   tutorial: 'independent .galproject', plugins: pluginCatalog.map(({ id, version }) => ({ id, version })) }, null, 2));
 node('tools/verify-studio-package.mjs', '--staging', '--platform', target.platform, '--arch', target.arch);
 if (target.stageOnly) { console.log(JSON.stringify({ stage, target, certificate, playerSignature })); }
