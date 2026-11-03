@@ -18,6 +18,7 @@ import { StudioUpgrades } from '../main/upgrade-providers.mjs';
 import { upgradeValidator } from '../main/upgrade-validation.mjs';
 import { EnginePreview } from '../main/engine-preview.mjs';
 import { installBundledEngine } from '../main/bundled-engine.mjs';
+import { bundledEngineVersion } from '../main/bundled-engine-version.mjs';
 import { readBundledPlugins, readBundledServicePackages, installBundledPlugins } from '../main/bundled-plugins.mjs';
 import { SoundBanks } from '../main/soundbanks.mjs';
 import { soundBankBrowserPort } from '../main/soundbank-host.mjs';
@@ -50,7 +51,7 @@ export async function createNodeStudioHost({ userData, origin, publish = () => {
   const officialPackageRoot = packaged ? join(bundledRoot, 'plugins') : join(root, '../../plugins');
   const officialPackages = await readBundledPlugins(officialPackageRoot);
   const engineCatalog = new EngineCatalog(userData);
-  await installBundledEngine(engineCatalog, bundledRoot, '0.1.0');
+  await installBundledEngine(engineCatalog, bundledRoot, bundledEngineVersion);
   const resources = new HttpResourceRegistry(origin), operations = new NodeUtilityTasks();
   const language = new CompilerTasks(operations, engineCatalog), projectAccess = new ProjectAccess();
   const projects = new ProjectDocuments(projectAccess, undefined, engineCatalog);

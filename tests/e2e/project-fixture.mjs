@@ -5,6 +5,7 @@ import { FixtureAsset, FixtureCharacters, FixtureLock, FixtureProject, FixtureSc
 import { ProjectSession } from '@galcraft/documents';
 import { createOfficialTemplate, createTemplateDocuments } from '@galcraft/templates';
 import { Resvg } from '@resvg/resvg-js';
+import { bundledEngineVersion } from '../../apps/studio/main/bundled-engine-version.mjs';
 
 /** Rebuild the no-service host dataset from maintained schemas and authored SVG data. */
 export async function ensureProjectFixture(directory) {
@@ -16,6 +17,7 @@ export async function ensureProjectFixture(directory) {
   const png = new Resvg(svg).render().asPng();
   await writeFile(join(directory, 'fixture-lantern.svg'), svg);
   const template = createOfficialTemplate({ kind: 'standard' }), project = structuredClone(FixtureProject), lock = structuredClone(FixtureLock);
+  project.engineVersion = bundledEngineVersion; lock.engine.version = bundledEngineVersion;
   const scenes = structuredClone(FixtureScenes.slice(0, 2)), characters = structuredClone(FixtureCharacters), asset = structuredClone(FixtureAsset);
   project.name = '可重建测试作品'; project.templateDocumentId = template.instanceId;
   project.entry = { sceneId: scenes[0].id, labelId: null };

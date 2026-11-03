@@ -1,4 +1,5 @@
 import { studioVersion } from '../apps/studio/main/studio-version.mjs';
+import { bundledEngineVersion } from '../apps/studio/main/bundled-engine-version.mjs';
 import { cp, mkdir, readFile, rm, writeFile, access } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { join, resolve, sep } from 'node:path';
@@ -19,7 +20,7 @@ await cp(join(studio, 'dist'), join(destination, 'dist'), { recursive: true });
 await copyStudioService(repo, join(destination, 'service'));
 const resources = join(destination, 'resources'); await mkdir(resources, { recursive: true });
 await mkdir(join(resources, 'engines'), { recursive: true });
-await cp(join(repo, 'build/desktop/engines/0.1.0'), join(resources, 'engines/0.1.0'), { recursive: true });
+await cp(join(repo, 'build/desktop/engines', bundledEngineVersion), join(resources, 'engines', bundledEngineVersion), { recursive: true });
 const catalog = JSON.parse(await readFile(join(repo, 'plugins/catalog.json'), 'utf8'));
 await mkdir(join(resources, 'plugins'), { recursive: true });
 await writeFile(join(resources, 'plugins/catalog.json'), JSON.stringify(catalog, null, 2));

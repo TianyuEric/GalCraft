@@ -8,6 +8,7 @@ import { ProjectSession } from '@galcraft/documents';
 import { createOfficialTemplate, createTemplateDocuments } from '@galcraft/templates';
 import { startStudioService } from '../../apps/studio/service/server.mjs';
 import { createNodeStudioHost } from '../../apps/studio/service/host.mjs';
+import { bundledEngineVersion } from '../../apps/studio/main/bundled-engine-version.mjs';
 
 const repo = resolve(import.meta.dirname, '../..'), owned = resolve(repo, 'tmp/testing/studio-object-save');
 const root = join(owned, 'current'), project = join(root, 'project');
@@ -22,7 +23,7 @@ app.setPath('userData', join(root, 'profile'));
 const template = createOfficialTemplate({ kind: 'light' }), projectId = createId(), projectDocumentId = createId(), chapterId = createId(), sceneId = createId(), sceneDocumentId = createId(), secondSceneId = createId(), secondSceneDocumentId = createId(), indexId = createId();
 const scene = SceneSchema.parse({ id: sceneId, name: '选择保存场景', chapterId, parameters: [], locals: [], returns: 'void', script: 'script.gal' });
 const secondScene = SceneSchema.parse({ ...scene, id: secondSceneId, name: '独立干净场景' });
-const data = { ...structuredClone(FixtureProject), projectId, name: '选择保存验收作品', templateDocumentId: template.instanceId,
+const data = { ...structuredClone(FixtureProject), engineVersion: bundledEngineVersion, projectId, name: '选择保存验收作品', templateDocumentId: template.instanceId,
   entry: { sceneId, labelId: null }, chapters: [{ id: chapterId, name: '验收章节', sceneIds: [sceneId, secondSceneId] }],
   display: { icon: null, splash: null, titleBackground: null, titleMusic: null, titleVideo: null }, dynamicAssets: [],
   player: { ...structuredClone(FixtureProject.player), name: null, emergencyImage: null, fallbackFonts: [] } };
@@ -37,7 +38,7 @@ const envelope = (documentId, value) => JSON.stringify({ schemaVersion: 1, docum
 const lockId = createId();
 const session = await ProjectSession.createProject(project, projectId, [
   { documentId: projectDocumentId, revision: 1, format: 'json', files: { 'project.json': envelope(projectDocumentId, data) } },
-  { documentId: lockId, revision: 1, format: 'json', files: { 'dependencies.lock.json': envelope(lockId, { engine: { kind: 'engine', id: 'galcraft', version: '0.1.0', targets: ['web', 'windows'], required: true },
+  { documentId: lockId, revision: 1, format: 'json', files: { 'dependencies.lock.json': envelope(lockId, { engine: { kind: 'engine', id: 'galcraft', version: bundledEngineVersion, targets: ['web', 'windows'], required: true },
     plugins: template.dependencies.filter(item => item.kind === 'plugin'), template: template.dependencies.find(item => item.kind === 'template'), selectedProviders: {} }) } },
   { documentId: sceneDocumentId, revision: 1, format: 'dsl', files: { [`scenes/${sceneId}/scene.json`]: envelope(sceneDocumentId, scene), [`scenes/${sceneId}/script.gal`]: '' } },
   { documentId: secondSceneDocumentId, revision: 1, format: 'dsl', files: { [`scenes/${secondSceneId}/scene.json`]: envelope(secondSceneDocumentId, secondScene), [`scenes/${secondSceneId}/script.gal`]: '' } },
