@@ -4,8 +4,9 @@ import { dirname, join, resolve } from 'node:path';
 import { brandWindowsExecutable } from './brand-windows-executable.mjs';
 import { readWindowsExecutableArchitecture } from '../packages/publishing/dist/engine/index.js';
 import { copyDistributionLicenses } from './studio-runtime-files.mjs';
+import { bundledEngineVersion } from '../apps/studio/main/bundled-engine-version.mjs';
 const repo = resolve(import.meta.dirname, '..');
-const version = process.argv[3] ?? '0.1.0';
+const version = process.argv[3] ?? bundledEngineVersion;
 if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Engine version must be an exact release version');
 const destination = resolve(process.argv[2] ?? join(repo, 'out/engines', version));
 try { await stat(join(destination, 'manifest.json')); throw new Error('Engine version already installed; choose an empty package directory'); }
