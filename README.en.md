@@ -6,7 +6,7 @@
 
 **An open-source visual novel authoring tool with visual editing.**
 
-Studio 0.1.0 · Early preview · Windows x64
+Studio · Early preview · Windows x64
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-47848F?style=flat-square&logo=electron&logoColor=white)
