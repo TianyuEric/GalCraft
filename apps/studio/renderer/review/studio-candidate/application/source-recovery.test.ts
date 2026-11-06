@@ -1,0 +1,96 @@
+import {describe,expect,it} from 'vitest';
+import {candidateFixture} from '../../../stories/review/studio-candidate/fixtures.js';
+import {CandidateSession} from './session.js';
+import {dataOf, type CandidateSeed, type SceneExtension} from './documents.js';
+import {CandidateSourceRecoveryStore} from './source-recovery.js';
+
+describe('candidate persisted invalid source',()=>{
+  it('binds repeated invalid text to the current sidecar and restores the matching history baseline',async()=>{
+    const {seed,createServices}=candidateFixture(),session=new CandidateSession(seed,createServices,{saveDelayMs:0});await session.open();
+    const scene=seed.ui.sceneId,original=session.sceneSource(scene)!.text,invalid=original+'say {';
+    const first=session.getSnapshot().project.scenes.find(item=>item.id===scene)!.lines[0]!;
+    const eventCount=()=>session.getSnapshot().project.scenes.find(item=>item.id===scene)!.lines[0]!.events.length;
+    const oldCount=eventCount();
+    expect(await session.commitSource(scene,invalid)).toBe(true);
+    expect(await session.save()).toBe(true);
+    expect(await session.commitSource(scene,original)).toBe(true);
+    session.insertEvent(scene,first.id,'pause',1);
+    expect(eventCount()).toBe(oldCount+1);expect(session.sceneSource(scene)!.text).toBe(original);
+    expect(await session.commitSource(scene,invalid)).toBe(true);expect(eventCount()).toBe(oldCount+1);
+    await session.undo(scene);await session.undo(scene);await session.undo(scene);
+    expect(session.sourceReadOnly(scene)).toBe(true);expect(eventCount()).toBe(oldCount);
+    await session.redo(scene);await session.redo(scene);await session.redo(scene);
+    expect(session.sourceReadOnly(scene)).toBe(true);expect(eventCount()).toBe(oldCount+1);
+    expect(await session.save()).toBe(true);
+    const recovery=session.host.sourceRecovery(true),documents=session.host.list().map(doc=>({...doc,files:doc.savedFiles,revision:doc.savedRevision,dirty:false}));session.dispose();
+    const reopened=new CandidateSession({...structuredClone(seed),documents,sourceRecovery:recovery,savedSourceRecovery:recovery},createServices,{saveDelayMs:0});await reopened.open();
+    expect(reopened.host.sourceRecoveryErrors()).toEqual([]);
+    expect(reopened.getSnapshot().project.scenes.find(item=>item.id===scene)!.lines[0]!.events).toHaveLength(oldCount+1);
+    expect(reopened.sceneSource(scene)!.text).toBe(invalid);reopened.dispose();
+  });
+  it('restores the saved source baseline when only the changed sidecar is discarded',async()=>{
+    const {seed,createServices}=candidateFixture(),session=new CandidateSession(seed,createServices,{saveDelayMs:0});await session.open();
+    const scene=seed.ui.sceneId,original=session.sceneSource(scene)!.text,invalid=original+'say {';
+    const first=session.getSnapshot().project.scenes.find(item=>item.id===scene)!.lines[0]!,oldCount=first.events.length;
+    await session.commitSource(scene,invalid);await session.save();await session.commitSource(scene,original);
+    session.insertEvent(scene,first.id,'pause',1);await session.commitSource(scene,invalid);
+    const sidecar=seed.extensionDocuments[scene]!,plan=await session.host.bridge.documents.planDiscard!({documentId:sidecar});
+    if(!plan.ok)throw new Error(plan.error.message);
+    expect(plan.value.members).toEqual([sidecar]);expect((await session.host.bridge.documents.applyDiscard!(plan.value.planId)).ok).toBe(true);
+    expect(session.sourceReadOnly(scene)).toBe(true);expect(session.getSnapshot().project.scenes.find(item=>item.id===scene)!.lines[0]!.events).toHaveLength(oldCount);
+    await session.undo(scene);expect(session.getSnapshot().project.scenes.find(item=>item.id===scene)!.lines[0]!.events).toHaveLength(oldCount+1);
+    session.dispose();
+  });
+  it('retains invalid raw and reports a missing or corrupt recovery baseline without inventing a graphical version',()=>{
+    const {seed}=candidateFixture();const document=seed.documents.find(doc=>doc.format==='dsl')!,path=Object.keys(document.files).find(path=>path.endsWith('/script.gal'))!;
+    document.files[path]='say {';
+    const broken={version:1,scenes:[null,{documentId:document.documentId,sceneId:path.split('/')[1],path,raw:'say {',revision:document.revision,baseline:{text:42}}]} as unknown as import('./source-recovery.js').CandidateSourceRecovery;
+    const recovery=new CandidateSourceRecoveryStore(seed.documents,broken);
+    expect(recovery.errors.join()).toContain('缺少可校验');expect(recovery.project(seed.documents).find(doc=>doc.documentId===document.documentId)!.files[path]).toBe('');expect(document.files[path]).toBe('say {');expect(recovery.capture(seed.documents).scenes.some(scene=>scene.documentId===document.documentId)).toBe(false);
+  });
+  it('restores absence of a baseline when undoing a repair of an unrecoverable input',async()=>{
+    const {seed,createServices}=candidateFixture(),scene=seed.ui.sceneId,document=seed.documents.find(doc=>doc.documentId===seed.sceneDocuments[scene])!,path=`scenes/${scene}/script.gal`,valid=document.files[path]!;
+    document.files[path]='say {';document.savedFiles=structuredClone(document.files);
+    const session=new CandidateSession(seed,createServices,{saveDelayMs:0});await session.open();
+    expect(session.graphSceneSource(scene)?.text).toBe('');
+    await session.commitSource(scene,valid);expect(session.getSnapshot().project.scenes.find(item=>item.id===scene)!.lines.length).toBeGreaterThan(0);
+    await session.undo(scene);expect(session.sceneSource(scene)!.text).toBe('say {');expect(session.graphSceneSource(scene)?.text).toBe('');
+    expect(session.host.sourceRecovery().scenes.some(entry=>entry.sceneId===scene)).toBe(false);session.dispose();
+  });
+  it('refuses closing unapplied raw input without committing it; explicitly applied invalid source may close',async()=>{
+    const {seed,createServices}=candidateFixture(),session=new CandidateSession(seed,createServices,{saveDelayMs:0});await session.open();const scene=seed.ui.sceneId,original=session.sceneSource(scene)!.text;
+    session.sourceDraft(scene,original+'say {');expect(await session.closeView('source:'+scene)).toBe(false);expect(session.sceneSource(scene)!.text).toBe(original);
+    expect(await session.commitSource(scene,original+'say {')).toBe(true);expect(await session.closeView('source:'+scene)).toBe(true);session.dispose();
+  });
+  it('saves invalid raw, disposes the controller, restores validated anchors, and repairs from the last valid text',async()=>{
+    const {seed,createServices}=candidateFixture();
+    const session=new CandidateSession(seed,createServices,{saveDelayMs:0}); await session.open();
+    const scene=session.getSnapshot().project.scenes[0]!, other=session.getSnapshot().project.scenes[1]!;
+    const text=session.sceneSource(scene.id)!.text, line=scene.lines.find(line=>line.events.length)!;
+    const sidecar=()=>session.host.list().find(document=>document.documentId===seed.extensionDocuments[scene.id])!;
+    const originalEvents=structuredClone((dataOf(sidecar()) as SceneExtension).events);
+    expect(await session.commitSource(scene.id,text+'say {')).toBe(true);
+    expect(session.sourceReadOnly(scene.id)).toBe(true);
+    expect(session.getSnapshot().project.scenes[0]!.lines).toEqual(scene.lines);
+    session.updateText(scene.id,line.id,'blocked');
+    expect(session.sceneSource(scene.id)!.text).toBe(text+'say {');
+    session.updateText(other.id,other.lines[0]!.id,other.lines[0]!.text+' 可继续编辑');
+    expect(session.getSnapshot().project.scenes[1]!.lines[0]!.text).toContain('可继续编辑');
+    expect(await session.save()).toBe(true);
+    const recovery=JSON.parse(JSON.stringify(session.host.sourceRecovery(true)));
+    const reopenedSeed:CandidateSeed={...structuredClone(seed),documents:session.host.list().map(document=>({...document,files:document.savedFiles,revision:document.savedRevision,dirty:false})),sourceRecovery:recovery,savedSourceRecovery:recovery};
+    session.dispose();
+    const reopened=new CandidateSession(reopenedSeed,createServices,{saveDelayMs:0}); await reopened.open();
+    expect(reopened.host.sourceRecoveryErrors()).toEqual([]);
+    expect(reopened.sceneSource(scene.id)!.text).toBe(text+'say {');
+    expect(reopened.getSnapshot().project.scenes[0]!.lines).toEqual(scene.lines);
+    expect(reopened.controller.lastValid.get(scene.id)?.cst.some(node=>node.id===line.id)).toBe(true);
+    expect(await reopened.commitSource(scene.id,text)).toBe(true);
+    expect(reopened.sourceReadOnly(scene.id)).toBe(false);
+    expect((dataOf(reopened.host.list().find(document=>document.documentId===seed.extensionDocuments[scene.id])!) as SceneExtension).events).toEqual(originalEvents);
+    await reopened.undo(scene.id);
+    expect(reopened.sourceReadOnly(scene.id)).toBe(true);
+    expect(reopened.getSnapshot().project.scenes[0]!.lines).toEqual(scene.lines);
+    reopened.dispose();
+  });
+});

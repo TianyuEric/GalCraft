@@ -2,15 +2,16 @@ import type { StorybookConfig } from '@storybook/react-vite';
 import { fileURLToPath } from 'node:url';
 import { mergeConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
+import { localReviewViteConfig, reviewStories } from './local-review.js';
 
 const config: StorybookConfig = {
   staticDirs: [...['backgrounds', 'figures', 'music', 'ui', 'voice'].map(directory => ({ from: `../resources/practice/${directory}`, to: `/practice/${directory}` })), '../public'],
-  stories: ['../renderer/**/!(PropertyComparison|TreeComparison).stories.tsx'],
+  stories: reviewStories,
   addons: ['@storybook/addon-docs', '@storybook/addon-mcp'],
   framework: '@storybook/react-vite',
   features: { componentsManifest: true },
   core: { disableTelemetry: true },
-  viteFinal: async config => mergeConfig(config, {
+  viteFinal: async config => mergeConfig(mergeConfig(config, {
     server: { watch: { ignored: ['**/dist-storybook/**', '**/dist-service/**', '**/dist-main/**', '**/resources/practice/**'] } },
     resolve: { alias: [
       { find: /^@galcraft\/player-ui$/, replacement: fileURLToPath(new URL('../../../packages/player-ui/src/index.ts', import.meta.url)) },
@@ -36,7 +37,7 @@ const config: StorybookConfig = {
         }
       },
     }],
-  }),
+  }), await localReviewViteConfig()),
 };
 
 export default config;

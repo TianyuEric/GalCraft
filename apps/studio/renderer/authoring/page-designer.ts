@@ -49,6 +49,19 @@ const action = domButton;
 
 type PageFieldInputDrafts = Record<string,{baseline:string;value:string;number?:import('../components/editor-fields/StudioNumberField.js').NumberInputDraft;color?:import('../components/editor-fields/StudioColorField.js').ColorInputDraft}>;
 type State = 'normal' | 'hover' | 'pressed' | 'focus' | 'disabled' | 'selected' | 'locked' | 'empty';
+export type WorkbenchPreviewSettings = {
+  mode: 'design' | 'preview'; state: State; sample: string; locale: string | null; zoom: 'fit' | '100';
+};
+type PreviewOption<T extends string> = { value: T; label: string };
+type WorkbenchPreviewOptions = {
+  states: PreviewOption<State>[]; samples: PreviewOption<string>[]; locales: PreviewOption<string>[]; zoom: PreviewOption<WorkbenchPreviewSettings['zoom']>[];
+  defaultLocale: string;
+};
+export type WorkbenchFieldPreview =
+  | { kind: 'dimension'; componentId: Id; field: 'x' | 'y' | 'width' | 'height'; value: number }
+  | { kind: 'background'; color: string; opacity: number }
+  | { kind: 'visual'; componentId: Id; state: State; changes: Partial<Visual> };
+
 
 export class PageDesigner {
   private changing=false;
@@ -81,6 +94,9 @@ export class PageDesigner {
   private notice = this.node('p', '', 'designer-notice');
   private inspector = this.node('aside', '', 'designer-properties');
   private tree = this.node('aside', '', 'designer-tree');
+  private center = this.node('section', '', 'designer-center');
+  private workbenchCanvas = false;
+  private updateNavigationChrome?: (navigating: boolean) => void;
   private canvas = this.node('div', '', 'designer-canvas');
   private overlay = this.node('div', '', 'designer-overlay');
   private surface = this.node('div', '', 'designer-player');
@@ -93,6 +109,7 @@ export class PageDesigner {
   private numberEditors = new Map<string, { mount: HTMLElement; root: Root }>();
   private renderedNumberFields = new Set<string>();
   private fieldPreview = false;
+  private workbenchFieldPreview = false;
   private fieldInputDrafts: PageFieldInputDrafts = {};
   private inspectorGroups = new Set<string>();
   private templateWorkspace: { node: HTMLElement; root: Root } | null = null;
@@ -107,6 +124,104 @@ export class PageDesigner {
   }
   capture() { return {previewLocale:this.previewLocale,page:this.page,selected:[...this.selected],state:this.state,sample:this.sample,zoom:this.zoom,styleDrafts:this.styleDrafts,styleDraftOptions:this.styleDraftOptions,pageContexts:[...this.pageContexts],auxiliaryDocument:this.auxiliaryDocument,animation:this.animationManager?.current?.capture()??this.animationResume,fieldInputs:this.fieldInputDrafts}; }
   hasAnimationDraft() { const state=this.capture().animation;return !!state&&JSON.stringify(state.draft)!==state.baseline; }
+  useWorkbenchCanvas() {
+    if (this.started && !this.workbenchCanvas) throw new Error('Select the page canvas presentation before starting the designer.');
+    this.workbenchCanvas = true;
+    return { viewport: this.center, status: this.notice };
+  }
+  workbenchPreviewOptions(): WorkbenchPreviewOptions {
+    const options = <T extends string>(values: readonly (readonly [T, string])[]): PreviewOption<T>[] =>
+      values.map(([value, label]) => ({ value, label: designerText(label, this.locale) }));
+    const samples = options<string>([
+      ['partial', ['save', 'load'].includes(this.page) ? '一满十一空' : '部分解锁'], ['missing', '缺缩略图'], ['normal', '未放素材'], ['viewer', '查看器'],
+      ['actual', '实际内容'], ['longText', '多语言长文本'], ['playback:loading', '准备中'], ['playback:playing', '播放中（静音样例）'],
+      ['playback:paused', '已暂停'], ['playback:stopped', '已停止'], ['playback:ended', '已结束'], ['playback:failed', '播放失败'],
+      ['zh-CN', '中文长文本'], ['en', 'English long text'], ['ja', '日本語の長文'], ['empty', '空内容'], ['full', '满存档'], ['unlocked', '已解锁'], ['locked', '未解锁'],
+    ]);
+    samples.push(
+      { value: 'reading:unread', label: this.t('ADV · 未读','ADV · Unread','ADV・未読') },
+      { value: 'reading:read', label: this.t('ADV · 已读','ADV · Read','ADV・既読') },
+      { value: 'reading:nvl-unread', label: this.t('NVL · 未读','NVL · Unread','NVL・未読') },
+      { value: 'reading:nvl-read', label: this.t('NVL · 已读','NVL · Read','NVL・既読') },
+    );
+    const menuLabels: Record<string, string> = { 'zh-CN': '简体中文', en: 'English', ja: '日本語' };
+    return {
+      states: options([['normal', '普通'], ['hover', '悬浮'], ['pressed', '按下'], ['focus', '焦点'], ['disabled', '禁用'], ['selected', '选中'], ['locked', '业务锁定'], ['empty', '空槽']]),
+      samples,
+      locales: options((this.snapshot?.project.languages.menus ?? Object.keys(this.template.locales)).map(value => [value, menuLabels[value] ?? value] as const)),
+      defaultLocale: this.snapshot?.project.languages.menuDefault ?? 'zh-CN',
+      zoom: options([['fit', '适应窗口'], ['100', '100%']]),
+    };
+  }
+  async setWorkbenchPreview(changes: Partial<WorkbenchPreviewSettings>) {
+    const navigating = changes.mode === undefined ? this.navigating : changes.mode === 'preview';
+    const modeChanged = changes.mode !== undefined && (!this.workbenchCanvas || navigating !== this.navigating);
+    if (modeChanged) {
+      if (this.workbenchCanvas) this.previewWorkbenchField(null);
+      if (!navigating) this.previewLocale = this.player?.data.current()?.preferences.menuLocale ?? this.previewLocale;
+      this.navigating = navigating;
+      this.surface.ariaHidden = String(!navigating);
+      this.cancelDrag?.();
+      if (navigating) this.setWorkbenchStyle('closed');
+      this.overlay.hidden = navigating;
+      this.canvas.dataset.mode = navigating ? 'preview' : 'design';
+      this.updateNavigationChrome?.(navigating);
+      if (!navigating) this.player?.view.navigation.replace(this.page);
+      this.drawTree();
+    }
+    if (changes.state !== undefined) this.state = changes.state;
+    if (changes.sample !== undefined) this.sample = changes.sample;
+    if (changes.locale !== undefined) this.previewLocale = changes.locale;
+    if (changes.zoom !== undefined) this.zoom = changes.zoom;
+    if (modeChanged || changes.state !== undefined || changes.locale !== undefined) this.drawInspector();
+    if (modeChanged) this.scheduleFit();
+    if (changes.zoom !== undefined) this.fitPreview();
+    if (changes.state !== undefined || changes.sample !== undefined || changes.locale !== undefined) await this.preview();
+  }
+  previewWorkbenchStartup() {
+    return this.safely(async () => { await this.preview(); if (this.player) await this.player.view.previewStartup('startup'); });
+  }
+  setWorkbenchStyle(mode: 'closed' | 'selection' | 'new') {
+    if (mode !== 'closed') { this.styleEditor(undefined, mode === 'new'); return; }
+    for (const saved of this.styleEditors.values()) saved.node.hidden = true;
+    this.center.classList.remove('has-style');
+    this.root.querySelector('[data-style-toggle]')?.setAttribute('aria-pressed','false');
+    if (this.workbenchCanvas) this.scheduleFit();
+  }
+  previewWorkbenchField(value: WorkbenchFieldPreview | null) {
+    if (this.disposed) return;
+    if (!value) {
+      if (this.workbenchFieldPreview) {
+        this.workbenchFieldPreview = false;
+        this.fieldPreview = false;
+        void this.preview();
+      }
+      return;
+    }
+    if (this.navigating) return;
+    const pageId = this.currentPage().id;
+    const componentId = 'componentId' in value ? value.componentId : undefined;
+    const component = componentId && components(this.currentPage().root).find(item => item.id === componentId);
+    if (componentId && !component) return;
+    this.workbenchFieldPreview = true;
+    this.fieldDraft(template => {
+      if (value.kind === 'background') {
+        const page = template.pages.find(item => item.id === pageId)!;
+        page.background.color = value.color;
+        page.background.colorOpacity = value.opacity;
+      } else {
+        const target = findComponent(template, value.componentId)!;
+        if (value.kind === 'dimension') {
+          const current = target.layout[value.field];
+          target.layout[value.field] = { unit: current.unit === 'auto' ? 'px' : current.unit, value: value.value };
+          if (value.field === 'x' || value.field === 'y') target.layout.position = 'free';
+        } else {
+          const visual = value.state === 'normal' ? target.normal : target.states[value.state] ??= {};
+          Object.assign(visual, value.changes);
+        }
+      }
+    });
+  }
   workbenchRegions() { this.tree.dataset.workbench = 'true'; this.inspector.dataset.workbench = 'true'; return { tree: this.tree, inspector: this.inspector }; }
   workbenchPages() { return [...(this.template?.pages.map(page => ({ id: page.key, name: this.pageLabel(page.key) })) ?? []),
     {id:'gallery-content',name:this.t('鉴赏内容','Gallery content','鑑賞コンテンツ')}, {id:'@animations',name:this.t('界面动画','Interface animations','UIアニメーション')},
@@ -118,7 +233,7 @@ export class PageDesigner {
     const visit = (component: ComponentConfig): import('../components/workbench/ObjectTree.js').WorkbenchTreeNode => ({ id: component.id, name: this.componentLabel(component), detail: component.locked ? this.t('锁定','Locked','ロック') : undefined, ...(component.children.length||['container','list','tab','button'].includes(componentDefinition(component.part)?.kind??'') ? { children: component.children.map(visit) } : {}) });
     return [visit(this.currentPage().root)];
   }
-  selectComponents(ids: Id[]) { if(this.galleryEditor){if(ids[0])this.galleryEditor.selectEntry(ids[0]);return;}this.selected = new Set(ids.filter(id => components(this.currentPage().root).some(component => component.id === id))); this.drawInspector(); this.selectionBounds(); if(!this.stylePinned&&this.root.querySelector('.has-style'))this.styleEditor(); }
+  selectComponents(ids: Id[]) { if(this.galleryEditor){if(ids[0])this.galleryEditor.selectEntry(ids[0]);return;}this.selected = new Set(ids.filter(id => components(this.currentPage().root).some(component => component.id === id))); this.drawInspector(); this.selectionBounds(); if(!this.stylePinned&&this.center.classList.contains('has-style'))this.styleEditor(); }
   async moveComponents(ids:Id[],parentId:Id) {const page=this.currentPage(),valid=ids.filter(id=>id!==page.root.id&&findComponent(this.template,id)&&!findComponent(this.template,id)!.locked);if(valid.length)await this.instanceOperation(this.t('移动到容器','Reparent components','親を変更'),{kind:'component.reparent',pageId:page.id,componentIds:valid,parentId});}
   async renameComponent(id:Id,name:string):Promise<string|void> {try{await this.editInstances(this.t('重命名组件','Rename component','部品名を変更'),[{kind:'component.update',pageId:this.currentPage().id,componentId:id,changes:{name}}]);}catch(reason){return String(reason);}}
   private componentLabel(component: ComponentConfig): string {
@@ -141,12 +256,12 @@ export class PageDesigner {
     this.animationManagerHost?.remove();this.animationManagerHost=null;
     this.canvas.hidden=false;this.drawInspector();void this.preview();
   }
-  discardStyleDrafts() { for (const editor of this.styleEditors.values()) { editor.dispose(); editor.node.remove(); } this.styleEditors.clear(); this.styleDrafts = {};this.styleDraftOptions={}; this.root.querySelector('.designer-center')?.classList.remove('has-style'); }
+  discardStyleDrafts() { for (const editor of this.styleEditors.values()) { editor.dispose(); editor.node.remove(); } this.styleEditors.clear(); this.styleDrafts = {};this.styleDraftOptions={}; this.center.classList.remove('has-style'); }
   async openPage(id: string, notify = false) {
     if(this.started)await this.started;else if(!this.template)await this.start();
     if(this.disposed)return;
     if(id!=='@animations'&&this.animationManagerHost){this.animationResume=this.animationManager.current?.capture()??this.animationResume;this.animationManagerHost.hidden=true;}
-    if(this.templateWorkspace){this.templateWorkspace.node.hidden=id!=='@templates';this.root.querySelector('.designer-center')?.classList.toggle('has-template',id==='@templates');}
+    if(this.templateWorkspace){this.templateWorkspace.node.hidden=id!=='@templates';this.center.classList.toggle('has-template',id==='@templates');}
     this.auxiliaryDocument = null;
     if(id==='@animations'){this.auxiliaryDocument=id;if(this.animationManagerHost)this.animationManagerHost.hidden=false;this.openAnimations();return;}
     if(id==='@templates'){this.auxiliaryDocument=id;this.templates();return;}
@@ -155,7 +270,7 @@ export class PageDesigner {
     if(id==='gallery-content'){this.openGalleryContent();return;}
     const hadGallery=!!this.galleryEditor;this.galleryEditor?.root.remove();this.galleryEditor=null;this.canvas.hidden=false;this.root.querySelector<HTMLElement>('.designer-toolbar')?.removeAttribute('hidden');
     const page = this.template?.pages.find(page => page.id === id || page.key === id); if(!page)return;if(this.page===page.key){if(hadGallery){this.drawTree();this.drawInspector();await this.preview();}return;}
-    const center = this.root.querySelector<HTMLElement>('.designer-center'); this.pageContexts.set(this.page, { selected: [...this.selected], state: this.state, sample: this.sample, zoom: this.zoom, scrollTop: center?.scrollTop ?? 0 });
+    const center = this.center; this.pageContexts.set(this.page, { selected: [...this.selected], state: this.state, sample: this.sample, zoom: this.zoom, scrollTop: center?.scrollTop ?? 0 });
     this.page = page.key; const context = this.pageContexts.get(this.page); this.selected = new Set(context?.selected ?? []); this.state = context?.state ?? 'normal'; this.sample = context?.sample ?? 'normal'; this.zoom = context?.zoom ?? 'fit';
     this.drawTree(); this.drawInspector(); await this.preview(); if (center) center.scrollTop = context?.scrollTop ?? 0;
     if(center?.classList.contains('has-style')&&!this.stylePinned)this.styleEditor();
@@ -176,7 +291,7 @@ export class PageDesigner {
   start():Promise<void> { return this.started??=(async()=>{await this.reload(); if (this.disposed) return; this.draw(); if(this.animationResume)this.openAnimations(this.animationResume.target);await this.preview();})(); }
   dispose() {
     for (const editor of this.numberEditors.values()) editor.root.unmount(); this.numberEditors.clear();
-    this.animationManagerRoot?.unmount();this.animationManagerRoot=null; for (const root of this.colorProperties) root.unmount(); this.colorProperties = []; this.templateWorkspace?.root.unmount(); this.templateWorkspace=null; for (const editor of this.styleEditors.values()) editor.dispose(); this.styleEditors.clear(); this.pluginProperties?.unmount(); this.pluginProperties = null; this.cancelDrag?.(); this.disposed = true; this.generation++; this.geometry?.dispose(); this.geometry = null; this.player?.dispose(); this.player = null; this.resize?.disconnect(); this.backgroundRelease?.(); for(const dialog of this.root.querySelectorAll('dialog'))dialog.close(); }
+    this.animationManagerRoot?.unmount();this.animationManagerRoot=null; for (const root of this.colorProperties) root.unmount(); this.colorProperties = []; this.templateWorkspace?.root.unmount(); this.templateWorkspace=null; for (const editor of this.styleEditors.values()) editor.dispose(); this.styleEditors.clear(); this.pluginProperties?.unmount(); this.pluginProperties = null; this.cancelDrag?.(); this.disposed = true; this.generation++; this.geometry?.dispose(); this.geometry = null; this.player?.dispose(); this.player = null; this.resize?.disconnect(); this.backgroundRelease?.(); for(const dialog of (this.workbenchCanvas ? this.center : this.root).querySelectorAll('dialog'))dialog.close(); }
   private async reload() {
     const listed = await this.services.bridge.documents.list(); if (!listed.ok) throw new Error(listed.error.message);
     this.documents = listed.value; this.template = readTemplateDocuments(this.documents);
@@ -239,7 +354,7 @@ export class PageDesigner {
     } catch(error) { return {ok:false as const,error:{code:'PAGE_IMAGE_APPLY',message:String(error),severity:'error' as const,owner:'M01' as const,related:[],actions:[]},issues:[]}; }
   }
   private currentPage() { return this.template.pages.find(page => page.key === this.page)!; }
-  private draw() {
+  private drawChrome() {
     const header = this.node('header', '', 'designer-heading');
     const title = this.node('div'); title.append(this.node('h1', '页面设计'), this.node('p', '独立页面、公开组件与导航'));
     const actions=this.node('div','','designer-heading-actions');
@@ -256,38 +371,52 @@ export class PageDesigner {
     })), this.iconAction('撤销','M9 5 3 11l6 6 M3 11h11a7 7 0 0 1 7 7', () => this.history('undo')), this.iconAction(this.t('恢复','Redo','やり直す'),'m15 5 6 6-6 6 M21 11H10a7 7 0 0 0-7 7', () => this.history('redo')));
     const hint=this.node('p','设计模式点击组件；Shift 多选；方向键移动，Shift + 方向键移动 10 像素。','designer-mode-hint');
     const modes=this.node('div','','designer-mode-switch');modes.setAttribute('role','group');modes.ariaLabel=this.t('页面模式','Page mode','ページモード');
-    const setMode=(navigating:boolean)=>{if(!navigating)this.previewLocale=this.player?.data.current()?.preferences.menuLocale??this.previewLocale;this.navigating=navigating;this.surface.ariaHidden=String(!navigating);this.cancelDrag?.();for(const control of [...edit.querySelectorAll('button'),...templates.querySelectorAll('button'),...reading.querySelectorAll('button')])control.disabled=navigating;if(navigating){for(const saved of this.styleEditors.values())saved.node.hidden=true;center.classList.remove('has-style');styleToggle.setAttribute('aria-pressed','false');}this.overlay.hidden=navigating;this.canvas.dataset.mode=navigating?'preview':'design';design.setAttribute('aria-pressed',String(!navigating));navigation.setAttribute('aria-pressed',String(navigating));hint.textContent=navigating?this.t('导航预览：点击页面控件体验跳转。返回设计后继续编辑。','Navigation preview: use page controls to navigate. Return to Design to edit.','ナビゲーションプレビュー：ページの操作で移動します。編集はデザインに戻って行います。'):designerText('设计模式点击组件；Shift 多选；方向键移动，Shift + 方向键移动 10 像素。',this.locale);if(!navigating)this.player?.view.navigation.replace(this.page);this.drawTree();this.drawInspector();};
-    const design=this.iconAction(this.t('设计','Design','デザイン'),'m4 20 4-1L20 7l-3-3L5 16z',()=>{setMode(false);this.scheduleFit();});design.setAttribute('aria-pressed',String(!this.navigating));
-    const navigation=this.iconAction('导航预览','m9 4 12 8-12 8z',()=>{setMode(true);this.scheduleFit();});navigation.setAttribute('aria-pressed',String(this.navigating));modes.append(design,navigation);
+    const design=this.iconAction(this.t('设计','Design','デザイン'),'m4 20 4-1L20 7l-3-3L5 16z',()=>this.setWorkbenchPreview({mode:'design'}));design.setAttribute('aria-pressed',String(!this.navigating));
+    const navigation=this.iconAction('导航预览','m9 4 12 8-12 8z',()=>this.setWorkbenchPreview({mode:'preview'}));navigation.setAttribute('aria-pressed',String(this.navigating));modes.append(design,navigation);
     const reading=group(this.t('阅读面板','Reading panel','読書パネル'));reading.dataset.readingActions='';reading.hidden=this.page!=='story';
     reading.append(this.action(this.t('头像阅读','Portrait reading','ポートレート付き'),()=>this.change(next=>applyReadingPreset(next,'portrait'))),this.action(this.t('通透阅读','Clear reading','透過表示'),()=>this.change(next=>applyReadingPreset(next,'clear'))));
     const batchPortraits = this.action(this.t('批量开启立绘头像', 'Enable figure portraits in bulk', '立ち絵のポートレートを一括有効化'), () => this.enableFigurePortraits());
     batchPortraits.dataset.portraitBatch = ''; batchPortraits.title = this.t('为立绘入场与重置设置默认头像；已有取景保持，差分继续继承已有取景。可在立绘属性中逐个微调。', 'Enable default portraits for figure entries and resets. Preserve existing crops and let replacements inherit them. Fine-tune each in figure properties.', '立ち絵の登場とリセットに既定のポートレートを設定し、既存の範囲を保持します。差分は範囲を継承し、立ち絵のプロパティで個別調整できます。'); reading.append(batchPortraits);
-    const startup=this.action(this.t('开屏预览','Preview startup','起動画面をプレビュー'),()=>this.safely(async()=>{await this.preview();if(this.player)await this.player.view.previewStartup('startup');}));startup.dataset.startupPreview='';preview.append(modes,startup);header.append(title,actions);
+    const startup=this.action(this.t('开屏预览','Preview startup','起動画面をプレビュー'),()=>this.previewWorkbenchStartup());startup.dataset.startupPreview='';preview.append(modes,startup);header.append(title,actions);
     if(this.assistant) { const ai=group('AI 与素材'), open=(intent:'assist'|'ui-assets')=>this.assistant!({pageIds:[this.currentPage().id],componentIds:[...this.selected]},intent);
       const assist=this.iconAction('AI 辅助','m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3z',()=>open('assist'));
       assist.title=this.t('调整当前页面或组件的布局与样式','Adjust the selected page or component layout and styles','現在のページ・部品の配置とスタイルを調整');
       const assets=this.iconAction('UI 素材','M3 3h18v18H3z M3 17l6-6 4 4 3-3 5 5 M16 7h.01',()=>open('ui-assets'));
       assets.title=this.t('制作页面背景、边框和图标素材','Create page backgrounds, frames and icons','ページ背景・枠・アイコン素材を制作');ai.append(assist,assets); }
-    const center = this.node('section', '', 'designer-center');
     const toolbar = this.node('div', '', 'designer-toolbar');
-    const states = this.node('select'); states.ariaLabel = designerText('组件状态',this.locale);
-    for (const [value, label] of [['normal', '普通'], ['hover', '悬浮'], ['pressed', '按下'], ['focus', '焦点'], ['disabled', '禁用'], ['selected','选中'], ['locked','业务锁定'], ['empty','空槽']]) {
-      const option = this.node('option', label); option.value = value; states.append(option); }
-    states.dataset.previewState='';states.value=this.state;states.onchange = () => { this.state = states.value as State; this.drawInspector(); void this.preview(); };
-    const samples = this.node('select'); samples.ariaLabel = designerText('页面样例',this.locale);
-    for (const [value, label] of [['partial',['save','load'].includes(this.page)?'一满十一空':'部分解锁'],['missing','缺缩略图'],['normal','未放素材'],['viewer','查看器'],['actual','实际内容'],['longText','多语言长文本'],['playback:loading','准备中'],['playback:playing','播放中（静音样例）'],['playback:paused','已暂停'],['playback:stopped','已停止'],['playback:ended','已结束'],['playback:failed','播放失败'],['zh-CN','中文长文本'],['en','English long text'],['ja','日本語の長文'],['empty','空内容'],['full','满存档'],['unlocked','已解锁'],['locked','未解锁']]) {
-      const option = this.node('option', label); option.value = value; samples.append(option); }
-    for (const [value, label] of [['reading:unread',this.t('ADV · 未读','ADV · Unread','ADV・未読')],['reading:read',this.t('ADV · 已读','ADV · Read','ADV・既読')],['reading:nvl-unread',this.t('NVL · 未读','NVL · Unread','NVL・未読')],['reading:nvl-read',this.t('NVL · 已读','NVL · Read','NVL・既読')]]) { const option = this.node('option', label); option.value = value!; samples.append(option); }
-    samples.dataset.previewSample='';samples.value=this.sample;samples.onchange = () => { this.sample = samples.value; void this.preview(); };
-    const zoom=this.node('select');zoom.ariaLabel=this.t('预览倍率','Preview zoom','プレビュー倍率');
-    for(const [value,label] of [['fit','适应窗口'],['100','100%']]){const option=this.node('option',label);option.value=value!;zoom.append(option);}
-    zoom.dataset.previewZoom='';zoom.value=this.zoom;zoom.onchange=()=>{this.zoom=zoom.value as typeof this.zoom;this.fitPreview();};
-    const styleToggle=this.iconAction(this.t('样式','Styles','スタイル'),'m8 6-6 6 6 6M16 6l6 6-6 6',()=>{if(center.classList.contains('has-style')){for(const saved of this.styleEditors.values())saved.node.hidden=true;center.classList.remove('has-style');styleToggle.setAttribute('aria-pressed','false');}else this.styleEditor();});styleToggle.dataset.styleToggle='';styleToggle.setAttribute('aria-pressed','false');
-    const menuLanguage=this.node('select');menuLanguage.ariaLabel=this.t('Player 菜单语言','Player menu language','Player メニュー言語');menuLanguage.dataset.previewLocale='';
-    for(const value of this.snapshot?.project.languages.menus??Object.keys(this.template.locales)){const option=this.node('option',({'zh-CN':'简体中文',en:'English',ja:'日本語'} as Record<string,string>)[value]??value);option.value=value;menuLanguage.append(option);}
-    menuLanguage.value=this.previewLocale??this.snapshot?.project.languages.menuDefault??'zh-CN';menuLanguage.onchange=()=>{this.previewLocale=menuLanguage.value;this.drawInspector();void this.preview();};
-    toolbar.append(this.node('span', '同一 Player · 独立样例资料'), states, samples,menuLanguage,zoom,styleToggle);
+    const choices = this.workbenchPreviewOptions();
+    const select = <T extends string>(label: string, values: PreviewOption<T>[], value: T, changed: (value: T) => Promise<void>) => {
+      const control = this.node('select'); control.ariaLabel = label;
+      for (const item of values) { const option = this.node('option'); option.textContent = item.label; option.value = item.value; control.append(option); }
+      control.value = value; control.onchange = () => { void changed(control.value as T); };
+      return control;
+    };
+    const states = select(designerText('组件状态',this.locale), choices.states, this.state, state => this.setWorkbenchPreview({ state }));
+    states.dataset.previewState = '';
+    const samples = select(designerText('页面样例',this.locale), choices.samples, this.sample, sample => this.setWorkbenchPreview({ sample }));
+    samples.dataset.previewSample = '';
+    const zoom = select(this.t('预览倍率','Preview zoom','プレビュー倍率'), choices.zoom, this.zoom, zoom => this.setWorkbenchPreview({ zoom }));
+    zoom.dataset.previewZoom = '';
+    const menuLanguage = select(this.t('Player 菜单语言','Player menu language','Player メニュー言語'), choices.locales,
+      this.previewLocale ?? choices.defaultLocale, locale => this.setWorkbenchPreview({ locale }));
+    menuLanguage.dataset.previewLocale = '';
+    const styleToggle=this.iconAction(this.t('样式','Styles','スタイル'),'m8 6-6 6 6 6M16 6l6 6-6 6',
+      ()=>this.setWorkbenchStyle(this.center.classList.contains('has-style') ? 'closed' : 'selection'));
+    styleToggle.dataset.styleToggle='';styleToggle.setAttribute('aria-pressed','false');
+    toolbar.append(this.node('span', '同一 Player · 独立样例资料'), states, samples, menuLanguage, zoom, styleToggle);
+    this.updateNavigationChrome = navigating => {
+      for (const control of [...edit.querySelectorAll('button'), ...templates.querySelectorAll('button'), ...reading.querySelectorAll('button')]) control.disabled = navigating;
+      design.setAttribute('aria-pressed', String(!navigating));
+      navigation.setAttribute('aria-pressed', String(navigating));
+      hint.textContent = navigating
+        ? this.t('导航预览：点击页面控件体验跳转。返回设计后继续编辑。','Navigation preview: use page controls to navigate. Return to Design to edit.','ナビゲーションプレビュー：ページの操作で移動します。編集はデザインに戻って行います。')
+        : designerText('设计模式点击组件；Shift 多选；方向键移动，Shift + 方向键移动 10 像素。', this.locale);
+    };
+    return { header, toolbar, hint };
+  }
+  private draw() {
+    const center = this.center;
+    const chrome = this.workbenchCanvas ? undefined : this.drawChrome();
     this.canvas.dataset.mode = this.navigating ? 'preview' : 'design';
     this.surface.ariaHidden = String(!this.navigating);
     this.surface.addEventListener('focusin', () => { if (!this.navigating) this.canvas.focus({ preventScroll: true }); });
@@ -343,12 +472,16 @@ export class PageDesigner {
       void this.move(event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0,
         event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0);
     };
-    center.append(toolbar, this.canvas, hint);
-    const layout = this.node('div', '', 'designer-layout');
-    if(this.tree.dataset.workbench!=='true')layout.append(this.tree);
-    layout.append(center);
-    if(this.inspector.dataset.workbench!=='true')layout.append(this.inspector);
-    this.root.append(header, this.notice, layout); this.drawTree(); this.drawInspector(); this.styleEditor();
+    if (chrome) {
+      center.append(chrome.toolbar, this.canvas, chrome.hint);
+      const layout = this.node('div', '', 'designer-layout');
+      if (this.tree.dataset.workbench !== 'true') layout.append(this.tree);
+      layout.append(center);
+      if (this.inspector.dataset.workbench !== 'true') layout.append(this.inspector);
+      this.root.append(chrome.header, this.notice, layout);
+    } else center.append(this.canvas);
+    this.drawTree(); this.drawInspector();
+    if (chrome) this.styleEditor();
   }
   private async editInstances(label:string, operations:PageEditOperation[]) {
     if(this.navigating)return;
@@ -471,6 +604,7 @@ export class PageDesigner {
     this.tree.append(controls);
   }
   private drawTree() {
+    if (this.workbenchCanvas) return;
     const reading=this.root.querySelector<HTMLElement>('[data-reading-actions]');if(reading)reading.hidden=this.page!=='story';
     this.tree.replaceChildren();
     this.instanceTools();
@@ -617,7 +751,7 @@ export class PageDesigner {
           } }));
         } else this.inspector.append(this.node('p', this.t('插件组件提供者不可用，配置已保留。', 'The component provider is unavailable; its configuration is preserved.', '部品の提供元を利用できません。設定は保持されています。')));
       }
-      this.displayText(component);
+      if (!this.workbenchCanvas) this.displayText(component);
       for (const [key, value] of Object.entries(component.content).filter(([key])=>!['labelKey','labelOverrideKey',...(componentTextEditable(component)?['text']:[])].includes(key)).filter(([key])=>component.part!=='story.readingPanel'||!['portrait','nameAbove','gradient','portraitWidth','nvlPadding','nvlScrimOpacity','nvlLineHeight','nvlScrimColor','nvlParagraphGap','nvlNameColor','nvlNameBold'].includes(key))) if (['string','number','boolean'].includes(typeof value))
         this.field(({labelKey:this.t('标签语言键','Label translation key','ラベルの翻訳キー'),text:this.t('显示文字','Display text','表示テキスト'),title:this.t('标题','Title','タイトル'),placeholder:this.t('输入提示','Input hint','入力ヒント')} as Record<string,string>)[key]??this.t(`内容：${key}`,`Content: ${key}`,`内容：${key}`), String(value), text => void this.change(next=>{const c=findComponent(next,component.id)!;c.content[key] = typeof value === 'number' ? Number(text) : typeof value === 'boolean' ? text === 'true' : text;}));
       this.basicContent(component);
@@ -634,16 +768,18 @@ export class PageDesigner {
       });
       this.inspectorGroup('layout',this.t('布局','Layout','レイアウト'),()=>{
       this.instanceLayout(component);
-      for (const [key, label] of [['visible','显示'],['locked','锁定']] as const) {
-        const input = this.field(label, '', value => {}, 'checkbox'); input.checked = component[key]; input.onchange = () => update(c => { c[key] = input.checked; }); }
-      const dimensionsMarker=document.createComment('dimensions');this.inspector.append(dimensionsMarker);
-      for (const key of ['x','y','width','height'] as const) {
-        const length = component.layout[key],label=designerText({ x: '水平位置', y: '垂直位置', width: '宽度', height: '高度' }[key], this.locale);
-        if(length.unit==='auto'){this.field(`${label} (auto)`,'',value=>update(c=>{c.layout[key]={unit:'px',value:Number(value)};}),'number');continue;}
-        this.numberField(label,length.value,length.unit==='percent'?'%':length.unit,
-          (next,value)=>{const c=findComponent(next,component.id)!;if(key==='x'||key==='y')c.layout.position='free';c.layout[key]={unit:length.unit,value};}); }
-      const dimensions=this.node('div','','designer-dimensions');while(dimensionsMarker.nextSibling)dimensions.append(dimensionsMarker.nextSibling);dimensionsMarker.replaceWith(dimensions);
-      this.inspector.append(this.node('p',this.t('拖动标签调整 · Enter 确认 · Esc 还原','Drag labels to adjust · Enter applies · Esc restores','ラベルをドラッグで調整 · Enterで確定 · Escで元に戻す'),'designer-field-help'));
+      if (!this.workbenchCanvas) {
+        for (const [key, label] of [['visible','显示'],['locked','锁定']] as const) {
+          const input = this.field(label, '', value => {}, 'checkbox'); input.checked = component[key]; input.onchange = () => update(c => { c[key] = input.checked; }); }
+        const dimensionsMarker=document.createComment('dimensions');this.inspector.append(dimensionsMarker);
+        for (const key of ['x','y','width','height'] as const) {
+          const length = component.layout[key],label=designerText({ x: '水平位置', y: '垂直位置', width: '宽度', height: '高度' }[key], this.locale);
+          if(length.unit==='auto'){this.field(`${label} (auto)`,'',value=>update(c=>{c.layout[key]={unit:'px',value:Number(value)};}),'number');continue;}
+          this.numberField(label,length.value,length.unit==='percent'?'%':length.unit,
+            (next,value)=>{const c=findComponent(next,component.id)!;if(key==='x'||key==='y')c.layout.position='free';c.layout[key]={unit:length.unit,value};}); }
+        const dimensions=this.node('div','','designer-dimensions');while(dimensionsMarker.nextSibling)dimensions.append(dimensionsMarker.nextSibling);dimensionsMarker.replaceWith(dimensions);
+        this.inspector.append(this.node('p',this.t('拖动标签调整 · Enter 确认 · Esc 还原','Drag labels to adjust · Enter applies · Esc restores','ラベルをドラッグで調整 · Enterで確定 · Escで元に戻す'),'designer-field-help'));
+      }
       this.field('层级', component.layout.z, value => update(c => { c.layout.z = Number(value); }), 'number');
       if (this.selected.size > 1) this.inspector.append(this.action('左对齐', () => this.change(next => {for (const id of this.selected) { const c = findComponent(next, id); if (c && !c.locked) c.layout.x = structuredClone(component.layout.x); }})));
       });
@@ -716,7 +852,7 @@ export class PageDesigner {
         }));});
       if(imageSlots.length){
         const presets=this.action(this.t('常用图标','Common icons','よく使うアイコン'),async()=>{const assets=this.services.bridge.assets;if(!assets){this.notice.textContent=this.t('当前宿主未提供素材服务','Asset services are unavailable','素材サービスを利用できません');return;}const result=await assets.iconPresets();if(!result.ok){this.notice.textContent=result.error.message;return;}
-          openActionIconPicker({root:this.root,presets:result.value,locale:this.locale,origin:presets,select:async key=>{const imported=await assets.importIconPreset({key,componentId:component.id,state:this.state});if(!imported.ok)throw new Error(imported.error.message);
+          openActionIconPicker({root:this.workbenchCanvas ? this.center : this.root,presets:result.value,locale:this.locale,origin:presets,select:async key=>{const imported=await assets.importIconPreset({key,componentId:component.id,state:this.state});if(!imported.ok)throw new Error(imported.error.message);
             if(!imported.value)return;
 
             await this.reload();await this.changed(imported.value);this.drawTree();this.drawInspector();await this.preview();}});
@@ -756,13 +892,13 @@ export class PageDesigner {
   openGalleryContent() {
     this.galleryEditor?.root.remove();this.player?.dispose();this.player=null;this.canvas.hidden=true;this.root.querySelector<HTMLElement>('.designer-toolbar')?.setAttribute('hidden','');
     this.galleryEditor=new GalleryContent({services:this.services,documents:()=>this.documents,inspector:this.inspector,locale:this.locale,apply:async edit=>{await this.apply(edit);},save:()=>this.saveDocument?.()??Promise.resolve(),locate:source=>this.locateSource?.(source),origin:()=>this.galleryOrigin?.()??null,close:()=>{this.galleryEditor?.root.remove();this.galleryEditor=null;this.canvas.hidden=false;this.root.querySelector<HTMLElement>('.designer-toolbar')?.removeAttribute('hidden');this.drawInspector();void this.preview();}});
-    this.root.querySelector('.designer-center')?.append(this.galleryEditor.root);
+    this.center.append(this.galleryEditor.root);
   }
   private openAnimations(target?:{componentId:Id;event:UIAnimationBinding}) {
     if(this.animationManagerRoot){if(this.animationManagerHost)this.animationManagerHost.hidden=false;this.animationManager.current?.open(target);return;}
     const host=this.node('section','','designer-animation-document');this.animationManagerHost=host;
     const root=createRoot(host);this.animationManagerRoot=root;this.canvas.hidden=true;
-    this.root.querySelector('.designer-center')?.append(host);
+    this.center.append(host);
     const resume=this.animationResume;this.animationResume=null;
     const close=()=>this.discardAnimationDraft();
     const draw=()=>root.render(createElement(UIAnimationManager,{ref:this.animationManager,template:this.template,locale:this.locale,target,resume,close,onDraftChange:()=>this.draftChanged?.(),apply:async(next,label)=>{
@@ -829,7 +965,7 @@ export class PageDesigner {
     onApply:NonNullable<Parameters<typeof openAssetPicker>[0]['onApply']>) {
     if(!this.snapshot)return;
     await openAssetPicker({services:this.services,projectId:this.snapshot.projectId,allowedKinds:['image'],locale:this.locale,
-      scope:this.root,returnFocus,currentAssetId,currentVariantId,purpose:designerText(purpose,this.locale),mode:'compact',onApply});
+      scope:this.workbenchCanvas ? this.center : this.root,returnFocus,currentAssetId,currentVariantId,purpose:designerText(purpose,this.locale),mode:'compact',onApply});
   }
   private async backgroundPreview(assetId:Id,image:HTMLImageElement,caption:HTMLElement) {
     const described=await this.services.getAsset?.(assetId);
@@ -844,19 +980,19 @@ export class PageDesigner {
   }
   private dialog(title: string) {
     const dialog = this.node('dialog', '', 'designer-dialog'); dialog.append(this.node('h2', title), this.action('关闭', () => dialog.close()));
-    this.root.append(dialog); dialog.addEventListener('close', () => dialog.remove()); dialog.showModal(); return dialog;
+    (this.workbenchCanvas ? this.center : this.root).append(dialog); dialog.addEventListener('close', () => dialog.remove()); dialog.showModal(); return dialog;
   }
   private documentPanel(title: string): HTMLElement {
     const panel = this.node('section', '', 'designer-document-panel'); panel.ariaLabel = designerText(title, this.locale);
     const header = this.node('header'); header.append(this.node('h2', title), this.action('关闭', () => panel.remove())); panel.append(header);
-    this.root.querySelector('.designer-center')?.append(panel); return panel;
+    this.center.append(panel); return panel;
   }
   private styleEditor(styleId?:string, createNew=false, draftKeyOverride?:string) {
     if(this.navigating)return;
     this.root.querySelector('[data-style-toggle]')?.setAttribute('aria-pressed','true');
     const selected = [...this.selected][0] ?? null, page = this.currentPage();
     const draftKey=draftKeyOverride??(createNew?`${page.id}/${createId()}`:`${page.id}/${styleId??selected??'page'}`);
-    const center = this.root.querySelector<HTMLElement>('.designer-center')!;
+    const center = this.center;
     if(!center.querySelector('.designer-style-divider')){
       const divider=this.node('div','','designer-style-divider');divider.tabIndex=0;divider.setAttribute('role','separator');divider.setAttribute('aria-orientation','horizontal');divider.ariaLabel=this.t('调整样式面板高度','Resize style pane','スタイルパネルの高さ');
       const resize=(height:number)=>{const next=Math.max(240,Math.min(Math.max(240,center.clientHeight-180),height));center.style.setProperty('--style-height',`${next}px`);divider.setAttribute('aria-valuenow',String(Math.round(next)));this.fitPreview();};
@@ -891,7 +1027,7 @@ export class PageDesigner {
     configureMonacoWorkers();
     const model=monaco.editor.createModel(initial,style.language,monaco.Uri.parse(`inmemory://galcraft/${id}.${style.language}`));
     monaco.editor.defineTheme('galcraft-source-light',{base:'vs',inherit:true,rules:[{token:'attribute.name',foreground:'9B2226'}],colors:{}});
-    const editor=monaco.editor.create(source,{model,automaticLayout:true,language:style.language,theme:this.root.closest('[data-theme="dark"]')?'vs-dark':'galcraft-source-light',
+    const editor=monaco.editor.create(source,{model,automaticLayout:true,language:style.language,theme:(this.workbenchCanvas ? this.center : this.root).closest('[data-theme="dark"]')?'vs-dark':'galcraft-source-light',
       ariaLabel:source.ariaLabel!,lineNumbers:'on',minimap:{enabled:false},wordWrap:'on',scrollBeyondLastLine:false,fontSize:13,padding:{top:12}});
     let syncing = false;
     const updateDraft = () => {
@@ -974,7 +1110,7 @@ export class PageDesigner {
   }
   private templates() {
     if(this.templateWorkspace){this.templateWorkspace.node.hidden=false;this.templateWorkspace.node.scrollIntoView({block:'start'});return;}
-    const center=this.root.querySelector<HTMLElement>('.designer-center')!, origin=document.activeElement as HTMLElement|null;
+    const center=this.center, origin=document.activeElement as HTMLElement|null;
     const panel=this.node('section','','designer-template-workspace'), header=this.node('header','','designer-template-heading'), mount=this.node('div');
     const root=createRoot(mount);
     const close=()=>{root.unmount();panel.remove();center.classList.remove('has-template');this.templateWorkspace=null;this.drawInspector();if(origin?.isConnected)origin.focus({preventScroll:true});};
@@ -1041,11 +1177,13 @@ export class PageDesigner {
   private scheduleFit() { if(typeof requestAnimationFrame==='function')requestAnimationFrame(()=>this.fitPreview()); }
   private fitPreview() {
     if(!this.snapshot)return;
-    const center=this.root?.querySelector<HTMLElement>('.designer-center'),canvas=this.snapshot.project.canvas;
+    const center=this.center,canvas=this.snapshot.project.canvas;
     const style=center?.querySelector<HTMLElement>('.designer-style-workspace:not([hidden])');
     const toolbar=center?.querySelector<HTMLElement>('.designer-toolbar');
     const availableWidth=center?center.clientWidth-24:this.canvas.clientWidth;
-    const availableHeight=center?Math.max(140,center.clientHeight-(toolbar?.offsetHeight??40)-(style&&center.classList.contains('has-style')?style.offsetHeight+24:0)-72):Infinity;
+    const chromeHeight = this.workbenchCanvas ? 16 : (toolbar?.offsetHeight ?? 40) + 72;
+    const styleHeight = style && center?.classList.contains('has-style') ? style.offsetHeight + 24 : 0;
+    const availableHeight = center ? Math.max(140, center.clientHeight - chromeHeight - styleHeight) : Infinity;
     this.canvas.style.width=this.zoom==='100'?`${canvas.width}px`:`${Math.max(100,Math.min(availableWidth,availableHeight*canvas.width/canvas.height))}px`;
     this.surface.style.transform=`scale(${this.canvas.clientWidth/this.snapshot.project.canvas.width})`;
     this.selectionBounds();
@@ -1072,13 +1210,23 @@ export class PageDesigner {
     this.canvas.style.aspectRatio = `${snapshot.project.canvas.width} / ${snapshot.project.canvas.height}`;
     if(!this.resize){this.resize=new ResizeObserver(()=>this.fitPreview());this.resize.observe(this.canvas.parentElement!);this.resize.observe(this.canvas);}this.fitPreview();
     let player:StudioPlayer|null=this.player;
-    let mount=this.surface.querySelector<HTMLElement>('.designer-preview-mount');
+    const previousMount=this.surface.querySelector<HTMLElement>('.designer-preview-mount');
+    let mount=previousMount;
     let created=false;
-    const retire=()=>{if(created){player?.dispose();mount?.remove();}};
+    // Embedded previews refresh while the author edits another workbench region.
+    // Player.newGame focuses its root; keep a passive refresh from taking that focus.
+    const passiveWorkbench = this.workbenchCanvas && !previousMount?.contains(document.activeElement);
+    const previousInert = previousMount?.inert ?? false;
+    if (passiveWorkbench && previousMount) previousMount.inert = true;
+    const retire = () => {
+      if (created) player?.dispose();
+      if (created || (passiveWorkbench && mount !== previousMount)) mount?.remove();
+    };
     try {
       const updated=player?.updatePreview(snapshot,styles,template.styles.map(style=>style.id));
       if(!player||!updated?.ok){
         mount=this.node('div','','designer-preview-mount');Object.assign(mount.style,{width:'100%',height:'100%',position:'absolute',visibility:'hidden'});this.surface.append(mount);
+        if (passiveWorkbench) mount.inert = true;
         player=await openPlayerPreview(mount,this.services,snapshot,'sample',styles,template.styles.map(style=>style.id));created=true;this.previewMounts++;
       }
       if(stale()){retire();return;}
@@ -1122,6 +1270,12 @@ export class PageDesigner {
         this.documents.map(doc => ({ ref: { kind: 'document', id: doc.documentId }, revision: doc.revision })));
       this.geometry.subscribe(value => { if (value.status === 'ready' && generation === this.generation) this.selectionBounds(); });
     } catch (error) { retire();if (!stale()) {this.surface.dataset.previewStatus='error';this.surface.setAttribute('aria-busy','false');this.notice.textContent = String(error);} }
+    finally {
+      if (passiveWorkbench) {
+        if (previousMount) previousMount.inert = previousInert;
+        if (mount && mount !== previousMount) mount.inert = false;
+      }
+    }
   }
 }
 

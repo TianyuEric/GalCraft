@@ -442,6 +442,8 @@ export class PlayerView {
     }
     const backgroundPage = modal && retained ? retained.page : page;
     const backgroundConfig = this.options.snapshot.template.pages.find(item => item.key === backgroundPage);
+    this.pageBackground.dataset.gcPage = backgroundPage;
+    this.pageBackground.dataset.gcPageId = backgroundConfig?.id ?? '';
     this.content.inert=modal||this.transition.busy||!!this.visualHold;
     for(const node of [this.stageRoot,this.soundButton,this.message])node.inert=modal;
     for(const layer of this.modalLayers)layer.element.inert=layer.element!==this.modalRoot||this.transition.busy;

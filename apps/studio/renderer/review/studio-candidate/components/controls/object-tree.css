@@ -1,0 +1,20 @@
+.gc-candidate .gc-candidate-object-row.gc-candidate-tree-row {
+  min-block-size:28px;
+  padding-inline-end:8px;
+  color:var(--muted-foreground);
+  font:var(--candidate-type-compact);
+  cursor:default;
+}
+.gc-candidate .gc-candidate-tree-row:hover:not([data-current]) { background:var(--surface-hover); }
+.gc-candidate .gc-candidate-tree-row:is(:hover, [data-current]) { color:var(--foreground); }
+.gc-candidate .gc-candidate-tree-row:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
+.gc-candidate .gc-candidate-tree-row[data-drop-target] { background:var(--selection); outline:1px solid var(--ring); outline-offset:-1px; }
+.gc-candidate .gc-candidate-tree-indent { flex:0 0 14px; }
+.gc-candidate .gc-candidate-icon-button.gc-candidate-tree-toggle { min-block-size:20px; inline-size:14px; }
+.gc-candidate .gc-candidate-icon-button.gc-candidate-tree-menu { min-block-size:24px; inline-size:24px; margin-inline-start:auto; opacity:0; }
+.gc-candidate .gc-candidate-tree-row:has(.gc-candidate-object-meta) .gc-candidate-tree-menu { margin-inline-start:0; }
+.gc-candidate .gc-candidate-tree-row:is(:hover, :focus-within) .gc-candidate-tree-menu,
+.gc-candidate .gc-candidate-tree-menu[aria-expanded='true'] { opacity:1; }
+.gc-candidate .gc-candidate-tree-edit { display:grid; flex:1; gap:2px; min-inline-size:0; }
+.gc-candidate .gc-candidate-tree-edit input { inline-size:100%; }
+.gc-candidate .gc-candidate-tree-empty { margin:8px; color:var(--muted-foreground); font:var(--candidate-type-compact); }

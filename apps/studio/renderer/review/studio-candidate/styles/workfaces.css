@@ -1,0 +1,22 @@
+.gc-candidate .candidate-workface {
+  container-type: inline-size;
+  height: 100%;
+  min-width: 0;
+  overflow: auto;
+  background: var(--workbench-editor);
+}
+.gc-candidate .candidate-workface > [hidden] { display: none; }
+.gc-candidate .candidate-workface-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--workbench-explorer);
+}
+.gc-candidate .candidate-workface-tools h2 { margin: 0 auto 0 0; font: var(--candidate-type-body); font-weight: 500; overflow-wrap: anywhere; }
+.gc-candidate .candidate-workface-tools > p { margin: 0; }
+.gc-candidate .candidate-workface-tools input[type='search'] { flex: 1 1 132px; max-width: 320px; }
+.gc-candidate .candidate-workface-message { margin: 0; padding: 8px 12px; color: var(--muted-foreground); font: var(--candidate-type-compact); }
+.gc-candidate .candidate-workface-message[role='alert'] { color: var(--destructive); }

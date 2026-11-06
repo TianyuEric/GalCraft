@@ -1,0 +1,111 @@
+.gc-candidate .candidate-object-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: 8px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.gc-candidate :is(.candidate-object-sidebar > header, .candidate-object-tools, .candidate-object-create, .candidate-composition-layers li > div) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  min-width: 0;
+}
+.gc-candidate :is(.candidate-object-sidebar, .candidate-page-object, .candidate-character-object) :is(h2, h3) {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.gc-candidate .candidate-object-sidebar > header small { margin-inline-start: auto; }
+.gc-candidate .candidate-object-sidebar :is(p, small) { margin: 0; color: var(--muted-foreground); }
+.gc-candidate .candidate-object-list { display: grid; gap: 2px; align-content: start; }
+.gc-candidate .candidate-object-list h3 { padding: 8px 4px 2px; }
+.gc-candidate .candidate-object-list > button { justify-content: flex-start; width: 100%; min-width: 0; text-align: start; }
+.gc-candidate .candidate-object-list > button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-candidate .candidate-object-list > button > small { margin-inline-start: auto; }
+.gc-candidate .candidate-object-list [aria-current="page"],
+.gc-candidate .candidate-object-tools [aria-pressed="true"] { background: var(--command-selected, var(--secondary)); }
+.gc-candidate .candidate-object-create { border-block: 1px solid var(--border); padding-block: 8px; }
+.gc-candidate .candidate-object-create input { flex: 1 1 100px; min-width: 80px; }
+.gc-candidate :is(.candidate-page-object, .candidate-character-object) > .candidate-object-tools {
+  flex: none;
+  padding: 6px 12px;
+  border-block-end: 1px solid var(--border);
+}
+.gc-candidate .candidate-object-modes { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
+.gc-candidate .candidate-object-secondary { background: var(--workbench-explorer); }
+.gc-candidate .candidate-object-scroll { flex: 1; min-height: 0; min-width: 0; overflow: auto; }
+.gc-candidate .candidate-pages-workface.candidate-page-object .designer-heading { display: none; }
+.gc-candidate .candidate-page-object [data-style-toggle] { display: none; }
+.gc-candidate .candidate-page-object .designer-notice:empty { display: none; }
+.gc-candidate .candidate-page-object[data-object-mode="behavior"] .designer-properties :is([data-property-group="layout"], [data-property-group="appearance"], [data-property-group="details"], [data-property-group="reading-styles"], [data-property-group="component-animation"]) { display: none; }
+.gc-candidate .candidate-page-outline .designer-tree { display: block; max-height: none; min-width: 0; padding: 0; border: 0; background: transparent; }
+.gc-candidate .candidate-page-outline .designer-instance-tools details:nth-child(2) { display: none; }
+.gc-candidate .candidate-character-object > .candidate-composition-slot { flex: 1; min-height: 0; display: flex; }
+.gc-candidate .candidate-character-object > .candidate-composition-slot[hidden] { display: none; }
+.gc-candidate .candidate-composition { display: grid; align-content: start; gap: 12px; padding: 12px; }
+.gc-candidate :is(.candidate-composition, .candidate-blueprint) p { margin-block: 4px; }
+.gc-candidate .candidate-composition-heading { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 8px; }
+.gc-candidate .candidate-composition-body { display: grid; grid-template-columns: minmax(126px, .55fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.gc-candidate .candidate-composition-preview { margin: 0; min-width: 0; }
+.gc-candidate .candidate-composition-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 152px;
+  width: min(100%, 340px);
+  max-height: 460px;
+  aspect-ratio: 2/3;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  background: var(--workbench-inspector);
+}
+.gc-candidate .candidate-composition-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.gc-candidate .candidate-composition-preview figcaption { margin-block-start: 6px; color: var(--muted-foreground); font-size: 12px; }
+.gc-candidate .candidate-composition-fields { min-width: 0; }
+.gc-candidate .candidate-composition-layers { list-style: none; margin: 8px 0; padding: 0; }
+.gc-candidate .candidate-composition-layers li { min-width: 0; padding-block: 8px; border-block-start: 1px solid var(--border); }
+.gc-candidate .candidate-composition-layers li > div + div { margin-block-start: 4px; }
+.gc-candidate .candidate-composition-layers input[type="number"] { width: 76px; }
+.gc-candidate :is(.candidate-composition, .candidate-blueprint) label { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+.gc-candidate .candidate-composition-layers :is(button, input, select) { min-width: 0; max-width: 100%; }
+.gc-candidate .candidate-blueprint { display: grid; gap: 8px; padding: 12px; align-content: start; }
+.gc-candidate .candidate-blueprint-flow { height: clamp(220px, 36vh, 480px); min-width: 0; border: 1px solid var(--border); background: var(--workbench-editor); }
+.gc-candidate .candidate-blueprint-options { display: grid; gap: 8px; }
+.gc-candidate .candidate-blueprint-options > :is(details, section) { border-block-start: 1px solid var(--border); padding-block: 8px; }
+.gc-candidate .candidate-blueprint-options summary { cursor: pointer; }
+.gc-candidate .candidate-blueprint-node {
+  display: grid;
+  gap: 4px;
+  min-height: 80px;
+  width: 164px;
+  padding: 8px 10px;
+  border: 1px solid var(--control-border, var(--border));
+  border-radius: 6px;
+  color: var(--foreground);
+  background: var(--popover);
+}
+.gc-candidate .candidate-blueprint-node[data-selected="true"] { outline: 2px solid var(--ring); }
+.gc-candidate .candidate-blueprint-node[data-active="true"] { background: var(--command-selected, var(--secondary)); }
+.gc-candidate .candidate-blueprint-node strong { font-weight: 500; }
+.gc-candidate .candidate-blueprint-node-kind { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground); font: var(--candidate-type-compact); }
+.gc-candidate .candidate-blueprint-node-kind > svg { flex: none; color: var(--primary); }
+.gc-candidate .candidate-blueprint-node :is(strong, small) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-candidate .candidate-blueprint-node small { color: var(--muted-foreground); }
+.gc-candidate .candidate-blueprint-node .react-flow__handle { width: 10px; height: 10px; background: var(--primary); }
+.gc-candidate .candidate-blueprint-node .candidate-blueprint-data-port { border: 2px solid var(--primary); background: var(--popover); }
+.gc-candidate .candidate-blueprint-data-wire .react-flow__edge-path { stroke-dasharray: 4 3; }
+@container candidate-document (max-width: 580px) {
+  .gc-candidate .candidate-page-object[data-object-mode="behavior"] .candidate-document-side { width: 100%; }
+  .gc-candidate .candidate-composition-body { grid-template-columns: minmax(0, 1fr); }
+  .gc-candidate .candidate-composition-art { width: min(100%, 190px); }
+}

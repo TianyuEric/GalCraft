@@ -1,0 +1,8 @@
+.gc-candidate .candidate-mini-stage-chrome { display:grid; gap:8px; min-width:0; margin-block-end:8px; }
+.gc-candidate .candidate-mini-stage-transport { gap:4px; flex-wrap:wrap; }
+.gc-candidate .candidate-mini-stage-separator { align-self:stretch; border-inline-start:1px solid var(--border); margin-inline:4px; }
+.gc-candidate .candidate-mini-stage-entry { max-inline-size:420px; }
+.gc-candidate .candidate-mini-stage-entry .gc-candidate-field-value { max-inline-size:300px; }
+.gc-candidate .candidate-mini-stage-route { display:grid; gap:8px; padding-block:8px; border-block-start:1px solid var(--border); }
+.gc-candidate .candidate-mini-stage-input { display:flex; flex-wrap:wrap; align-items:end; gap:8px; }
+.gc-candidate .candidate-mini-stage-input > .gc-candidate-field { flex:1 1 220px; max-inline-size:420px; }

@@ -1,0 +1,46 @@
+.candidate-resource-workface { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.candidate-resource-scroll { flex: 1; min-height: 0; overflow: auto; padding: 12px; container: candidate-resource / inline-size; }
+.candidate-resource-stack { display: grid; min-width: 0; gap: 12px; align-content: start; }
+.candidate-resource-toolbar { flex-wrap: wrap; }
+.candidate-resource-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px; }
+.candidate-resource-fields > * { flex: 0 1 152px; min-width: min(100%, 96px); }
+.candidate-resource-fields .gc-candidate-input { min-width: 0; }
+.candidate-resource-split { display: grid; grid-template-columns: minmax(144px, 0.35fr) minmax(0, 1fr); align-items: start; gap: 12px; }
+.candidate-resource-split > *, .candidate-resource-style-body > * { min-width: 0; }
+.candidate-resource-list { display: grid; max-height: min(448px, 45vh); overflow: auto; }
+.candidate-resource-list .gc-candidate-object-row + .gc-candidate-object-row { border-top: 1px solid var(--border); }
+.candidate-resource-style-body { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.candidate-resource-style-body[data-source-focus] { grid-template-columns: minmax(0, 1fr); }
+.candidate-resource-monaco { height: min(48vh, 400px); min-height: 240px; border: 1px solid var(--border); overflow: hidden; }
+.candidate-resource-player-host { width: 100%; max-width: 720px; position: relative; overflow: hidden; aspect-ratio: 16 / 9; background: var(--muted); }
+.candidate-resource-player { position: absolute; inset: 0 auto auto 0; transform-origin: top left; pointer-events: none; }
+.candidate-resource-hint, .candidate-resource-summary { margin: 0; font-size: 12px; line-height: 16px; }
+.candidate-resource-hint { color: var(--muted-foreground); }
+.candidate-resource-summary { display: grid; gap: 4px; }
+.candidate-resource-issues, .candidate-resource-changes { display: grid; gap: 4px; list-style: none; padding: 0; margin: 0; font-size: 12px; line-height: 16px; overflow-wrap: anywhere; }
+.candidate-resource-changes { max-height: 224px; overflow: auto; }
+.candidate-resource-issues button { text-align: start; max-width: 100%; white-space: normal; }
+.candidate-resource-issues [data-severity="error"] { color: var(--danger-foreground); }
+.candidate-resource-css { max-height: 220px; overflow: auto; padding: 8px; margin: 0; font-size: 12px; line-height: 16px; }
+.candidate-resource-conflict, .candidate-resource-difference { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; align-items: end; padding-block: 8px; border-top: 1px solid var(--border); }
+.candidate-resource-difference > :last-child { grid-column: 1 / -1; }
+.candidate-resource-comparison { margin: 0; font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
+.candidate-resource-comparison dd { margin: 0 0 4px; }
+.candidate-resource-bindings, .candidate-resource-bindings > div { display: grid; gap: 8px; }
+.candidate-resource-bindings > div { grid-template-columns: minmax(0, 1fr) max-content; align-items: end; }
+.candidate-resource-specimen { display: grid; place-items: center; min-height: 76px; overflow: hidden; }
+.candidate-resource-reading { display: grid; gap: 8px; }
+.candidate-resource-reading p { margin: 0; }
+.candidate-resource-reading .candidate-resource-specimen { place-items: center start; padding: 8px; min-height: 56px; }
+
+@container candidate-resource (max-width: 560px) {
+  .candidate-resource-style-body { grid-template-columns: minmax(0, 1fr); }
+  .candidate-resource-monaco { height: min(40vh, 280px); }
+  .candidate-resource-split { grid-template-columns: minmax(116px, .35fr) minmax(0, 1fr); gap: 8px; }
+}
+@container candidate-resource (max-width: 410px) {
+  .candidate-resource-split, .candidate-resource-conflict, .candidate-resource-difference { grid-template-columns: minmax(0, 1fr); }
+}
+.candidate-resource-afterstory-list { list-style: none; display: grid; gap: 4px; margin: 8px 0; padding: 0; }
+.candidate-resource-afterstory-list li { display: grid; grid-template-columns: minmax(0, 1fr) max-content max-content; gap: 4px; }
+.candidate-resource-afterstory-list li > button:first-child { justify-content: start; }

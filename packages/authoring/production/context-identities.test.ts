@@ -3,6 +3,7 @@ import { FixtureAsset, FixtureCharacters, FixtureIds, FixtureProject, FixtureSna
 import { CoreCommandSpecs, parse } from '@galcraft/dsl';
 import { compactContextParts, restoreCandidateIdentities } from './context-identities.js';
 import { candidateText, reviewScript } from './review.js';
+import { candidateTextContent, reviewScriptText } from './review-text.js';
 import type { Candidate, ContextPart } from './types.js';
 
 const legacy = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -50,7 +51,10 @@ describe('short AI context references', () => {
     expect(restored.statements[0]!.args).toEqual(parse({ documentId: 'Doc001', revision: 1, text: script }).statements[0]!.args);
   });
 
-  it('adopts AI aliases into an existing UUID scene with stable statements and real cross-module references', async () => {
+  it.each([
+    {label:'Node wrapper',review:reviewScript},
+    {label:'browser text',review:(input:Parameters<typeof reviewScript>[0])=>reviewScriptText({...input,text:candidateTextContent(input.candidate,input.candidate.editedText!)})},
+  ])('adopts AI aliases into an existing UUID scene with stable statements and real cross-module references ($label)', async ({review}) => {
     const project = structuredClone(FixtureProject), scene = structuredClone(FixtureSnapshot.scenes[0]!.scene);
     const sceneDocumentId = legacy(402), realStatementId = legacy(802), assetId = legacy(602);
     const character = { ...structuredClone(FixtureCharacters[1]!), id: characterId, defaultVoicing: 'intentionalSilent' as const };
@@ -68,7 +72,7 @@ describe('short AI context references', () => {
     const expected = [{ ref: { kind: 'document' as const, id: sceneDocumentId }, revision: 1 }];
     // Insert the new background and replace say; the current end stays outside the edit.
     candidate.editedText = parse({ documentId: 'Doc001', revision: 1, text: modelText }).cst.slice(0, 2).map(node => node.raw).join('\n');
-    const reviewed = await reviewScript({ candidate, current, documentId: sceneDocumentId, beforeStatementId: null, replaceStatementIds: [realStatementId], bindings: {}, expected });
+    const reviewed = await review({ candidate, current, documentId: sceneDocumentId, beforeStatementId: null, replaceStatementIds: [realStatementId], bindings: {}, expected });
     if (!reviewed.ok) throw new Error(JSON.stringify(reviewed.issues));
     expect(reviewed.ok).toBe(true);
     const patch = reviewed.value.patches[0];

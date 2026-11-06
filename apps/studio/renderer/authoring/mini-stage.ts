@@ -9,6 +9,14 @@ import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Choice } from '../components/controls.js';
 
+export type MiniStageWorkbenchState = {
+  mode: 'inspection' | 'current' | 'playtest'; muted: boolean; paused: boolean;
+  ready: boolean; hasTarget: boolean; status: string; provenance: string;
+  entry: { value: string; options: { value: string; label: string }[] } | null;
+  route: { id: string; label: string; run(): void }[];
+  input: { label: string; placeholder: string; submit(text: string): void } | null;
+};
+
 /** The exact Player in an isolated preview domain, with explicit inspection and playback modes. */
 export class MiniStage {
   readonly root = document.createElement('section');
@@ -20,6 +28,14 @@ export class MiniStage {
   private entryRoot = createRoot(this.entryControl);
   private player: StudioPlayer | null = null;
   private controls = document.createElement('div');
+  private heading = document.createElement('strong');
+  private sound: HTMLButtonElement | null = null;
+  private workbench = false;
+  private workbenchListener: ((state: MiniStageWorkbenchState) => void) | null = null;
+  private entryState: MiniStageWorkbenchState['entry'] = null;
+  private selectEntryAction: ((value: string) => void) | null = null;
+  private routeActions: MiniStageWorkbenchState['route'] = [];
+  private routeInput: MiniStageWorkbenchState['input'] = null;
   private mode: 'inspection' | 'current' | 'playtest' = 'inspection';
   private muted = true;
   private target: Position | null = null;
@@ -82,36 +98,60 @@ export class MiniStage {
   private resize: ResizeObserver;
   constructor(private services: AuthoringServices, private preview?: (snapshot: Snapshot) => void, private locale='zh-CN', private intent = new DebugRouteIntent()) {
     this.root.className = 'studio-mini-stage'; this.surface.className = 'studio-mini-player';
-    const title = document.createElement('strong'); title.textContent = this.t('当前指令舞台','Current command stage','現在のコマンドの舞台');
+    const title = this.heading; title.textContent = this.t('当前指令舞台','Current command stage','現在のコマンドの舞台');
     this.provenance.className = 'mini-stage-source';
     this.entryControl.className = 'mini-entry';
     this.controls.className = 'mini-stage-controls gc-actions';
     const action = (label: string, run: () => void) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.onclick = run; this.controls.append(button); return button; };
     for (const [mode, label] of [['inspection', this.t('定位检查','Inspect position','位置を確認')], ['current', this.t('播放当前演出','Play current performance','現在の演出を再生')], ['playtest', this.t('从此处试玩','Playtest from here','ここから試遊')]] as const)
-      action(label, () => { if(!this.target)return;this.mode=mode;this.update(`${this.key}:${mode}:${this.generation}`,this.target); });
-    action(this.t('暂停／继续','Pause / resume','一時停止／再開'),()=>{const player=this.player;if(!player||this.mode==='inspection')return;player.session.setPreviewPaused(player.session.inspect()?.status!=='paused');player.view.render();});
-    action(this.t('停止','Stop','停止'),()=>{if(!this.target)return;this.mode='inspection';this.update(`${this.key}:stop`,this.target);});
-    const sound=action(this.t('声音：关','Sound: off','音声：オフ'),()=>{this.muted=!this.muted;this.player?.setPreviewMuted(this.mode==='inspection'||this.muted);sound.textContent=this.muted?this.t('声音：关','Sound: off','音声：オフ'):this.t('声音：开','Sound: on','音声：オン');sound.ariaPressed=String(!this.muted);});sound.ariaPressed='false';
+      action(label, () => this.run(mode));
+    action(this.t('暂停／继续','Pause / resume','一時停止／再開'),()=>this.pauseOrResume());
+    action(this.t('停止','Stop','停止'),()=>this.stop());
+    this.sound=action(this.t('声音：关','Sound: off','音声：オフ'),()=>this.setMuted(!this.muted));this.sound.ariaPressed='false';
     this.status.setAttribute('role', 'status'); this.root.append(title, this.entryControl, this.controls, this.surface, this.status, this.provenance, this.route);
     this.resize = new ResizeObserver(() => { const bounds = this.surface.getBoundingClientRect();
       this.player?.stage.setViewport({ x: 0, y: 0, width: bounds.width, height: bounds.height }); });
     this.resize.observe(this.surface);
   }
   private t(zh:string,en:string,ja:string){return this.locale==='en'?en:this.locale==='ja'?ja:zh;}
+  /** Detaches ordinary chrome; Player preparation and its surface keep the same owner. */
+  useWorkbenchControls(listener: (state: MiniStageWorkbenchState) => void): () => void {
+    this.workbench = true; this.workbenchListener = listener;
+    this.heading.remove(); this.controls.remove(); this.entryControl.remove(); this.route.remove();
+    this.entryRoot.render(null);
+    this.publishWorkbench();
+    return () => { if (this.workbenchListener === listener) this.workbenchListener = null; };
+  }
+  private publishWorkbench() {
+    this.workbenchListener?.({ mode: this.mode, muted: this.muted, paused: this.player?.session.inspect()?.status === 'paused',
+      ready: !!this.player && this.root.dataset.stale === 'false', hasTarget: !!this.target,
+      status: this.status.textContent ?? '', provenance: this.provenance.textContent ?? '',
+      entry: this.entryState, route: [...this.routeActions], input: this.routeInput });
+  }
+  run(mode: MiniStageWorkbenchState['mode']) { if (!this.target) return; this.mode = mode; this.update(`${this.key}:${mode}:${this.generation}`, this.target); }
+  pauseOrResume() { const player=this.player;if(!player||this.mode==='inspection')return;player.session.setPreviewPaused(player.session.inspect()?.status!=='paused');player.view.render();this.publishWorkbench(); }
+  stop() { if(!this.target)return;this.mode='inspection';this.update(`${this.key}:stop`,this.target); }
+  setMuted(value: boolean) {
+    this.muted=value;this.player?.setPreviewMuted(this.mode==='inspection'||this.muted);
+    if(this.sound){this.sound.textContent=this.muted?this.t('声音：关','Sound: off','音声：オフ'):this.t('声音：开','Sound: on','音声：オン');this.sound.ariaPressed=String(!this.muted);}
+    this.publishWorkbench();
+  }
+  selectEntry(value: string) { if (value !== this.entryState?.value && this.entryState?.options.some(option => option.value === value)) this.selectEntryAction?.(value); }
   update(key: string, target: Position | null, message?: string) {
     if(this.target?.sceneId!==target?.sceneId||this.target?.statementId!==target?.statementId)this.mode='inspection';
     this.target=target;
     if (this.animationStatement !== target?.statementId) { this.animationPreview = null; this.animationStatement = target?.statementId ?? null; }
     if (key === this.key) return; this.key = key; const generation = ++this.generation;
     if (this.timer) clearTimeout(this.timer);
-    this.clearPending(); this.route.replaceChildren(); this.root.dataset.stale = String(Boolean(this.player));
+    this.clearPending(); this.route.replaceChildren(); this.routeActions=[];this.routeInput=null;if(!target)this.entryState=null;this.selectEntryAction=null;this.root.dataset.stale = String(Boolean(this.player));
     if(this.player){this.player.session.setPreviewPaused(true);this.player.view.render();}
     this.status.textContent = message ?? (target ? this.t('正在准备当前指令…','Preparing the current command…','現在のコマンドを準備中…') : this.t('选择一条指令查看舞台效果','Select a command to preview its stage','コマンドを選択して舞台をプレビュー'));
     if (this.player) this.status.textContent += this.t(' · 保留上次有效画面', ' · showing the last valid stage', '・前回の有効な舞台を表示');
     if (target) this.timer = setTimeout(() => { void this.prepare(target, generation); }, 180);
+    this.publishWorkbench();
   }
   private clearPending() { if (this.pending) { this.pending.player.dispose(); this.pending.surface.remove(); this.pending = null; } }
-  dispose() { this.entryRoot.unmount(); this.clearPending(); this.generation++; if (this.timer) clearTimeout(this.timer); this.player?.dispose(); this.player = null; this.resize.disconnect(); }
+  dispose() { this.workbenchListener=null;this.selectEntryAction=null;this.routeActions=[];this.routeInput=null;this.target=null;this.entryRoot.unmount(); this.clearPending(); this.generation++; if (this.timer) clearTimeout(this.timer); this.player?.dispose(); this.player = null; this.resize.disconnect(); }
   private async prepare(target: Position, generation: number) {
     const current = () => generation === this.generation;
     try {
@@ -136,9 +176,9 @@ export class MiniStage {
       player.stage.pause(true);
       player.setPreviewMuted(this.mode==='inspection'||this.muted);
       const selected = resolvePreviewEntry(snapshot, target, this.intent.previewEntryId, this.intent.previewEntrySceneId === target.sceneId), entry = selected.entry;
-      this.entryRoot.render(createElement(Choice, { label: this.t('预览入口', 'Preview entry', 'プレビュー入口'), value: selected.key,
-        options: previewEntries(snapshot).map(item => ({ value: item.key, label: item.title })),
-        onChange: value => { this.intent.previewEntryId = value; this.intent.previewEntrySceneId = target.sceneId; this.update(`${this.key}:${value}`, target); } }));
+      this.entryState = { value: selected.key, options: previewEntries(snapshot).map(item => ({ value: item.key, label: item.title })) };
+      this.selectEntryAction = value => { if(!current())return;this.intent.previewEntryId = value; this.intent.previewEntrySceneId = target.sceneId; this.update(`${this.key}:${value}`, target); };
+      if(!this.workbench)this.entryRoot.render(createElement(Choice, { label: this.t('预览入口', 'Preview entry', 'プレビュー入口'), ...this.entryState, onChange: value => this.selectEntry(value) }));
       const scenario: DebugScenario = { schemaVersion: 1, id: createId(), name: this.t('当前指令舞台','Current command stage','現在のコマンドの舞台'), projectId: snapshot.projectId,
         engineVersion: snapshot.engineVersion, pluginVersions: [snapshot.lock.engine, ...snapshot.lock.plugins, snapshot.lock.template],
         entry, target, route: [], playerInputs: [], initialProgress: selected.initialProgress, pluginInitial: {}, externalPolicy: 'simulate' };
@@ -151,10 +191,10 @@ export class MiniStage {
         const prepared = preparation.result; source = preparation.source;
         if (!current()) return;
         if (!prepared.ok) throw new Error(prepared.error.message);
-        preparedId = prepared.value.id; this.route.replaceChildren();
+        preparedId = prepared.value.id; this.route.replaceChildren();this.routeActions=[];this.routeInput=null;
         const state = prepared.value.state;
-        const button = (label: string, action: () => void) => { const item = document.createElement('button'); item.type = 'button'; item.textContent = label; item.onclick = action; this.route.append(item); };
-        const retry = () => { void prepareRoute().catch(error => { if (current()) this.status.textContent = String(error); }); };
+        const button = (label: string, action: () => void) => { const run=()=>{if(current())action();};this.routeActions.push({id:String(this.routeActions.length),label,run});if(this.workbench)return;const item = document.createElement('button'); item.type = 'button'; item.textContent = label; item.onclick = run; this.route.append(item); };
+        const retry = () => { void prepareRoute().catch(error => { if (current()) this.status.textContent = String(error); }).finally(()=>{if(current())this.publishWorkbench();}); };
         if (!prepared.value.reached) {
           this.status.textContent = (preparation.invalidated ? this.t('原路线已失效。','Previous route is no longer valid. ','前のルートは無効です。') : '') + (routeReason(prepared.value.routePreparation?.kind, this.locale)) + (this.player ? this.t(' · 保留上次有效画面',' · showing the last valid stage','・前回の有効な舞台を表示') : '');
           if (state.wait?.kind === 'choice') {
@@ -165,11 +205,13 @@ export class MiniStage {
                 scenario.route.push({ statementId: instruction.statementId, occurrence: state.occurrence, optionId: option.id }); source = 'selected'; retry();
               });
           } else if (state.wait?.kind === 'input') {
-            const input = document.createElement('input'); input.ariaLabel = this.t('路线玩家输入','Player input for this route','ルートのプレイヤー入力'); input.placeholder=this.t('填写这条路线需要的玩家输入','Enter the player response needed for this route','このルートに必要なプレイヤーの回答を入力'); this.route.append(input);
-            button(this.t('采用输入','Use input','入力を使用'), () => {
+            const label=this.t('路线玩家输入','Player input for this route','ルートのプレイヤー入力'),placeholder=this.t('填写这条路线需要的玩家输入','Enter the player response needed for this route','このルートに必要なプレイヤーの回答を入力');
+            const submit=(text:string)=>{if(!current())return;
               scenario.playerInputs = scenario.playerInputs.filter(item => item.statementId !== state.position.statementId || item.occurrence !== state.occurrence);
-              scenario.playerInputs.push({ statementId: state.position.statementId!, occurrence: state.occurrence, text: input.value }); source = 'selected'; retry();
-            });
+              scenario.playerInputs.push({ statementId: state.position.statementId!, occurrence: state.occurrence, text }); source = 'selected'; retry();
+            };
+            this.routeInput={label,placeholder,submit};
+            if(!this.workbench){const input=document.createElement('input');input.ariaLabel=label;input.placeholder=placeholder;this.route.append(input);button(this.t('采用输入','Use input','入力を使用'),()=>submit(input.value));}
           } else this.status.textContent = this.t('当前路线未到达此指令；可从此句试玩检查路线。','This route does not reach the command. Playtest from here to inspect it.','このルートでは到達できません。ここから試遊して確認できます。');
           if (scenario.route.length || scenario.playerInputs.length) button(this.t('重新选择路线','Choose another route','ルートを選び直す'), () => { this.intent.clear(); source = 'automatic'; scenario.route = []; scenario.playerInputs = []; retry(); });
           return;
@@ -210,5 +252,6 @@ export class MiniStage {
       };
       await prepareRoute();
     } catch (error) { if (current()) { this.status.textContent = `${this.t('预览暂不可用','Preview unavailable','プレビュー不可')}：${error instanceof Error ? error.message : String(error)}`; this.clearPending(); this.root.dataset.stale = String(Boolean(this.player)); if (this.player) this.status.textContent += this.t(' · 保留上次有效画面',' · showing the last valid stage','・前回の有効な舞台を表示'); } }
+    finally { if(current())this.publishWorkbench(); }
   }
 }

@@ -1,0 +1,27 @@
+.gc-candidate .candidate-scene-graph {
+  height: 100%;
+  gap: 0;
+}
+
+.gc-candidate .candidate-scene-graph > .scene-relations-canvas {
+  border: 0;
+  border-block-start: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.gc-candidate .candidate-scene-graph .react-flow {
+  --xy-background-pattern-dots-color: var(--border);
+  --xy-controls-button-background-color-hover: var(--surface-hover);
+}
+
+.gc-candidate .candidate-scene-graph .scene-relations-warning {
+  color: var(--danger-foreground);
+}
+
+.gc-candidate .candidate-scene-connections {
+  flex: none;
+  max-block-size: 180px;
+  padding: 4px 8px;
+  overflow: auto;
+  border-block-start: 1px solid var(--border);
+}
