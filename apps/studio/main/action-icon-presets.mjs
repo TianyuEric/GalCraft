@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { studioApplicationRoot } from './application-root.mjs';
 import { fail, ok } from './result.mjs';
 import { ImportCoordinator } from '@galcraft/assets';
 import { componentDefinition, findComponent, readTemplateDocuments, templateEdit } from '@galcraft/templates';
 
-const directory = join(import.meta.dirname, '../resources/practice/ui');
+const directory = join(studioApplicationRoot(), 'resources/practice/ui');
 const presets = [
   ['start','开始','Start','開始'], ['save','保存','Save','保存'], ['load','读取','Load','読込'],
   ['history','历史','History','履歴'], ['settings','设置','Settings','設定'], ['pin','固定','Pin','固定'],

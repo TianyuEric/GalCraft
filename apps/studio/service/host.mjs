@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { ResourceRegistry } from '@galcraft/media-tools/resources';
 import { EngineCatalog } from '@galcraft/publishing/engine';
+import { studioApplicationRoot } from '../main/application-root.mjs';
 import { StudioHost } from '../main/host.mjs';
 import { AuthoringPreferences } from '../main/preferences.mjs';
 import { ProjectDocuments } from '../main/document-providers.mjs';
@@ -45,7 +46,7 @@ function openSystem(target) {
 
 /** The single domain assembly used by CLI, desktop, browser and MCP. */
 export async function createNodeStudioHost({ userData, origin, publish = () => {}, requestDialog, requestContext = () => undefined }) {
-  const root = resolve(process.env.GALCRAFT_STUDIO_ROOT ?? join(import.meta.dirname, '..'));
+  const root = resolve(process.env.GALCRAFT_STUDIO_ROOT ?? studioApplicationRoot());
   const packaged = !!process.env.GALCRAFT_BUNDLED_ROOT || existsSync(join(root, 'resources/engines'));
   const bundledRoot = process.env.GALCRAFT_BUNDLED_ROOT ?? (packaged ? join(root, 'resources') : join(root, '../../build/desktop'));
   const officialPackageRoot = packaged ? join(bundledRoot, 'plugins') : join(root, '../../plugins');

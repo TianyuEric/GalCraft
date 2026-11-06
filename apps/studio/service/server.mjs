@@ -7,6 +7,7 @@ import { Readable } from 'node:stream';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import { endpointPort, listenLocalService, requireServicePort, servicePort, STUDIO_WEB_PORT } from '../main/local-service-ports.mjs';
+import { readBridgeRequest } from './bridge-request.mjs';
 
 const json = (response, status, value) => {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -101,11 +102,12 @@ export async function startStudioService({ userData, createHost, frontendDirecto
         json(response, 200, { directory, parent: dirname(directory) === directory ? null : dirname(directory), entries }); return;
       }
       if (url.pathname === '/api/bridge' && request.method === 'POST') {
-        const { group, method, args, clientId, entry } = await readJson(request);
-        if (!Object.hasOwn(host.handlers, group) || !Object.hasOwn(host.handlers[group], method) || !Array.isArray(args)) {
+        const input = readBridgeRequest(await readJson(request));
+        if (!input || !Object.hasOwn(host.handlers, input.group) || !Object.hasOwn(host.handlers[input.group], input.method)) {
           json(response, 404, errorResult('UNKNOWN_HOST_OPERATION', 'Unknown Studio operation.')); return;
         }
-        const work = context.run({ clientId, entry: entry === 'browser' ? 'browser' : 'desktop' }, () => host.call(group, method, ...args)); pending.add(work);
+        const { group, method, args, clientId, entry } = input;
+        const work = context.run({ clientId, entry }, () => host.call(group, method, ...args)); pending.add(work);
         let result; try { result = await work; } finally { pending.delete(work); }
         if (result.ok && mutations.has(method) && !['authoringPreferences', 'language', 'engines', 'files', 'operations', 'service'].includes(group)) {
           publish(group === 'projects' ? 'studio:collaborationNavigate' : 'studio:collaborationChanged', group === 'projects' ? { page: 'creation', projectChanged: true } : undefined, undefined, clientId);

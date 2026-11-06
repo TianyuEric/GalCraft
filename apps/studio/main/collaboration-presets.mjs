@@ -7,6 +7,7 @@ import { AnimationPresets, createAnimationPreset } from '@galcraft/stage/presets
 import { applyReadingPreset, componentDefinition, createUIAnimationPreset, findComponent, putUIAnimation, readTemplateDocuments, templateEdit, UIAnimationPresets } from '@galcraft/templates';
 import { CollaborationError } from '@galcraft/collaboration';
 import { ActionIconPresets } from './action-icon-presets.mjs';
+import { studioApplicationRoot } from './application-root.mjs';
 
 const str=z.string().min(1),versions=z.array(VersionRefSchema),schema=value=>z.toJSONSchema(value,{io:'input'});
 const unwrap=result=>{if(!result.ok)throw new CollaborationError(result.error.code,result.error.message,result.error);return result.value;};
@@ -132,7 +133,7 @@ export async function preparePresetEdit(owner,raw,context,check){
     }else if(input.operationKey==='stage.applyWeatherPreset'){
       const source=scene(owner,input,context);if(source.node&&source.node.command!=='pixi')fail('WEATHER_STATEMENT','Select a pixi statement, or use statementId:null to append weather.');
       const preset=StageWeatherPresets[fields.key],index=owner.assets.current()?.index;if(!index)fail('ASSET_INDEX_MISSING','Open a project with an asset index.');check({effects:['edit'],documents:[index.documentId]});
-      resource=unwrap(await owner.assets.prepareBuiltinPreset({file:join(import.meta.dirname,'../resources/practice/textures',preset.texture),tag:`galcraft-weather:${fields.key}`,source:{kind:'template',description:`OpenWebGAL/WebGAL_Terre · ${preset.texture} · MPL-2.0`,usage:'redistributable'}}));
+      resource=unwrap(await owner.assets.prepareBuiltinPreset({file:join(studioApplicationRoot(),'resources/practice/textures',preset.texture),tag:`galcraft-weather:${fields.key}`,source:{kind:'template',description:`OpenWebGAL/WebGAL_Terre · ${preset.texture} · MPL-2.0`,usage:'redistributable'}}));
       const args=source.node?.object?.value??{};edit=writeStatement(source,'pixi',{...args,effectId:fields.effectId??args.effectId??createId(project.documents),type:fields.key,target:fields.target,enabled:true,resourceId:resource.asset.id,density:fields.density??preset.density,speed:fields.speed??preset.speed,directionDeg:fields.directionDeg??preset.directionDeg,parameters:{...preset.parameters,...fields.parameters},layer:fields.layer},'Apply weather preset',[{kind:'asset',id:resource.asset.id}]);combine(edit,resource);includeIndex(edit,index);
     }else{
       const documents=[...project.documents.values()],template=readTemplateDocuments(documents),component=input.target.componentId?findComponent(template,input.target.componentId):null;
@@ -144,7 +145,7 @@ export async function preparePresetEdit(owner,raw,context,check){
         else{
           if(!componentDefinition(component.part)?.imageSlots.includes('icon'))fail('ICON_SLOT_MISSING','Choose a component with a public icon slot.');
           const index=owner.assets.current()?.index;if(!index)fail('ASSET_INDEX_MISSING','Open a project with an asset index.');check({effects:['edit'],documents:[index.documentId]});
-          resource=unwrap(await owner.assets.prepareBuiltinPreset({file:join(import.meta.dirname,'../resources/practice/ui',`spring-${fields.key}.svg`),tag:`galcraft:action-icon:${fields.key}`,source:{kind:'template',description:`GalCraft core action icon · ${fields.key}`,usage:'redistributable'}}));
+          resource=unwrap(await owner.assets.prepareBuiltinPreset({file:join(studioApplicationRoot(),'resources/practice/ui',`spring-${fields.key}.svg`),tag:`galcraft:action-icon:${fields.key}`,source:{kind:'template',description:`GalCraft core action icon · ${fields.key}`,usage:'redistributable'}}));
           const visual=fields.state==='normal'?component.normal:component.states[fields.state]??={};(visual.images??={}).icon={assetId:resource.asset.id,variantId:resource.asset.activeVariantId,mode:'contain',positionX:.5,positionY:.5,colorMode:'mask',tint:null,opacity:1,slices:null,borders:null,fillCenter:false};
           edit=templateEdit(documents,template,'Apply action icon');edit.requiredRefs.push({kind:'asset',id:resource.asset.id});combine(edit,resource);includeIndex(edit,index);
         }

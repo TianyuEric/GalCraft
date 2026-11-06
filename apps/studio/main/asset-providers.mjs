@@ -9,6 +9,7 @@ import { CoreCommandSpecs, fieldAt, parse, patchFields } from '@galcraft/dsl';
 import { IdSchema } from '@galcraft/contracts';
 import { fail, ok } from './result.mjs';
 import { prepareStageTarget, stageResource } from './asset-stage-targets.mjs';
+import { studioApplicationRoot } from './application-root.mjs';
 
 const directAssetFields = new Set(['assetId', 'icon', 'splash', 'titleBackground', 'titleMusic',
   'titleVideo', 'emergencyImage', 'backgroundImage', 'imageId', 'fontId', 'avatar', 'cover', 'selectedAssetId', 'resourceId']);
@@ -256,7 +257,7 @@ export class StudioAssets {
     const tag = `galcraft-weather:${key}`;
     const existing = current.index.data.assets.find(asset => asset.tags.includes(tag));
     if (existing) return ok(existing);
-    const imported = await this.import([join(import.meta.dirname, '../resources/practice/textures', preset.texture)], { conflict: 'keepBoth', tags: [tag], source: { kind: 'template',
+    const imported = await this.import([join(studioApplicationRoot(), 'resources/practice/textures', preset.texture)], { conflict: 'keepBoth', tags: [tag], source: { kind: 'template',
       description: `OpenWebGAL/WebGAL_Terre · packages/terre2/assets/templates/WebGAL_Template/game/tex/${preset.texture} · MPL-2.0`, usage: 'redistributable' } });
     if (!imported.ok) return imported;
     const asset = imported.value.succeeded[0];

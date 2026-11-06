@@ -264,3 +264,12 @@ export type DesktopBridge = WorkbenchBridge & {
 };
 export type StudioIpc = import('@galcraft/contracts').IpcMethods<DesktopBridge>;
 
+/** The local HTTP transport discovers handler names at runtime. */
+export type StudioBridgeRequest = {
+  group: string;
+  method: string;
+  args: unknown[];
+  clientId?: string;
+  entry: 'desktop' | 'browser';
+};
+

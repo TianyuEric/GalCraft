@@ -9,11 +9,8 @@ const repo = resolve(import.meta.dirname, '..'), studio = join(repo, 'apps/studi
 const destination = resolve(repo, 'build/npm-studio');
 if (!destination.startsWith(`${join(repo, 'build')}${sep}`)) throw new Error('npm staging must stay inside build.');
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-const run = (args, cwd = repo) => execFileSync(pnpm, args, { cwd, stdio: 'inherit', windowsHide: true, shell: process.platform === 'win32' });
-if (!process.argv.includes('--reuse-build')) {
-  run(['--filter', '@galcraft/studio', 'desktop:prepare']);
-  execFileSync(process.execPath, [join(repo, 'tools/build-studio-service.mjs')], { cwd: repo, stdio: 'inherit', windowsHide: true });
-}
+const run = args => execFileSync(pnpm, args, { cwd: repo, stdio: 'inherit', windowsHide: true, shell: process.platform === 'win32' });
+if (!process.argv.includes('--reuse-build')) run(['--filter', '@galcraft/studio', 'desktop:prepare']);
 for (const file of ['entry.mjs', 'cli.mjs', 'worker-entry.mjs', 'compiler-utility.mjs', 'style-utility.mjs']) await access(join(studio, 'dist-service/service', file));
 await rm(destination, { recursive: true, force: true }); await mkdir(destination, { recursive: true });
 await cp(join(studio, 'dist'), join(destination, 'dist'), { recursive: true });

@@ -1,14 +1,17 @@
+// @ts-check
 import { spawn } from 'node:child_process';
 import { open, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readActiveService } from './server.mjs';
 import { requireServicePort, servicePort } from '../main/local-service-ports.mjs';
 
+/** @param {{ userData: string; executable?: string; entry?: string; env?: NodeJS.ProcessEnv; port?: string | number }} options */
 export async function ensureStudioService({ userData, executable = process.execPath, entry = join(import.meta.dirname, 'entry.mjs'), env = process.env, port }) {
   port = servicePort(port);
   const current = await readActiveService(userData); if (current) { requireServicePort(port, current.origin); return current; }
   await mkdir(join(userData, 'studio-service'), { recursive: true });
   const log = await open(join(userData, 'studio-service', 'service.log'), 'a');
+  /** @type {import('node:child_process').ChildProcess} */
   let child;
   try {
     child = spawn(executable, [entry, '--user-data', userData, ...(port ? ['--port', String(port)] : [])], {
@@ -24,6 +27,7 @@ export async function ensureStudioService({ userData, executable = process.execP
   throw new Error(`Studio service startup timed out. See ${join(userData, 'studio-service', 'service.log')}`);
 }
 
+/** @param {string} url */
 export async function openStudioBrowser(url) {
   const child = process.platform === 'win32'
     ? spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url], { windowsHide: true, detached: true, stdio: 'ignore' })

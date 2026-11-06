@@ -1,5 +1,11 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "allowJs": true, "checkJs": false, "types": ["node"], "paths": {} },
-  "include": ["desktop-bridge.ts", "desktop-shell.ts", "main/ipc-context.ts", "main/host.mjs", "main/ipc-handlers.mjs", "main/preload.cjs", "main/service-preload.cjs", "main/ipc-contract.test-d.ts", "main/service-preload-contract.test-d.ts"]
+  "include": [
+    "desktop-bridge.ts", "desktop-shell.ts", "vite.main.config.ts", "vite.service.config.ts",
+    "main/main.mts", "main/ipc-context.ts", "main/host.mjs", "main/ipc-handlers.mjs",
+    "main/preload.cjs", "main/service-preload.cjs", "main/ipc-contract.test-d.ts", "main/service-preload-contract.test-d.ts",
+    "main/compiler-tasks.mjs", "main/compiler-utility.mjs",
+    "service/entry.mjs", "service/bridge-request.mjs", "service/workers.mjs", "service/worker-entry.mjs"
+  ]
 }

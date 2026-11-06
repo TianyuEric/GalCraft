@@ -14,7 +14,7 @@ const target = studioPackageTarget(), stage = join(repo, 'build/studio-package')
 const appRoot = join(stage, 'app'), resources = join(stage, 'resources');
 const engineRoot = join(resources, 'engines', bundledEngineVersion), playerEntry = `engines/${bundledEngineVersion}/windows/electron.exe`;
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-function runPnpm(args, cwd = repo) { execFileSync(pnpm, args, { cwd, stdio: 'inherit', windowsHide: true, shell: process.platform === 'win32' }); }
+function runPnpm(args) { execFileSync(pnpm, args, { cwd: repo, stdio: 'inherit', windowsHide: true, shell: process.platform === 'win32' }); }
 function node(script, ...args) { execFileSync(process.execPath, [join(repo, script), ...args], { cwd: repo, stdio: 'inherit', windowsHide: true }); }
 function signature(mode, path) {
   return JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
@@ -24,11 +24,7 @@ if (target.platform === 'win32' && process.platform !== 'win32') throw new Error
 if (!stage.startsWith(resolve(repo, 'build') + sep)) throw new Error('The staging directory must stay inside build/.');
 const mediaDirectory = resolve(target.mediaDirectory ?? process.env.GALCRAFT_MEDIA_TOOL_DIR ?? join(repo, 'tools/media/runtime/bin'));
 for (const name of mediaToolNames(target.platform)) await assertNativeBinaryTarget(join(mediaDirectory, name), target);
-if (!target.reuseBuild) {
-  runPnpm(['--filter', '@galcraft/studio', 'desktop:prepare']);
-  runPnpm(['exec', 'vite', 'build', '--config', 'vite.main.config.ts'], join(repo, 'apps/studio'));
-  node('tools/build-studio-service.mjs');
-}
+if (!target.reuseBuild) runPnpm(['--filter', '@galcraft/studio', 'desktop:prepare']);
 await rm(stage, { recursive: true, force: true }); await mkdir(resources, { recursive: true }); await mkdir(appRoot, { recursive: true });
 const nativeSource = target.nativeSource ? resolve(target.nativeSource) : null;
 const nativePackages = await stageNativeDependencies(nativeSource ?? join(repo, 'tools/matting/package.json'), appRoot, { ...target, dependencies: [
