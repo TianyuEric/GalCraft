@@ -15,7 +15,7 @@ import '@galcraft/player-ui/player.css';
 const ok = <T,>(value: T) => ({ ok: true as const, value, warnings: [] });
 
 
-function PlayerPage({ leaveFailure=false,galleryCardMode,continuityCards=false,surfaceRefinement=false,opening=false,canvasFourByThree=false,inputBoundary=false,page, kind='standard', appearance='paper', contract=false, sample='full',portrait=false,clear=false,nameAbove=false,nameMode='unchanged', viewportBackground=false, backgroundFit='cover', nvl=false, rich=false, independentAvatar=false, readingRoundtrip=false }: {leaveFailure?:boolean;galleryCardMode?:'single'|'multipleOneUnlocked';continuityCards?:boolean;surfaceRefinement?:boolean;opening?:boolean;canvasFourByThree?:boolean;inputBoundary?:boolean;readingRoundtrip?:boolean; nvl?:boolean; rich?:boolean; independentAvatar?:boolean; viewportBackground?:boolean; backgroundFit?:'cover'|'contain'; portrait?:boolean; clear?:boolean; nameAbove?:boolean; contract?:boolean; page: PageKey; kind?:OfficialTemplateKind; appearance?:'paper'|'night';sample?:'empty'|'partialSaves'|'selectionSaves'|'missingSaves'|'full'|'unlocked'|'longText'|'unbound'|'locked'|'partial'|'viewer'|'actual'|'playback:failed';nameMode?:'unchanged'|'fixed'|'custom' }) {
+function PlayerPage({ leaveFailure=false,galleryCardMode,continuityCards=false,surfaceRefinement=false,opening=false,canvasFourByThree=false,inputBoundary=false,inlineDialogue=false,page, kind='standard', appearance='paper', contract=false, sample='full',portrait=false,clear=false,nameAbove=false,nameMode='unchanged', viewportBackground=false, backgroundFit='cover', nvl=false, rich=false, independentAvatar=false, readingRoundtrip=false }: {leaveFailure?:boolean;galleryCardMode?:'single'|'multipleOneUnlocked';continuityCards?:boolean;surfaceRefinement?:boolean;opening?:boolean;canvasFourByThree?:boolean;inputBoundary?:boolean;inlineDialogue?:boolean;readingRoundtrip?:boolean; nvl?:boolean; rich?:boolean; independentAvatar?:boolean; viewportBackground?:boolean; backgroundFit?:'cover'|'contain'; portrait?:boolean; clear?:boolean; nameAbove?:boolean; contract?:boolean; page: PageKey; kind?:OfficialTemplateKind; appearance?:'paper'|'night';sample?:'empty'|'partialSaves'|'selectionSaves'|'missingSaves'|'full'|'unlocked'|'longText'|'unbound'|'locked'|'partial'|'viewer'|'actual'|'playback:failed';nameMode?:'unchanged'|'fixed'|'custom' }) {
   const root = useRef<HTMLDivElement>(null), mounted=useRef<PlayerMount|null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -42,6 +42,13 @@ function PlayerPage({ leaveFailure=false,galleryCardMode,continuityCards=false,s
     if(opening)snapshot.project.display.startupSequence=StartupSequenceSchema.parse({background:'#000000',revealMode:'withLastClip',clips:[{id:createId(),kind:'text',name:'作品标题',text:{'zh-CN':snapshot.project.name},fadeInMs:0,holdMs:600,fadeOutMs:1200}]});
     if(canvasFourByThree){snapshot.project.canvas.width=1600;snapshot.project.canvas.height=1200;}
     if(inputBoundary){const scene=snapshot.scenes[0]!,say=scene.instructions.find(i=>i.opcode==='say')!,variableId=createId();snapshot.variables.push({id:variableId,name:'玩家输入',type:'string',scope:'progress',initial:''});scene.instructions=[{...say,statementId:createId(),args:{speaker:{kind:'narrator'},text:'键盘起点'}},{...say,statementId:createId(),opcode:'getUserInput',args:{prompt:'输入一句话',defaultText:'',maxLength:24,allowEmpty:false,variableId}},{...say,statementId:createId(),args:{speaker:{kind:'narrator'},text:'输入完成，继续阅读。'}}];}
+    if (inlineDialogue) {
+      const line = snapshot.scenes[0]!.instructions.find(instruction => instruction.opcode === 'say')!;
+      line.args = { speaker: { kind: 'narrator' }, text: '雨声停了。站台只剩下一封信。', events: [
+        { id: 'WaitA1', kind: 'wait', offset: '雨声停了。'.length, durationMs: null },
+        { id: 'WaitA2', kind: 'wait', offset: '雨声停了。站台只剩下'.length, durationMs: null, autoWaitMs: 0 },
+      ] };
+    }
     if(viewportBackground){for(const page of snapshot.template.pages){if(!['story','choice','input'].includes(page.key)){page.background.imageId=FixtureIds.background;page.background.imageOpacity=1;page.background.fit=backgroundFit;}}}
 
     if(nvl||rich||independentAvatar){
@@ -119,6 +126,11 @@ function PlayerPage({ leaveFailure=false,galleryCardMode,continuityCards=false,s
       if (!active) { result.value.view.dispose(); host.dispose(); return; }
       mounted.current=result.value;
       dispose = () => { result.value.view.dispose(); host.dispose(); };
+      if (inlineDialogue) {
+        const data = result.value.data, { preferences } = data.current()!;
+        const saved = await data.savePreferences({ ...preferences, autoWaitMs: 10000, toolbarLocked: true }, preferences.revision);
+        if (!saved.ok) throw new Error(saved.error.message);
+      }
       if (['story','save','load','history','choice','input'].includes(page)) {
         await result.value.view.newGame();
         if (!['story','choice','input'].includes(result.value.view.navigation.page)) throw new Error('Player story could not start');
@@ -134,7 +146,7 @@ function PlayerPage({ leaveFailure=false,galleryCardMode,continuityCards=false,s
       element.dataset.playerReady = page;if(opening)await result.value.view.previewStartup('startup');
     }).catch(reason => { if (active) setError(String(reason)); });
     return () => { active = false; element.remove(); mounted.current = null; queueMicrotask(() => dispose?.()); };
-  }, [leaveFailure,page,kind,appearance,contract,sample,nameMode,portrait,clear,nameAbove,viewportBackground,backgroundFit,nvl,rich,independentAvatar,readingRoundtrip,canvasFourByThree,inputBoundary,surfaceRefinement,opening,galleryCardMode,continuityCards]);
+  }, [leaveFailure,page,kind,appearance,contract,sample,nameMode,portrait,clear,nameAbove,viewportBackground,backgroundFit,nvl,rich,independentAvatar,readingRoundtrip,canvasFourByThree,inputBoundary,inlineDialogue,surfaceRefinement,opening,galleryCardMode,continuityCards]);
   return <>{surfaceRefinement&&<nav aria-label="阅读与开屏检查"><button onClick={()=>mounted.current?.view.navigation.open('settings')}>阅读设置</button><button onClick={()=>{const player=mounted.current;if(player)void player.view.newGame();}}>正式阅读</button><button onClick={()=>{const player=mounted.current;if(player&&!player.session.inspect())void player.view.previewStartup('startup');}}>预览开屏</button></nav>}{contract&&<nav aria-label="Contract controls"><button onClick={()=>{const player=mounted.current;if(player)void player.data.savePreferences({...player.data.current()!.preferences,fontScale:1.5},player.data.current()!.preferences.revision).then(()=>player.view.render());}}>Font 150%</button><button onClick={()=>mounted.current?.view.navigation.open('org.galcraft.test/relations')}>Plugin</button><button onClick={()=>mounted.current?.view.navigation.open('confirm')}>Confirm</button><button onClick={()=>mounted.current?.view.navigation.open('story')}>Story</button></nav>}{error && <div className="product-story-error" role="alert">{error}</div>}<div ref={root} className="product-story player-story" /></>;
 }
 
@@ -144,6 +156,24 @@ type Story = StoryObj<typeof meta>;
 
 export const Title: Story = { args: { page: 'title' } };
 export const Reading: Story = { args: { page: 'story' } };
+export const InlineDialogueWait: Story = {
+  args: { page: 'story', inlineDialogue: true },
+  play: async ({ canvas, canvasElement }) => {
+    const reading = () => canvasElement.querySelector<HTMLElement>('.gc-body');
+    const text = () => reading()?.querySelector('.gc-dialogue-visible')?.textContent;
+    await waitFor(() => expect(canvasElement.querySelector('[data-player-ready="story"]')).not.toBeNull(), { timeout: 10000 });
+    await waitFor(() => expect(reading()?.dataset.dialogueEventId).toBe('WaitA1'), { timeout: 10000 });
+    await expect(canvas.getByRole('status', { name: '点击继续' })).toBeVisible();
+    expect(text()).toBe('雨声停了。');
+    const target = reading()!, box = target.getBoundingClientRect();
+    await userEvent.pointer({ target, keys: '[MouseLeft]', coords: { clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 } });
+    await waitFor(() => expect(reading()?.dataset.dialogueEventId).toBe('WaitA2'));
+    expect(text()).toBe('雨声停了。站台只剩下');
+    const auto = canvasElement.querySelector<HTMLElement>('[data-gc-part="story.toolbar.auto"]')!;
+    await userEvent.click(auto);
+    await waitFor(() => expect(text()).toBe('雨声停了。站台只剩下一封信。'), { timeout: 5000 });
+  },
+};
 export const Save: Story = { args: { page: 'save' } };
 export const Load: Story = { args: { page: 'load' } };
 export const Settings: Story = { args: { page: 'settings' } };

@@ -304,8 +304,9 @@ export class PlayerView {
     return () => {
       if (released) return; released = true; this.resourcePreparations--;
       if (this.preparingResources || this.disposed) return;
-      this.content.inert = this.startup.active || this.transition.busy || !!this.visualHold || ['confirm','error','dataImport','dataClear'].includes(this.navigation.page);
-      this.portal.inert = this.startup.active || this.transition.busy || !!this.visualHold;
+      this.content.inert = this.startup.active || this.transition.busy || !!this.visualHold || this.options.stage.sceneRuleActive ||
+        ['confirm','error','dataImport','dataClear'].includes(this.navigation.page);
+      this.portal.inert = this.startup.active || this.transition.busy || !!this.visualHold || this.options.stage.sceneRuleActive;
       if (this.deferredResourceRender) { this.deferredResourceRender = false; this.render(); }
     };
   }
@@ -410,7 +411,8 @@ export class PlayerView {
   }
   get stageElement(): HTMLElement { return this.stageRoot; }
   get isDisposed(): boolean { return this.disposed; }
-  get storyActive(): boolean { return !this.preparingResources && !this.emergencyCover?.active && !this.disposed && !this.startup.active && !this.transition.busy && this.navigation.page === 'story' &&
+  get fastForwarding(): boolean { return this.skip || this.ctrlFast; }
+  get storyActive(): boolean { return !this.saving && !this.preparingResources && !this.emergencyCover?.active && !this.disposed && !this.startup.active && !this.transition.busy && this.navigation.page === 'story' &&
     !this.options.entryPresentation?.active &&
     this.options.session.inspectActivity()?.status !== 'paused' && (!this.blurred || !this.preferences().pauseOnBlur); }
   private get uiScale() { return Math.min(this.options.root.clientWidth / this.options.snapshot.project.canvas.width, this.options.root.clientHeight / this.options.snapshot.project.canvas.height); }
@@ -495,7 +497,19 @@ export class PlayerView {
         if(!details){details=document.createElement('details');details.dataset.gcDiagnostic='';details.append(text('summary',''),text('pre',''));this.message.replaceChildren(text('span',''),details);}
         this.message.firstElementChild!.textContent=message;details.querySelector('summary')!.textContent=this.t('诊断详情','Diagnostic details','診断の詳細');details.querySelector('pre')!.textContent=detail;
       }else this.message.textContent=`${message}\n${detail}`;}
-      else this.message.textContent=message;return;
+      else this.message.textContent=message;
+      if (this.options.session.canRetryRuleScene && !this.message.querySelector('[data-scene-rule-retry]')) {
+        const retry = button(this.locale('action.retry'), () => {
+          retry.disabled = true;
+          void this.options.session.retryRuleScene().then(result => {
+            this.report(result);
+            if (result.ok) { this.setStageError(null); this.showStory(); }
+          }).finally(() => { retry.disabled = false; this.renderMessage(); });
+        });
+        retry.dataset.sceneRuleRetry = '';
+        this.message.append(retry);
+      } else if (!this.options.session.canRetryRuleScene) this.message.querySelector?.('[data-scene-rule-retry]')?.remove();
+      return;
     }
     const retry=button(this.locale('action.retry'),()=>{if(this.retryingRecords)return;this.retryingRecords=true;retry.disabled=true;void this.options.session.retryLongTerm().then(async result=>{this.report(result);if(result.ok&&result.value.state.phase==='entry')this.report(await this.options.session.start());}).finally(()=>{this.retryingRecords=false;this.render();});},this.retryingRecords);
     const detail=document.createElement('details');detail.append(text('summary',this.t('详情','Details','詳細')),text('p',message));
@@ -666,7 +680,7 @@ export class PlayerView {
         `[data-focus-key="${CSS.escape(frame.originFocus)}"]`) : null;
       (target ?? this.options.root).focus({ preventScroll: true });
     }); }
-  private open(page: string) { if(page==='emergency'){this.setEmergency(true);return;}if(this.emergencyCover?.active)return;if(this.transition.busy||this.visualHold||!!this.selecting)return;if(!this.canOpen(page)){this.showError(this.t('完成任意一条路线后开放','Complete any route to unlock','いずれかのルートを完了すると解放されます'));return;} if(['confirm','error','dataImport','dataClear'].includes(page)){this.openImmediate(page);void this.transition.play(this.modalRoot,this.pageAnimation('enter'),this.preferences().reducedMotion);return;} void this.animateNavigation(()=>this.openImmediate(page)); }
+  private open(page: string) { if(page==='emergency'){this.setEmergency(true);return;}if(this.emergencyCover?.active)return;if(this.transition.busy||this.visualHold||this.options.stage.sceneRuleActive||!!this.selecting)return;if(!this.canOpen(page)){this.showError(this.t('完成任意一条路线后开放','Complete any route to unlock','いずれかのルートを完了すると解放されます'));return;} if(['confirm','error','dataImport','dataClear'].includes(page)){this.openImmediate(page);void this.transition.play(this.modalRoot,this.pageAnimation('enter'),this.preferences().reducedMotion);return;} void this.animateNavigation(()=>this.openImmediate(page)); }
   private openImmediate(page:string) { this.stopModes();
     if(page==='dataClear')this.clearScopes.clear();
     if (page !== 'story') { this.options.stage.pause(true); this.options.audio.setPause('systemPage', true); }
@@ -959,8 +973,8 @@ export class PlayerView {
     if (renderSequence === this.renderSequence) { this.mountPluginComponents(page); this.applyPublicVisuals(renderSequence); }
     if(['story','choice'].includes(this.content.dataset.page??page))this.content.style.setProperty('overflow','hidden','important');
     else this.content.style.removeProperty('overflow');
-    if (this.startup.active||this.visualHold||!!this.selecting)this.content.inert = true;
-    this.portal.inert=this.startup.active||this.transition.busy||!!this.visualHold||!!this.selecting;
+    if (this.startup.active||this.visualHold||this.options.stage.sceneRuleActive||!!this.selecting)this.content.inert = true;
+    this.portal.inert=this.startup.active||this.transition.busy||!!this.visualHold||this.options.stage.sceneRuleActive||!!this.selecting;
     for(const layer of this.modalLayers)layer.element.inert=this.startup.active||this.transition.busy||layer.element!==this.modalRoot;
   }
   get emergencyActive() { return !!this.emergencyCover?.active; }
@@ -1227,6 +1241,7 @@ export class PlayerView {
   private story(choices?: ReactNode) {
     const inspection = this.options.session.inspect(); if (!inspection) { this.mountPage(<p>{this.t('没有活动剧情','No active story','進行中の物語はありません')}</p>); return; }
     const state = inspection.state;
+    if (this.options.stage.sceneRuleActive && state.wait && ['choice', 'input', 'plugin'].includes(state.wait.kind)) return;
     if (state.wait?.kind === 'plugin' && state.wait.page && inspection.token) {
       const key = JSON.stringify(inspection.token);
       if (this.pluginOpenToken !== key) { this.pluginOpenToken = key; this.open(state.wait.page); return; }
@@ -1243,6 +1258,10 @@ export class PlayerView {
     const pageStart = nvl ? reading.start : 0, pageEnd = nvl ? reading.end ?? clusters.length : clusters.length;
     const portraitSource = readingPortrait(state.presentation.objects, state.presentation.text, this.options.snapshot.characters, state.presentation.characterDifferences);
     const shown = state.wait?.kind === 'say' ? state.wait.textShown : clusters.length;
+    const dialogueWait = state.wait?.kind === 'say' ? state.wait.inline?.waiting : null;
+    const dialoguePause = dialogueWait && (dialogueWait.remainingMs === null
+      ? { kind: 'input' as const, label: this.t('点击继续', 'Click to continue', 'クリックで続行') }
+      : { kind: 'timed' as const, label: this.t('句内停顿', 'Dialogue pause', '台詞の一時停止') });
     const progress = textProgress(Math.min(shown,pageEnd));
     let panel: HTMLElement | null = null, portrait: HTMLCanvasElement | null = null;
     let body!: HTMLDivElement, toolbar: HTMLDivElement | null = null, edge: HTMLButtonElement | null = null, introHost: HTMLDivElement | null = null;
@@ -1276,7 +1295,7 @@ export class PlayerView {
       {choices}
       {this.preferences().filmMode&&state.presentation.film.enabled&&<FilmBars top={state.presentation.film.top} bottom={state.presentation.film.bottom}/>}
       {this.preferences().statusIcons&&(this.auto||this.skip||this.ctrlFast)&&<ReadingStatus mode={this.auto?'auto':'skip'} part={this.partRef('story','story.statusIcons')}/>}
-      {!activeIntro && <ReadingSurface key={nvl?'nvl':'adv'} legacy={!readingPanel} nvl={nvl} runs={runs} start={pageStart} shown={Math.min(shown,pageEnd)} progress={progress} scale={this.preferences().fontScale} paragraphGap={nvl?Number(readingPanel?.content.nvlParagraphGap??16):undefined}
+      {!activeIntro && <ReadingSurface key={nvl?'nvl':'adv'} legacy={!readingPanel} nvl={nvl} runs={runs} start={pageStart} shown={Math.min(shown,pageEnd)} progress={progress} pause={dialoguePause ?? undefined} scale={this.preferences().fontScale} paragraphGap={nvl?Number(readingPanel?.content.nvlParagraphGap??16):undefined}
         compose={parts=>{const actions=businessParts(parts.children());return this.instances('story',{business:(component,children,context)=>{switch(component.part){case 'story.readingPanel':return parts.panel(<>{children}{actions.residual}</>);case 'story.nameBox':return parts.name(children);case 'story.nameText':return parts.nameText(children);case 'story.textBox':return parts.body(children);case 'story.bodyText':return parts.text(children);case 'story.avatar':return !nvl&&readingPanel?.content.portrait===true&&this.preferences().avatar?parts.portrait(children):null;case 'story.statusIcons':return null;case 'story.toolbar.more':return <details className="gc-toolbar-more"><summary title={this.t('更多','More','その他')} aria-label={this.t('更多','More','その他')}><ToolbarIcon kind="more"/></summary><nav>{children}{(this.options.pluginPages??[]).map(page=><button key={page.key} onClick={()=>this.open(page.key)}>{this.locale(page.titleKey)}</button>)}</nav></details>;default:return actions.render(component,children,context);}}});}}
         speaker={state.presentation.text.speakerName}
         panel={{onPointerMove:event=>{if(!toolbar)return;const rect=toolbar.getBoundingClientRect(),band=80*this.uiScale;if(event.clientY>=rect.top-band&&event.clientY<=rect.bottom+band&&event.clientX>=rect.left-band&&event.clientX<=rect.right+band)reveal();},onPointerLeave:()=>queueMicrotask(conceal),ref:node=>{panel=node;if(node&&readingPanel){this.stylePart('story','story.readingPanel',node,true);node.hidden=!choosing&&(this.hidden||!state.presentation.text.textboxVisible)||!readingPanel.visible;node.dataset.nameAbove=String(!nvl&&readingPanel.content.nameAbove===true);node.dataset.portrait=String(!nvl&&readingPanel.content.portrait===true&&this.preferences().avatar&&this.visible('story','story.avatar'));}}}}
@@ -1314,6 +1333,13 @@ export class PlayerView {
     if(state.presentation.intro&&introHost)this.intro(state.presentation.intro,activeIntro,introHost);
     if(activeIntro)return;
     if(!body){this.showError(this.t('阅读页缺少正文容器，请在页面设计中恢复正文部件。','The reading page needs its text container. Restore the reading text part in the page designer.','読書ページの本文領域をページデザイナーで復元してください。'));return;}
+    if (dialogueWait) {
+      body.dataset.dialogueEventWait = dialogueWait.remainingMs === null ? 'input' : 'timed';
+      body.dataset.dialogueEventId = dialogueWait.eventId;
+    } else {
+      delete body.dataset.dialogueEventWait;
+      delete body.dataset.dialogueEventId;
+    }
     const textBox = this.part('story', 'story.textBox');
     this.stylePart('story', 'story.textBox', body, !readingPanel); body.hidden=this.hidden||!state.presentation.text.textboxVisible||!this.visible('story','story.textBox');
     body.style.display='grid';body.style.alignItems='start';body.style.justifyContent='stretch';body.style.gridTemplateColumns='minmax(0,1fr)';
@@ -1380,25 +1406,55 @@ export class PlayerView {
     });
     if (this.storyActive && (this.skip || this.ctrlFast) && inspection.token) {
       this.scheduleSkip();
-    } else if (this.storyActive && state.wait?.kind === 'say' && shown < pageEnd && inspection.token && (!nvl||reading!.end!==null)) {
+    } else if (this.storyActive && dialogueWait) {
+      this.autoReadyAt = null;
+      if (this.auto && inspection.token && dialogueWait.remainingMs === null) {
+        const token = inspection.token, sequence = this.renderSequence;
+        const duration = this.options.session.dialogueAutoWaitMs(dialogueWait.eventId) ?? this.preferences().autoWaitMs;
+        const deadline = performance.now() + duration;
+        const release = () => {
+          const activity = this.options.session.inspectActivity();
+          if (!this.auto || !this.storyActive || sequence !== this.renderSequence || !activity ||
+            !sameToken(activity.token, token) || activity.dialogueWait?.eventId !== dialogueWait.eventId) return;
+          const remaining = deadline - performance.now();
+          if (remaining > 0 || this.options.stage.sceneRuleActive) {
+            this.autoTimer = setTimeout(release, Math.min(Math.max(20, Math.ceil(remaining)), 2_147_483_647));
+            return;
+          }
+          void this.options.session.releaseDialogueWait({ token, eventId: dialogueWait.eventId,
+            expectedSequence: activity.sequence, mode: 'auto' }).then(result => {
+            if (!result.ok && !['TOKEN_STALE', 'STATE_CHANGED', 'SESSION_PAUSED'].includes(result.error.code)) {
+              this.report(result); this.stopModes();
+            }
+            this.render();
+          });
+        };
+        this.autoTimer = setTimeout(release, Math.min(duration, 2_147_483_647));
+      }
+    } else if (this.storyActive && state.wait?.kind === 'say' && !state.wait.textComplete && inspection.token && (!nvl||reading!.end!==null)) {
       this.autoReadyAt = null;
       const sequence=this.renderSequence;
       const tick = (count:number) => { this.typingTimer = setTimeout(() => {
-        if (this.disposed||sequence!==this.renderSequence||!this.storyActive||this.navigation.page !== 'story' || !sameToken(this.options.session.inspectActivity()?.token ?? null, inspection.token)) return;
-        void this.options.session.updateTextProgress({ token: inspection.token!, textShown: count }).then(result => {
-          if (!sameToken(this.options.session.inspectActivity()?.token ?? null, inspection.token)) return;
+        const activity = this.options.session.inspectActivity();
+        if (!activity || sequence!==this.renderSequence||!this.storyActive||!sameToken(activity.token, inspection.token)) return;
+        void this.options.session.updateTextProgress({ token: inspection.token!, textShown: count, expectedSequence: activity.sequence }).then(result => {
+          if (this.disposed || sequence !== this.renderSequence) return;
+          if (!result.ok && ['TOKEN_STALE', 'STATE_CHANGED', 'SESSION_PAUSED'].includes(result.error.code)) { this.render(); return; }
           if(!result.ok){this.report(result);return;}
-          progress.reveal(count);
-          if(count<pageEnd)tick(count+1);else this.render(); });
+          const confirmed = result.value.state.wait;
+          if (!sameToken(result.value.token, inspection.token) || confirmed?.kind !== 'say') { this.render(); return; }
+          progress.reveal(Math.min(confirmed.textShown, pageEnd));
+          if (confirmed.textComplete || confirmed.inline?.waiting) this.render();
+          else tick(Math.min(confirmed.textShown + 1, pageEnd)); });
       }, 1000 / this.preferences().textSpeed); };
-      tick(shown+1);
+      tick(Math.min(shown + 1, pageEnd));
     } else if (this.storyActive && this.auto && state.wait?.kind === 'say' && inspection.token) {
       const token = inspection.token, key = `${token.sessionId}/${token.occurrence}/${token.statementId}`;
       if (this.autoReadyKey !== key) { this.autoReadyKey = key; this.autoReadyAt = null; }
       const poll = () => {
         if (!this.auto || !body.isConnected || this.navigation.page !== 'story' ||
           !sameToken(this.options.session.inspectActivity()?.token ?? null, token)) return;
-        if (this.autoAttempting) { this.autoTimer = setTimeout(poll, 100); return; }
+        if (this.autoAttempting || this.options.stage.sceneRuleActive) { this.autoTimer = setTimeout(poll, 100); return; }
         this.autoAttempting = true;
         void (async () => {
           try {
@@ -1434,6 +1490,7 @@ export class PlayerView {
     if(this.skipTimer || this.skipAttempting)return;
     this.skipTimer=setTimeout(()=>{this.skipTimer=null;
       if(!this.storyActive||!(this.skip||this.ctrlFast))return;
+      if (this.options.stage.sceneRuleActive) this.options.stage.completeSceneRule();
       this.skipAttempting=true;
       void this.options.session.skipStep(this.ctrlFast?'all':this.preferences().skipScope).then(result=>{
         if(!result.ok){this.report(result);this.stopModes();}
@@ -1442,7 +1499,7 @@ export class PlayerView {
     },50);
   }
   private async advance() {
-    if(this.transition.busy||!this.storyActive)return;
+    if(this.transition.busy||!this.storyActive||this.options.stage.sceneRuleActive)return;
     if(this.auto||this.skip||this.ctrlFast){this.stopModes();this.render();return;}
     if (this.hidden) { this.hidden = false; this.render(); return; }
     const inspection = this.options.session.inspect(); if (!inspection?.token) return;
@@ -1460,8 +1517,17 @@ export class PlayerView {
     }
     const synced = await this.options.syncStage(); this.report(synced); if (!synced.ok) return;
     if(!this.storyActive||!sameToken(this.options.session.inspectActivity()?.token??null,inspection.token))return;
-    const result = await this.options.session.dispatch({ kind: 'advance', token: inspection.token });
-    this.report(result); this.render();
+    const observed = inspection.state.wait;
+    let expectedSequence: number | undefined;
+    if (observed?.kind === 'say' && observed.inline) {
+      const latest = this.options.session.inspect()!, wait = latest.state.wait;
+      if (wait?.kind !== 'say' || wait.textShown !== observed.textShown || wait.textComplete !== observed.textComplete ||
+        wait.inline?.cursor !== observed.inline.cursor || wait.inline?.waiting?.eventId !== observed.inline.waiting?.eventId) return;
+      expectedSequence = latest.sequence;
+    }
+    const result = await this.options.session.dispatch({ kind: 'advance', token: inspection.token, expectedSequence });
+    if (result.ok || !['TOKEN_STALE', 'STATE_CHANGED', 'SESSION_PAUSED'].includes(result.error.code)) this.report(result);
+    this.render();
   }
   private intro(state: NonNullable<PresentationState['intro']>, active: boolean, host: HTMLElement) {
     const panel = document.createElement('div'); panel.className = active ? 'gc-intro' : 'gc-intro gc-intro-retained';
@@ -1527,7 +1593,7 @@ export class PlayerView {
     this.mountPage(<SavePage compose={adapter=>{const {data,...overrides}=adapter;const context=this.instanceContext(mode);return this.instances(mode,{...overrides,context:{...context,data:{...context.data,...data}}});}} data={this.options.data} mode={mode} category={this.category} pageNumber={this.pageNumber} saving={this.saving} locale={this.preferences().menuLocale} label={key=>this.locale(key)} part={key=>this.partRef(mode,key,[`${mode}.detail`,`${mode}.grid`,`${mode}.categoryTabs`,`${mode}.pagination`,`${mode}.primary`,`${mode}.back`].includes(key))} setCategory={value=>{this.category=value;this.pageNumber=0;this.render();}} setPage={value=>{this.pageNumber=value;this.render();}} addPage={()=>{const index=this.options.data.current()!.index;void this.options.data.addManualPage(index.revision).then(result=>{this.report(result);if(result.ok){this.pageNumber=Math.max(0,Math.ceil(result.value.manual.length/12)-1);this.render();}});}} notice={this.saveReceipt} save={slot=>this.save('manual',slot)} load={id=>this.load(id)} back={()=>this.back()}/>);
   }
   private save(kind: SaveRecord['kind'], slotId?: Id): Promise<boolean> {
-    if(this.saving)return Promise.resolve(false);
+    if(this.saving || this.options.stage.sceneRuleActive)return Promise.resolve(false);
     const operation=this.saveOwned(kind,slotId);this.savingTask=operation;
     void operation.then(()=>{if(this.savingTask===operation)this.savingTask=null;},()=>{if(this.savingTask===operation)this.savingTask=null;});
     return operation;
@@ -1546,6 +1612,7 @@ export class PlayerView {
     }
   }
   private async writeSave(kind: SaveRecord['kind'], slotId?: Id): Promise<boolean> {
+    if (kind !== 'continue') await this.options.session.waitForIdle();
     const inspection = this.options.session.inspect(); if (!inspection) return false;
     if(kind==='continue'&&(this.flowSources?.length||this.mainStorySessionReady===false))return true;
     const priorRecordId = this.options.data.current()!.index.manual.find(item => item.slotId === slotId)?.recordId ?? null;
@@ -1556,7 +1623,8 @@ export class PlayerView {
       if(!await this.ask(this.t(`覆盖手动存档 ${String(number).padStart(2,'0')} 的已有进度？`,`Overwrite the existing progress in manual slot ${String(number).padStart(2,'0')}?`,`手動セーブ ${String(number).padStart(2,'0')} の進行状況を上書きしますか？`)+description,this.t('覆盖存档','Overwrite save','上書きする'),'save:save.primary','overwrite'))return false;
     }
     const waitPolicy = this.options.session.pluginWaitPolicy();
-    const unstable = !!this.options.entryPresentation?.active || ['loading', 'playing', 'fading', 'error'].includes(this.options.video.state) || !waitPolicy.restorable;
+    const unstable = this.options.stage.sceneRuleActive || this.options.session.canRetryRuleScene ||
+      !!this.options.entryPresentation?.active || ['loading', 'playing', 'fading', 'error'].includes(this.options.video.state) || !waitPolicy.restorable;
     if (unstable && kind !== 'continue') { this.showError(waitPolicy.reason ?? '当前演出尚不能捕获，请稍后保存'); return false; }
     const checkpoint = unstable ? this.options.session.checkpointsFor(inspection.sessionId).filter(checkpoint=>checkpoint.state.entryPresentation?.completed!==false).at(-1) : null;
     if (unstable && !checkpoint) { this.showError('当前没有可用的退出检查点'); return false; }
@@ -1608,7 +1676,10 @@ export class PlayerView {
       this.mainStorySessionReady=true;if(!await this.syncCurrentMainStory())return;
       await this.waitForTargetPresentation();
     }
-    } finally {release();}
+    } finally {
+      release();
+      if (!this.disposed) this.render();
+    }
   }
   private async replayVoice() {
     const synced = await this.options.syncStage(); this.report(synced);
@@ -1949,6 +2020,7 @@ export class PlayerView {
     if (this.flowSources?.length&&!forceTitle) return this.returnFlowSource(confirmation);
     if(this.leaving)return false;this.leaving=true;
     try{
+    if (this.options.stage.sceneRuleActive) this.options.stage.completeSceneRule();
     const inspection = this.options.session.inspect(); if (inspection && inspection.status !== 'ended') {
       if (confirmation && this.preferences().confirmations.title && !await this.ask(this.locale('nav.title'),undefined,undefined,'title')) return false;
     }
@@ -1975,6 +2047,7 @@ export class PlayerView {
       if(this.options.host.target==='web'){await this.returnTitle();return;}
       if(this.leaving)return;this.leaving=true;
       try{
+      if (this.options.stage.sceneRuleActive) this.options.stage.completeSceneRule();
       if(this.preferences().confirmations.exit&&!await this.ask(this.locale('nav.exit'),undefined,undefined,'exit'))return;
       if(!await this.saveBeforeLeaving('exit'))return;
       const closed=await this.options.host.close();this.report(closed);

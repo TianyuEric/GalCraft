@@ -70,14 +70,23 @@ export const EditorAnchorSchema = z.strictObject({
   statementId: IdSchema.nullable(), field: z.string().nullable(), offset: RevisionSchema, documentOffset: RevisionSchema,
 });
 export type EditorAnchor = z.infer<typeof EditorAnchorSchema>;
+const SceneViewSchema = z.enum(['cards', 'writing', 'script']);
+const WorkspaceStatementSourceSchema = z.strictObject({
+  sceneId: IdSchema, documentId: IdSchema, statementId: IdSchema, eventId: IdSchema.optional(),
+  projectId: IdSchema.optional(), revision: RevisionSchema.optional(),
+});
 export const WorkspaceResumeSchema = z.strictObject({
   schemaVersion: z.literal(1), projectId: IdSchema, documentId: IdSchema, sceneId: IdSchema,
-  documentRevision: RevisionSchema, view: z.enum(['cards', 'writing', 'script']),
+  documentRevision: RevisionSchema, view: SceneViewSchema,
   caret: EditorAnchorSchema, previousStatementId: IdSchema.nullable(), nextStatementId: IdSchema.nullable(),
   scroll: z.strictObject({ statementId: IdSchema.nullable(), offsetPx: finite, scrollLeft: finite }), updatedAt: UtcTimeSchema,
   workbench: z.strictObject({
     documents: z.array(z.strictObject({ id: z.string(), title: z.string(), kind: z.enum(['scene', 'page', 'asset', 'project', 'characters', 'scene-graph', 'startup', 'route']), objectId: z.string().optional() })),
     active: z.string(),
+    sceneSplits: z.array(z.strictObject({ sceneId: IdSchema, views: z.tuple([SceneViewSchema, SceneViewSchema])
+      .refine(([left, right]) => left !== right) })).optional(),
+    stageSource: WorkspaceStatementSourceSchema.optional(), inspectorSource: WorkspaceStatementSourceSchema.optional(),
+    dockLayout: JsonSchema.optional(),
   }).optional(),
 });
 export type WorkspaceResume = z.infer<typeof WorkspaceResumeSchema>;
@@ -94,6 +103,7 @@ export type StageGuidePreferences = z.infer<typeof StageGuidePreferencesSchema>;
 export const StudioPreferencesSchema = z.strictObject({
   schemaVersion: z.literal(1), theme: z.enum(['light', 'dark']), palette: z.enum(['neutral', 'blue']).transform(() => 'blue' as const).default('blue'), locale: z.enum(['zh-CN', 'en', 'ja']),
   layout: z.strictObject({ left: finite, right: finite, bottom: finite, diagnosticsVisible: z.boolean() }),
+  namedDockLayouts: z.record(z.string(), JsonSchema).optional(),
   editor: z.strictObject({ fontFamily: z.string(), fontSize: finite, wordWrap: z.boolean(),
     view: z.enum(['cards', 'writing', 'script']), autoCollapse: z.boolean(), cascadeSeparator: z.string() }),
   onboardingDismissed: z.boolean(), recentCommands: z.array(z.string()),
@@ -294,7 +304,7 @@ export interface StudioBridge {
   language: {
     pluginQuery?(input: { refs?: Ref[]; sceneId?: Id; statementIds?: Id[] }): Promise<Result<Json>>;
     pluginPrepare?(input: Json): Promise<Result<EditInput>>;
-    compile(input: unknown): Promise<Result<{ snapshot: Snapshot | null; lastValid: Snapshot | null; current: boolean; issues: Issue[] }>>;
+    compile(input: unknown, options?: { publish: boolean }): Promise<Result<{ snapshot: Snapshot | null; lastValid: Snapshot | null; current: boolean; issues: Issue[] }>>;
     lastValid(projectId: Id): Promise<Result<Snapshot | null>>;
     querySemantic(input: SemanticQuery): Promise<Result<SemanticPage>>;
     locate(source: Source, fieldPath?: string | null): Promise<Result<SourceLocation | null>>;

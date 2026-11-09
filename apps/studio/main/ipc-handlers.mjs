@@ -623,7 +623,7 @@ export function createStudioHandlers(host) {
     },
     language: {
       compile: async (...args) => {
-        return host.language ? host.language.compile(args[0]) : fail('LANGUAGE_PROVIDER_UNAVAILABLE', '编译服务尚未就绪', 'M03');
+        return host.language ? host.language.compile(args[0], { publish: args[1]?.publish !== false }) : fail('LANGUAGE_PROVIDER_UNAVAILABLE', '编译服务尚未就绪', 'M03');
       },
       lastValid: async (...args) => {
         return host.language ? host.language.lastValid(args[0]) : fail('LANGUAGE_PROVIDER_UNAVAILABLE', '编译服务尚未就绪', 'M03');

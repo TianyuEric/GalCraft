@@ -1,4 +1,4 @@
-import type { AudioState, ExecutionToken, Id, PresentationDelta, RuntimeState } from '@galcraft/contracts';
+import type { AudioState, ExecutionToken, Id, Issue, PresentationDelta, RuntimeState } from '@galcraft/contracts';
 import type { AudioMixer } from '@galcraft/stage';
 
 type Bus = 'bgm' | 'ambience' | 'sfx' | 'ui';
@@ -21,22 +21,25 @@ export class PlayerAudioRouter {
     // Text completion commits the same dialogue without a new binding. Its voice keeps playing.
   }
 
-  applyStage(sessionId: Id, item: { bus: 'bgm' | 'sfx' | 'ui'; id: Id | null; state: AudioState }) {
+  applyStage(sessionId: Id, item: { bus: 'bgm' | 'sfx' | 'ui'; id: Id | null; state: AudioState }, token?: ExecutionToken, onError?: (issue: Issue) => void) {
     const bus = item.bus === 'sfx' && item.state.loop ? 'ambience' : item.bus;
-    return this.apply(sessionId, bus, item.id, item.state);
+    return this.apply(sessionId, bus, item.id, item.state, token, onError);
   }
 
-  async apply(sessionId: Id, bus: Bus, id: Id | null, state: AudioState): Promise<Id|null> {
+  async apply(sessionId: Id, bus: Bus, id: Id | null, state: AudioState, token?: ExecutionToken, onError?: (issue: Issue) => void): Promise<Id|null> {
     if (state.stopped) { this.stop(sessionId, bus, id, state.fadeOutMs); return null; }
-    const key = `${sessionId}/${bus}/${id}`;
+    const key = `${sessionId}/${bus}/${id}${token ? `/${token.statementId}/${token.occurrence}` : ''}`;
     const request = (this.requests.get(key) ?? 0) + 1;
     this.requests.set(key, request);
-    const result = await this.audio.play({ sessionId, bus, state });
+    const result = await this.audio.play({ sessionId, bus, state, ...(token ? { token } : {}) });
     {
-      if (!result.ok) return null;
       if (this.requests.get(key) !== request || this.activeSession() !== sessionId) {
-        this.audio.stop(result.value); return null;
+        if (result.ok) this.audio.stop(result.value);
+        return null;
       }
+      if (token) this.requests.delete(key);
+      if (!result.ok) { onError?.(result.error); return null; }
+      if (token) return result.value; // Inline one-shots are owned by the AudioMixer session.
       const old = this.playing.get(key); if (old) this.audio.stop(old);
       this.playing.set(key, result.value); return result.value;
     }

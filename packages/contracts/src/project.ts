@@ -94,13 +94,34 @@ export const VariableSchema = z.strictObject({
   scope: z.enum(['progress', 'local', 'longTerm']), initial: ScalarSchema,
 }).refine(value => typeof value.initial === value.type, { message: 'Initial value must match the variable type', path: ['initial'] });
 export type Variable = z.infer<typeof VariableSchema>;
+export const SceneDecorLayerSchema = z.strictObject({
+  id: IdSchema, assetId: IdSchema, variantId: IdSchema.nullable().default(null),
+  visible: z.boolean().default(true), x: finite.default(0), y: finite.default(0),
+  scale: finite.positive().default(1), cameraFollow: finite.min(0).max(2).default(1), z: finite.default(-1),
+});
+export type SceneDecorLayer = z.infer<typeof SceneDecorLayerSchema>;
+const decorLayers = z.array(SceneDecorLayerSchema).superRefine((layers, context) => {
+  const ids = new Set<Id>();
+  for (const [index, layer] of layers.entries()) {
+    if (ids.has(layer.id)) context.addIssue({ code: 'custom', path: [index, 'id'], message: 'Decor layer ID is duplicated in this scene' });
+    ids.add(layer.id);
+  }
+});
 export const SceneSchema = z.strictObject({
   id: IdSchema, name: z.string(), chapterId: IdSchema,
-  presentation: SceneEntryPresentationSchema.optional(),
+  presentation: SceneEntryPresentationSchema.optional(), decorLayers: decorLayers.optional(),
   parameters: z.array(z.strictObject({ variableId: IdSchema, required: z.boolean(), defaultValue: ScalarSchema.nullable() })),
   locals: z.array(VariableSchema), returns: z.enum(['void', 'number', 'boolean', 'string']), script: z.literal('script.gal'),
 });
 export type Scene = z.infer<typeof SceneSchema>;
+/** Entry presentations apply to the target scene, including entries at a label. */
+export function sceneEntryPresentations(project: Pick<Project, 'chapters'>, scene: Scene) {
+  const chapter = project.chapters.find(item => item.id === scene.chapterId);
+  return [
+    ...(chapter?.sceneIds[0] === scene.id && chapter.presentation ? [{ presentation: chapter.presentation, name: chapter.name, kind: 'chapter' as const, id: chapter.id }] : []),
+    ...(scene.presentation ? [{ presentation: scene.presentation, name: scene.name, kind: 'scene' as const, id: scene.id }] : []),
+  ];
+}
 /** Legacy required flags remain readable; omission depends on the declared default. */
 export function hasSceneParameterDefault(parameter: Scene['parameters'][number], local: Variable | undefined): boolean {
   const value = parameter.defaultValue;

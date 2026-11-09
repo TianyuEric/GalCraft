@@ -1,3 +1,13 @@
+.gc-unsaved-dot {
+  display: inline-block;
+  inline-size: 6px;
+  block-size: 6px;
+  flex: none;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--warning-foreground);
+}
+
 :where(#app, .authoring-shell, #studio-portals) {
   --background: #fff;
   --workbench-activity: #f2f2f9;

@@ -1,4 +1,4 @@
-import { createId, type Snapshot, type Position, type DebugScenario, type PageKey } from '@galcraft/contracts';
+import { createId, type Snapshot, type Position, type DebugScenario, type Id, type PageKey } from '@galcraft/contracts';
 import { resolvePreviewEntry } from '@galcraft/runtime';
 import type { AuthoringServices } from './controller.js';
 import { openPlayerPreview } from './player-preview.js';
@@ -7,7 +7,7 @@ import { resolvePreviewStyleMatches, type StyleMatchRequest } from '@galcraft/te
 import type { DesktopBridge } from '../../desktop-bridge.js';
 
 type CompositionPreview = Extract<Awaited<ReturnType<DesktopBridge['production']['previewComposition']>>, {ok:true}>['value'];
-type CaptureInput = { entryId?: string; target?: Position; route?: DebugScenario['route']; playerInputs?: DebugScenario['playerInputs']; page?: PageKey; compositionPreview?:CompositionPreview; freezeLayout?:string[];observation?:import('@galcraft/player-ui').PlayerObservationRequest };
+type CaptureInput = { entryId?: string; target?: Position; eventId?: Id; route?: DebugScenario['route']; playerInputs?: DebugScenario['playerInputs']; page?: PageKey; compositionPreview?:CompositionPreview; freezeLayout?:string[];observation?:import('@galcraft/player-ui').PlayerObservationRequest };
 declare global {
   interface Window { __galcraftCollaborationCapture: { capture(payload: { snapshot: Snapshot; input: CaptureInput }): Promise<unknown>; dispose(): void } }
 }
@@ -39,7 +39,8 @@ export function mountCollaborationCapture(root: HTMLElement, services: Authoring
         observation = { snapshotId: snapshot.snapshotId, entry, target, reached: prepared.value.reached, blockedAt: prepared.value.blockedAt,
           routePreparation: prepared.value.routePreparation, state: prepared.value.state, issues: prepared.value.issues };
         if (!prepared.value.reached) { player.session.disposePrepared(prepared.value.id); return observation; }
-        const activated = await player.activatePreview(prepared.value, 'inspection');
+        const activated = await player.activatePreview(prepared.value, 'inspection', { eventId: input.eventId });
+        if (!activated.ok && input.eventId) return { ...observation, reached: false, issues: [...prepared.value.issues, ...activated.issues] };
         if (!activated.ok) throw new Error(activated.error.message);
         if(input.page)player.view.navigation.replace(input.page);
         observation.state = player.session.inspect()?.state;

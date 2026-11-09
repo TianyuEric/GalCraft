@@ -250,7 +250,7 @@ const bridge = {
   language: {
     pluginQuery: input => call('language', 'pluginQuery', input),
     pluginPrepare: input => call('language', 'pluginPrepare', input),
-    compile: input => call('language', 'compile', input),
+    compile: (input, options) => options ? call('language', 'compile', input, options) : call('language', 'compile', input),
     lastValid: projectId => call('language', 'lastValid', projectId),
     querySemantic: input => call('language', 'querySemantic', input),
     locate: (source, fieldPath) => call('language', 'locate', source, fieldPath),

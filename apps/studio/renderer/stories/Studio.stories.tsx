@@ -3,7 +3,8 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { mountAuthoring } from '../authoring/view.js';
 import { studioFixture, type ProductState } from './studio-fixture.js';
 import { componentSceneRequest } from './page-component-fixture.js';
-import { productSnapshot } from './product-fixture.js';
+import { figureId, productSnapshot } from './product-fixture.js';
+import { FixtureIds } from '@galcraft/contracts/fixtures';
 import { expect, fireEvent, userEvent, waitFor, within } from 'storybook/test';
 
 type Page = 'projects' | 'editor' | 'assets' | 'pages' | 'production' | 'plugins' | 'publish';
@@ -105,5 +106,120 @@ export const AssetsLoading:Story={args:{page:'assets',state:'loading'}};
 export const ProductionLoading:Story={args:{page:'production',state:'loading'}};
 export const JapaneseEditor:Story={args:{page:'editor',locale:'ja',theme:'dark'}};
 export const EnglishEditor:Story={args:{page:'editor',locale:'en'}};
+export const PinnedSceneProperties: Story = {
+  args: { page: 'editor', locale: 'en' },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const stage = () => canvasElement.querySelector<HTMLElement>('[data-source-panel="stage"]');
+    const properties = () => canvasElement.querySelector<HTMLElement>('[data-source-panel="inspector"]');
+    const sceneCard = (id: string) => canvasElement.querySelector<HTMLElement>(`.authoring-center[data-scene-view="cards"] [data-statement-id="${id}"]`)!;
+    const bookshop = productSnapshot().scenes[1]!.scene;
+    await userEvent.click(await canvas.findByRole('button', { name: /^Writing$/ }));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Side-by-side editor views' }));
+    await userEvent.click(await body.findByRole('menuitem', { name: 'Open Direction beside' }));
+    const companion = await canvas.findByRole('tab', { name: /^Direction$/ });
+    const primary = canvasElement.querySelector('.authoring-scene-views');
+    const alongside = canvasElement.querySelector('.authoring-scene-beside');
+    await expect(primary).toHaveAttribute('data-scene-document', FixtureIds.streetDocument);
+    await expect(alongside).toHaveAttribute('data-scene-document', FixtureIds.streetDocument);
+    await expect(alongside).toHaveAttribute('data-scene-revision', primary?.getAttribute('data-scene-revision'));
+    await userEvent.click(companion);
+    await waitFor(() => expect(canvas.getByRole('button', { name: /^Direction$/ })).toHaveAttribute('aria-pressed', 'true'));
+    await userEvent.click(canvas.getByRole('button', { name: /^Close Direction$/ }));
+    await userEvent.click(await canvas.findByRole('button', { name: /^Layout$/ }));
+    await userEvent.click(await body.findByRole('menuitem', { name: 'Writing and stage' }));
+    await userEvent.click(await canvas.findByRole('button', { name: /^Direction$/ }));
+    await waitFor(() => expect(sceneCard(FixtureIds.statements[0]!)).toBeVisible());
+    await userEvent.click(sceneCard(FixtureIds.statements[0]!));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Pin stage source' }));
+    await userEvent.click(sceneCard(FixtureIds.statements[1]!));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Pin properties source' }));
+    await expect(stage()).toHaveAttribute('data-source-statement', FixtureIds.statements[0]);
+    await expect(properties()).toHaveAttribute('data-source-statement', FixtureIds.statements[1]);
+
+    await userEvent.dblClick(canvasElement.querySelector<HTMLElement>(`[data-node-id="${bookshop.id}"]`)!);
+    await waitFor(() => expect(canvas.getByRole('tab', { name: bookshop.name })).toHaveAttribute('aria-selected', 'true'));
+    await expect(stage()).toHaveAttribute('data-source-document', FixtureIds.streetDocument);
+    await expect(properties()).toHaveAttribute('data-source-document', FixtureIds.streetDocument);
+    const speaker = canvasElement.querySelector<HTMLSelectElement>('.authoring-inspector-fields [data-field="speaker"] select')!;
+    await userEvent.selectOptions(speaker, speaker.value ? '' : FixtureIds.an);
+    await waitFor(() => expect(properties()).toHaveAttribute('data-source-revision', '2'));
+    await expect(canvasElement.querySelector('.authoring-scene-views')).toHaveAttribute('data-scene-revision', '1');
+    await expect(canvasElement.querySelector('.authoring-scene-views')).toHaveAttribute('data-scene-document', FixtureIds.bookshopDocument);
+  },
+};
+export const PinnedInlineEvent: Story = {
+  args: { page: 'editor', locale: 'en', theme: 'dark' },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const properties = () => canvasElement.querySelector<HTMLElement>('[data-source-panel="inspector"]');
+    await userEvent.click(await canvas.findByRole('button', { name: /^Writing$/ }));
+    const line = () => canvasElement.querySelector<HTMLElement>(`.authoring-center[data-scene-view="writing"] [data-statement-id="${FixtureIds.statements[0]}"]`)!;
+    await waitFor(() => expect(line()).toBeVisible());
+    await userEvent.click(within(line()).getByRole('button', { name: 'More command actions' }));
+    await userEvent.click(await body.findByRole('menuitem', { name: 'Insert inline wait' }));
+    const insert = within(await body.findByRole('dialog', { name: 'Insert inline wait' }));
+    await userEvent.type(insert.getByRole('spinbutton', { name: /^Duration in milliseconds/ }), '125');
+    await userEvent.click(insert.getByRole('button', { name: /^Confirm$/ }));
+    await waitFor(() => expect(properties()?.dataset.sourceEvent).toBeTruthy());
+    const eventId = properties()!.dataset.sourceEvent;
+    await userEvent.click(await canvas.findByRole('button', { name: 'Pin properties source' }));
+    await userEvent.dblClick(canvasElement.querySelector<HTMLElement>(`[data-node-id="${FixtureIds.bookshop}"]`)!);
+    await waitFor(() => expect(canvasElement.querySelector('.authoring-scene-views')).toHaveAttribute('data-scene-document', FixtureIds.bookshopDocument));
+    await expect(properties()).toHaveAttribute('data-source-event', eventId);
+    await userEvent.click(await canvas.findByRole('button', { name: 'Edit inline event' }));
+    const edit = within(await body.findByRole('dialog', { name: /^Inline wait$/ }));
+    const duration = edit.getByRole('spinbutton', { name: /^Duration in milliseconds/ });
+    await expect(duration).toHaveValue(125);
+    await userEvent.clear(duration);
+    await userEvent.type(duration, '250');
+    await userEvent.click(edit.getByRole('button', { name: /^Confirm$/ }));
+    await waitFor(() => expect(properties()).toHaveAttribute('data-source-revision', '3'));
+    await expect(properties()).toHaveAttribute('data-source-event', eventId);
+    await expect(canvasElement.querySelector('.authoring-scene-views')).toHaveAttribute('data-scene-revision', '1');
+    await userEvent.click(await canvas.findByRole('button', { name: 'Edit inline event' }));
+    const clickWait = within(await body.findByRole('dialog', { name: /^Inline wait$/ }));
+    const automatic = clickWait.getByRole('spinbutton', { name: /^Wait in auto mode \(ms\)/ });
+    await expect(automatic).toBeDisabled();
+    await userEvent.clear(clickWait.getByRole('spinbutton', { name: /^Duration in milliseconds/ }));
+    await userEvent.type(automatic, '0');
+    await userEvent.click(clickWait.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(properties()).toHaveAttribute('data-source-revision', '4'));
+    await expect(properties()).toHaveAttribute('data-source-event', eventId);
+    await userEvent.click(await canvas.findByRole('button', { name: 'Edit inline event' }));
+    const persisted = within(await body.findByRole('dialog', { name: /^Inline wait$/ }));
+    await expect(persisted.getByRole('spinbutton', { name: /^Wait in auto mode \(ms\)/ })).toHaveValue(0);
+    await userEvent.click(persisted.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(body.queryByRole('dialog', { name: /^Inline wait$/ })).toBeNull());
+  },
+};
+export const SceneDecor: Story = {
+  args: { page: 'editor', locale: 'en' },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    await userEvent.click(await canvas.findByRole('button', { name: 'Layout' }));
+    await userEvent.click(await body.findByRole('menuitem', { name: 'Writing and stage' }));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Scene decor' }));
+    const decor = within(await canvas.findByRole('region', { name: 'Scene decor' }));
+    for (const assetId of [FixtureIds.background, figureId]) {
+      await userEvent.click(await decor.findByRole('button', { name: 'Add decor layer' }));
+      const dialog = await body.findByRole('dialog', { name: /Decor image$/ });
+      const picker = within(dialog);
+      await userEvent.click(picker.getByRole('button', { name: /^All$/ }));
+      const option = () => dialog.querySelector<HTMLButtonElement>(`[data-asset-option="${assetId}"]`);
+      await waitFor(() => expect(option()).toBeVisible());
+      await userEvent.click(option()!);
+      await userEvent.click(picker.getByRole('button', { name: /^Apply$/ }));
+      await waitFor(() => expect(body.queryByRole('dialog', { name: /Decor image$/ })).toBeNull());
+    }
+    await userEvent.click(await decor.findByRole('button', { name: 'Move up' }));
+    await expect(decor.getByRole('button', { name: 'Move up' })).toBeDisabled();
+    await expect(decor.getByRole('button', { name: 'Move down' })).toBeEnabled();
+    await userEvent.click(decor.getByRole('checkbox', { name: 'Show layer' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Apply changes' }));
+    await canvas.findByText(/^Applied · Unsaved/);
+    await expect(decor.getByRole('checkbox', { name: 'Show layer' })).not.toBeChecked();
+  },
+};
 export const EnglishPages:Story={args:{page:'pages',locale:'en'}};
 export const JapanesePages:Story={args:{page:'pages',locale:'ja',theme:'dark'}};

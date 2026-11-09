@@ -45,7 +45,8 @@ describe('Live2D resource and instance', () => {
       partIds: ['PartArm'], motions: [{ group: 'Idle', index: 0, file: 'idle.motion3.json', sound: null, fadeInMs: null, fadeOutMs: null }],
       expressions: ['smile'], motionSync: true, setParameter: (name, value) => calls.push(`${name}:${value}`),
       setPartOpacity: (name, value) => calls.push(`${name}:${value}`), playMotion: (_group, _index, _loop, _priority, elapsed) => calls.push(`motion:${elapsed}`),
-      setExpression: (_name, elapsed) => calls.push(`expression:${elapsed}`), update: (dt, options, lip) => { observed.push(structuredClone(options)); calls.push(`update:${dt}:${lip}`); },
+      setExpression: (_name, elapsed, settle) => { calls.push(`expression:${elapsed}`); return settle ? 500 : elapsed; },
+      update: (dt, options, lip) => { observed.push(structuredClone(options)); calls.push(`update:${dt}:${lip}`); },
       draw: () => calls.push('draw'), pause: paused => calls.push(`pause:${paused}`), dispose: () => calls.push('dispose') };
     const resource: ResolvedAsset = { assetId: id(1), variantId: id(2), kind: 'live2d', entry: 'role.model3.json', files: [],
       metadata: {}, canvas: null, provider: 'galcraft.live2d' };
@@ -70,6 +71,13 @@ describe('Live2D resource and instance', () => {
     instance.pause(false); instance.update(60, 0.5);
     expect(calls.some(value => value.startsWith('update:60:'))).toBe(true);
     expect(unwrap(instance.capture())).toMatchObject({ motionElapsedMs: 560, options: { expression: 'smile' } });
+    expect(instance.set({ expression: 'smile' }).ok).toBe(true);
+    expect(unwrap(instance.capture())).toMatchObject({ motionElapsedMs: 560, expressionElapsedMs: 0 });
+    expect(instance.set({ expression: 'smile', settleExpression: true }).ok).toBe(true);
+    expect(calls.at(-1)).toBe('draw');
+    expect(unwrap(instance.capture())).toMatchObject({ motionElapsedMs: 560, expressionElapsedMs: 500 });
+    expect(instance.set({ expression: 'Smile', settleExpression: true })).toMatchObject({ ok: false, error: { code: 'MODEL_EXPRESSION_MISSING' } });
+    expect(unwrap(instance.capture())).toMatchObject({ motionElapsedMs: 560, expressionElapsedMs: 500, options: { expression: 'smile' } });
     expect(instance.set({ parameterId: 'ParamA', value: 2 }).ok).toBe(true);
     expect(calls).toContain('ParamA:1');
     expect(instance.set({ parameterId: 'Missing', value: 1 }).ok).toBe(false);

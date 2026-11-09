@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { EffectValuesSchema } from '@galcraft/contracts';
-import type { AnimationProcess, PlayerHost, PresentationState, Result, Snapshot, StageObject } from '@galcraft/contracts';
-import { FixtureCharacters, FixtureEffects, FixtureIds, FixtureLock, FixtureProject, FixtureSaveRecord, FixtureScenes, FixtureTemplate, FixtureVariables } from '@galcraft/contracts/fixtures';
+import type { AnimationProcess, CompiledDialogueEvent, PlayerHost, PresentationState, Result, Snapshot, StageObject } from '@galcraft/contracts';
+import { FixtureCharacters, FixtureEffects, FixtureIds, FixtureLock, FixtureProject, FixtureSaveRecord, FixtureScenes, FixtureSnapshot, FixtureTemplate, FixtureVariables } from '@galcraft/contracts/fixtures';
 import { compile } from '@galcraft/dsl';
 import { SessionController } from '@galcraft/runtime';
 import { advanceAnimations, advanceImagePlayback, StageCommandService, type StageController } from '@galcraft/stage';
@@ -26,13 +26,20 @@ function compileScenes(scripts:string[],scenes=structuredClone(FixtureScenes)):S
     documents:scenes.map((scene,i)=>({documentId:`Scrpt${i}`,revision:1,kind:'scene',sceneId:scene.id,text:scripts[i]??'return {} @Return;'}))});
   expect(result.issues).toEqual([]);return structuredClone(result.snapshot!);
 }
-async function fixture(snapshot:Snapshot) {
+async function fixture(snapshot:Snapshot, kind: 'player' | 'playtest' = 'player') {
   const directory=await mkdtemp(join(tmpdir(),'galcraft-restore-regression-'));cleanups.push(()=>rm(directory,{recursive:true,force:true}));
   const storage:PlayerHost['storage']={read:async key=>{try{return ok(new Uint8Array(await readFile(join(directory,key))));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return ok(null);throw error;}},
     commit:async batch=>{for(const value of batch.writes){const path=join(directory,value.key);await mkdir(dirname(path),{recursive:true});await writeFile(path,value.bytes);}for(const key of batch.deletes)await rm(join(directory,key),{force:true});return ok({revision:batch.expectedRevision+1});}};
-  const data=new PlayerDataService({target:'web',storage},{kind:'player',projectId:snapshot.projectId,instance:'restore-regression'},'zh-CN','zh-CN');unwrap(await data.open());
-  const commands=new StageCommandService({asset:()=>{throw new Error('This restore fixture has no asset execution');}});
-  const session=new SessionController({longTerm:new PlayerLongTermService(data),stage:commands,contributions:{commands:[],conditions:[],documents:[],tools:[],resources:[],stages:[],pages:[],components:[],systems:[],platform:[]}});
+  const data=new PlayerDataService({target:'web',storage},{kind,projectId:snapshot.projectId,instance:'restore-regression'},'zh-CN','zh-CN');unwrap(await data.open());
+  const commands = new StageCommandService({ asset: (assetId, variantId) => {
+    const asset = snapshot.assets.find(item => item.assetId === assetId && (!variantId || item.variantId === variantId));
+    if (!asset) throw new Error(`Fixture asset ${assetId}/${variantId} is unavailable`);
+    return ok({ ...asset, providerVersion: null });
+  } });
+  const playedEvents: string[] = [];
+  const session=new SessionController({longTerm:new PlayerLongTermService(data),stage:commands,contributions:{commands:[],conditions:[],documents:[],tools:[],resources:[],stages:[],pages:[],components:[],systems:[],platform:[]},
+    onCommitted: ({ delta }) => { for (const sound of delta?.audio ?? []) if (sound.dialogueEventId) playedEvents.push(sound.dialogueEventId);
+      return { presentationEntered: true, mediaStarted: false }; } });
   let preparedPresentation:PresentationState|null=null;
   const stage={prepareStage:async(_session:string,state:PresentationState,key:unknown)=>{preparedPresentation=structuredClone(state);return ok({id:crypto.randomUUID(),state,restoreKey:key});},
     commitStage:()=>ok(undefined),discardPrepared:()=>{},disposeRetiredStage:()=>{}} as unknown as StageController;
@@ -45,9 +52,123 @@ async function fixture(snapshot:Snapshot) {
     releaseVersion:snapshot.releaseVersion,engineVersion:snapshot.engineVersion,dependencyVersions:[snapshot.lock.engine,...snapshot.lock.plugins,snapshot.lock.template],state:active.state,history:active.history};
     unwrap(await data.save({kind:'quick',record,expectedIndexRevision:data.current()!.index.revision}));return record;};
   const load=async(recordId:string)=>{const context=unwrap(restore.context());const prepared=unwrap(await restore.prepareLoad({requestId:crypto.randomUUID(),recordId,context}));unwrap(restore.commitLoad({requestId:prepared.key.requestId,acceptMappings:false}));unwrap(await session.start());return session.inspect()!;};
-  return {session,data,restore,save,load,presentation:()=>preparedPresentation!};
+  return {session,data,restore,save,load,playedEvents,presentation:()=>preparedPresentation!};
 }
 async function advance(session:SessionController){const token=session.inspect()!.token!;unwrap(await session.updateTextProgress({token,textShown:10000}));return unwrap(await session.dispatch({kind:'advance',token}));}
+
+function inlineSnapshot() {
+  const prefix = '👩‍🚀{{"é"}}', snapshot = compileScenes([say(`${prefix}乙丙`, 'Inline') + '\n' + say('Next line', 'NextAA')]);
+  const scene = snapshot.scenes[0]!, line = scene.instructions[0]!;
+  const [image, sound] = FixtureSnapshot.assets;
+  snapshot.assets = structuredClone(FixtureSnapshot.assets);
+  snapshot.assets.push({ ...image!, variantId: 'FaceA1' }, { ...image!, variantId: 'FaceA2' });
+  const show = { ...line, opcode: 'changeFigure', statementId: 'ShowAA', continuation: 'continue' as const,
+    source: { ...line.source, statementId: 'ShowAA' }, args: { objectId: 'Figure', characterId: FixtureIds.an,
+      assetId: image!.assetId, variantId: image!.variantId, station: 'right', effects: { x: 18 }, framing: { scale: 1.4 } } };
+  const anchor = prefix.length;
+  const expression = (id: string, offset: number, variantId: string): CompiledDialogueEvent => ({ id, offset, kind: 'expression', objectId: 'Figure',
+    characterId: FixtureIds.an, differenceId: 'DiffAA', assetId: image!.assetId, variantId });
+  const effect = (id: string, offset: number): CompiledDialogueEvent => ({ id, offset, kind: 'sound', assetId: sound!.assetId, variantId: sound!.variantId });
+  const events: CompiledDialogueEvent[] = [effect('SoundA', anchor), expression('ExpreA', anchor, 'FaceA1'),
+    { id: 'TimedA', offset: anchor, kind: 'wait', durationMs: 800 }, effect('SoundB', anchor),
+    { id: 'InputA', offset: anchor, kind: 'wait', durationMs: null },
+    effect('SoundC', anchor + 1), expression('ExpreB', anchor + 1, 'FaceA2')];
+  line.args = { ...line.args as Record<string, never>, speaker: { kind: 'character', id: FixtureIds.friend }, events };
+  scene.instructions.unshift(show);
+  return { snapshot, line, events };
+}
+
+describe('inline dialogue restoration', () => {
+  it('captures the active grapheme, appearance, elapsed time and consumed sound across a real save and read', async () => {
+    const { snapshot } = inlineSnapshot(), { session, save, load, playedEvents, presentation } = await fixture(snapshot);
+    const token = session.inspect()!.token!;
+    unwrap(await session.updateTextProgress({ token, textShown: 20 }));
+    const before = session.inspect()!;
+    expect(before.state.presentation.text.text).toBe('「👩‍🚀é乙丙」');
+    expect(before.state.wait).toMatchObject({ textShown: 3, textComplete: false, inline: { cursor: 3, waiting: { eventId: 'TimedA', remainingMs: 800 } } });
+    expect(before.state.presentation.objects[0]).toMatchObject({ variantId: 'FaceA1', station: 'right', current: { x: 18 }, framing: { scale: 1.4 } });
+    expect(playedEvents).toEqual(['SoundA']);
+    expect(unwrap(session.elapseDialogueWait({ token, eventId: 'TimedA', deltaMs: 125 }))).toBe(false);
+    unwrap(await session.setPauseReason('emergency', true));
+    expect(unwrap(session.elapseDialogueWait({ token, eventId: 'TimedA', deltaMs: 1000 }))).toBe(false);
+    const record = await save();
+    expect(record.state.wait).toMatchObject({ inline: { waiting: { remainingMs: 675 } } });
+    expect(record.state.presentation.currentSfx).toEqual([]);
+    unwrap(await session.setPauseReason('emergency', false));
+    const restored = await load(record.recordId), currentToken = restored.token!;
+    expect(restored.state.wait).toEqual(record.state.wait);
+    expect(presentation().objects[0]!.variantId).toBe('FaceA1');
+    expect(playedEvents).toEqual(['SoundA']);
+    expect(session.elapseDialogueWait({ token, eventId: 'TimedA', deltaMs: 999 })).toMatchObject({ ok: false, error: { code: 'TOKEN_STALE' } });
+    expect(unwrap(session.elapseDialogueWait({ token: currentToken, eventId: 'TimedA', deltaMs: 675 }))).toBe(true);
+    expect(await session.releaseDialogueWait({ token: currentToken, eventId: 'TimedA', expectedSequence: restored.sequence, mode: 'timed' }))
+      .toMatchObject({ ok: false, error: { code: 'STATE_CHANGED' } });
+    const input = unwrap(await session.releaseDialogueWait({ token: currentToken, eventId: 'TimedA', expectedSequence: session.inspectActivity()!.sequence, mode: 'timed' }));
+    expect(input.state.wait).toMatchObject({ textShown: 3, inline: { cursor: 5, waiting: { eventId: 'InputA', remainingMs: null } } });
+    expect(playedEvents).toEqual(['SoundA', 'SoundB']);
+    const completed = unwrap(await session.dispatch({ kind: 'advance', token: currentToken, expectedSequence: input.sequence }));
+    expect(completed.state.wait).toMatchObject({ textShown: 6, textComplete: true, inline: { cursor: 7, waiting: null } });
+    expect(completed.state.presentation.objects[0]!.variantId).toBe('FaceA2');
+    expect(playedEvents).toEqual(['SoundA', 'SoundB']);
+    expect(unwrap(await session.dispatch({ kind: 'advance', token: currentToken })).state.position.statementId).toBe('NextAA');
+  });
+
+  it('keeps manual, auto and skip policies separate and rejects a changed saved event schedule', async () => {
+    const { snapshot, events } = inlineSnapshot(), { session, save, restore, data, playedEvents } = await fixture(snapshot);
+    const token = session.inspect()!.token!;
+    const manual = unwrap(await session.dispatch({ kind: 'advance', token }));
+    expect(manual.state.wait).toMatchObject({ textShown: 3, inline: { cursor: 5, waiting: { eventId: 'InputA' } } });
+    expect(playedEvents).toEqual([]);
+    const record = await save(), changed = structuredClone(snapshot);
+    changed.scenes[0]!.instructions[1]!.args = { ...changed.scenes[0]!.instructions[1]!.args as Record<string, never>, events: events.slice(0, -1) };
+    restore.setSnapshot(changed);
+    const before = session.inspect();
+    expect(await restore.prepareLoad({ requestId: 'Failed', recordId: record.recordId, context: unwrap(restore.context()) }))
+      .toMatchObject({ ok: false, error: { code: 'RESTORE_DIALOGUE_PROGRESS' } });
+    expect(session.inspect()).toEqual(before);
+    expect(unwrap(await data.record(record.recordId))).toEqual(record);
+    const resumed = unwrap(await session.releaseDialogueWait({ token, eventId: 'InputA', expectedSequence: manual.sequence, mode: 'auto' }));
+    expect(resumed.state.wait).toMatchObject({ textShown: 3, textComplete: false, inline: { cursor: 5, waiting: null } });
+    const skipped = unwrap(await session.skipStep('all')).inspection;
+    expect(skipped.state.wait).toMatchObject({ textShown: 6, textComplete: true, inline: { cursor: 7, waiting: null } });
+    expect(skipped.state.presentation.objects[0]!.variantId).toBe('FaceA2');
+    expect(playedEvents).toEqual([]);
+  });
+
+  it('reduces the selected event and preceding lines without publishing a stage or transient sound', async () => {
+    const { snapshot } = inlineSnapshot(), { session, data, playedEvents } = await fixture(snapshot, 'playtest');
+    const active = session.inspect(), sceneId = snapshot.scenes[0]!.scene.id;
+    const entry = { sceneId, statementId: 'ShowAA' };
+    const prepare = async (statementId: string) => {
+      const target = { sceneId, statementId };
+      return unwrap(await session.prepareSession({ snapshot, domain: data.domain,
+        source: { kind: 'entry', scenario: { schemaVersion: 1, id: 'InspAA', name: 'Inspection', projectId: snapshot.projectId,
+          engineVersion: snapshot.engineVersion, pluginVersions: [], entry, target, initialProgress: {}, pluginInitial: {},
+          route: [], playerInputs: [], externalPolicy: 'simulate' } }, target, evaluateTarget: true }));
+    };
+    const line = await prepare('Inline');
+    const exact = unwrap(await session.prepareDialogueInspection(line.id, 'ExpreA'));
+    expect(exact.wait).toMatchObject({ textShown: 3, textComplete: false, inline: { cursor: 2, waiting: null } });
+    expect(exact.presentation.objects[0]!.variantId).toBe('FaceA1');
+    const later = await prepare('NextAA');
+    expect(later.state.presentation.objects[0]!.variantId).toBe('FaceA2');
+    expect(session.inspect()).toEqual(active);
+    expect(playedEvents).toEqual([]);
+  });
+
+  it('locates a missing live instance and retains the confirmed state', async () => {
+    const { snapshot, events } = inlineSnapshot();
+    const expression = events.find(event => event.kind === 'expression')!;
+    expression.objectId = 'Absent';
+    const { session, playedEvents } = await fixture(snapshot);
+    const before = session.inspect()!;
+    expect(await session.updateTextProgress({ token: before.token!, textShown: 20 })).toMatchObject({
+      ok: false, error: { code: 'DIALOGUE_EXPRESSION_TARGET', source: { statementId: 'Inline', eventId: 'ExpreA' } },
+    });
+    expect(session.inspect()).toEqual(before);
+    expect(playedEvents).toEqual([]);
+  });
+});
 
 describe('scene frame and presentation restoration (RDV-T06/T07)',()=>{
   it('saves and reloads independent same-name locals in current and historical frames, then returns to the caller',async()=>{

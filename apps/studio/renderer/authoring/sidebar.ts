@@ -13,19 +13,19 @@ export type SidebarState = {
   tab: 'search' | 'assets'; mode: SearchMode; term: string; target: Id | ''; targetLabel: string;
   scope: 'project' | 'scene'; variableAccess: 'read' | 'write' | 'both'; offset: number;
   page: SemanticPage | null; hasSearched: boolean; searching: boolean; error: string; located: boolean;
-  searchGeneration: number; assetCategory: AssetCategory; assetTab: 'all' | 'context' | 'recent';
+  searchGeneration: number; searchScrollTop: number; assetCategory: AssetCategory; assetTab: 'all' | 'context' | 'recent';
   assetUsage: 'all' | 'bgm' | 'voice' | 'effect'; assetTerm: string; assetOffset: number;
   assetPage: AssetPage | AssetPickerPage | null; assetError: string; assetGeneration: number;
 };
 export function initialSidebarState(): SidebarState {
   return { tab: 'search', mode: 'text', term: '', target: '', targetLabel: '', scope: 'project', variableAccess: 'both',
-    offset: 0, page: null, hasSearched: false, searching: false, error: '', located: false, searchGeneration: 0,
+    offset: 0, page: null, hasSearched: false, searching: false, error: '', located: false, searchGeneration: 0, searchScrollTop: 0,
     assetCategory: 'all', assetTab: 'all', assetUsage: 'all', assetTerm: '', assetOffset: 0,
     assetPage: null, assetError: '', assetGeneration: 0 };
 }
 type SearchOptions = { services: AuthoringServices; source: AuthoringSource; sceneId: Id | null; state: SidebarState; locale?: StudioLocale };
 export type AuthoringSidebarOptions = SearchOptions & {
-  locale: StudioLocale; cache(asset: Asset): void; locate(source: Source): void; returnToOrigin?(): void;
+  locale: StudioLocale; cache(asset: Asset): void; locate(source: Source): Promise<void>; returnToOrigin?(): Promise<void>;
   applyAsset(asset: Asset): Promise<void>; previewAsset(asset: Asset): Promise<void>; browseAssets(): void;
 };
 const ALL_KINDS: AssetKind[] = ['image', 'audio', 'video', 'font', 'live2d', 'texture', 'animation', 'effect'];
@@ -141,17 +141,19 @@ export function createAuthoringSidebar(options: AuthoringSidebarOptions): HTMLEl
   filters.append(mode, scope); searchControls.append(query, filters, targets);
   const searchSummary = node('div', 'sidebar-summary'); searchSummary.setAttribute('aria-live', 'polite');
   const searchResults = node('div', 'sidebar-results'), searchPaging = node('div', 'sidebar-paging');
+  searchResults.onscroll = () => { state.searchScrollTop = searchResults.scrollTop; };
   searchPanel.append(searchControls, searchSummary, searchResults, searchPaging);
   query.oninput = () => {
     state.term = query.value; state.offset = 0; state.searchGeneration++; clearTimeout(searchTimer);
     searchTimer = setTimeout(() => { void search(); }, 180);
   };
-  query.onkeydown = event => { if (event.key === 'Enter') { clearTimeout(searchTimer); void search(); } };
+  query.onkeydown = event => { if (event.key === 'Enter' && !event.isComposing) { clearTimeout(searchTimer); void search(); } };
 
   function resetSearch() {
     clearTimeout(searchTimer); state.searchGeneration++; state.offset = 0; state.page = null; state.error = ''; state.hasSearched = false; state.searching = false; drawSearch();
   }
   async function search() {
+    state.searchScrollTop = 0;
     const pending = runSidebarSearch(options); drawSearch(); await pending; drawSearch();
   }
   function drawTargets() {
@@ -189,9 +191,7 @@ export function createAuthoringSidebar(options: AuthoringSidebarOptions): HTMLEl
   }
   function drawSearch() {
     searchSummary.replaceChildren(); searchResults.replaceChildren(); searchPaging.replaceChildren();
-    if (state.located && options.returnToOrigin) searchSummary.append(button(t('返回原位置', 'Return to origin', '元の位置へ戻る'), () => {
-      state.located = false; options.returnToOrigin?.(); drawSearch();
-    }, 'sidebar-origin'));
+    if (state.located && options.returnToOrigin) searchSummary.append(button(t('返回原位置', 'Return to origin', '元の位置へ戻る'), options.returnToOrigin, 'sidebar-origin'));
     if (state.searching) { searchResults.append(node('p', 'sidebar-empty', t('正在查找…', 'Searching…', '検索中…'))); return; }
     if (state.error) { searchResults.append(node('p', 'sidebar-error', state.error)); return; }
     if (!state.hasSearched || !state.page) {
@@ -207,7 +207,7 @@ export function createAuthoringSidebar(options: AuthoringSidebarOptions): HTMLEl
       const group = node('section', 'sidebar-scene-results');
       group.append(node('h3', '', source.scenes.find(scene => scene.sceneId === id)?.name ?? t('作品', 'Project', '作品')));
       for (const hit of hits) {
-        const result = button('', () => { state.located = true; options.locate(hit.source); drawSearch(); }, 'sidebar-search-hit');
+        const result = button('', () => options.locate(hit.source), 'sidebar-search-hit');
         if (hit.context.before) result.append(node('small', 'sidebar-hit-neighbor', hit.context.before));
         const current = node('span', 'sidebar-hit-current'); current.append(highlight(hit.context.current, state.mode === 'text' ? state.term : '')); result.append(current);
         if (hit.context.after) result.append(node('small', 'sidebar-hit-neighbor', hit.context.after));
@@ -341,5 +341,6 @@ export function createAuthoringSidebar(options: AuthoringSidebarOptions): HTMLEl
   }
   tabs.onkeydown = event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); switchTab(state.tab === 'search' ? 'assets' : 'search'); (state.tab === 'search' ? searchTab : assetTab).focus(); } };
   drawTargets(); drawSearch(); drawAssetControls(); switchTab(state.tab);
+  if (state.searchScrollTop) requestAnimationFrame(() => { searchResults.scrollTop = state.searchScrollTop; });
   return root;
 }

@@ -2,7 +2,7 @@ import { createId } from '@galcraft/contracts';
 
 import { copyFile, mkdir, readFile, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
-import { assetFieldReferences, assetReferenceTarget, BuildInputSchema, IssueSchema, readPluginDocumentInstances, round5AssetBindings } from '@galcraft/contracts';
+import { assetFieldReferences, assetReferenceTarget, BuildInputSchema, IssueSchema, readPluginDocumentInstances, round5AssetBindings, stageCommandAssetBindings } from '@galcraft/contracts';
 import { AssetCatalog, AssetTypeRegistry, assetFilePath } from '@galcraft/assets';
 import { templateIssues } from '@galcraft/templates';
 import { ReleaseBuilder, buildIssue, sameSavedVersions } from '@galcraft/publishing/build';
@@ -44,6 +44,9 @@ export class StudioBuilds {
       const compiled = this.language.lastValid(input.projectId);
       if (!compiled.ok || !compiled.value || compiled.value.snapshotId !== input.snapshotId) return fail('BUILD_SNAPSHOT_MISSING', '请选择有效的已保存快照', 'M11');
       const snapshot = structuredClone(compiled.value), allFiles = Object.assign({}, ...documents.map(document => document.files));
+      const savedRevision = new Map(savedVersions.map(item => [item.ref.id, item.revision]));
+      if (snapshot.documents.some(document => savedRevision.get(document.documentId) !== document.revision))
+        return fail('BUILD_SNAPSHOT_REVISION', '编译结果与所选保存版本不一致，请重新检查', 'M11');
       const project = JSON.parse(allFiles['project.json']).data;
       const resolved = await this.engineCatalog.resolveProjectEngine(project, snapshot.lock, input.target);
       if (!resolved.ok) return resolved;
@@ -68,6 +71,11 @@ export class StudioBuilds {
         }
       };
       const commandRegistry = createCommandRegistry(snapshot.engineVersion, this.language.currentInput(input.projectId)?.pluginCommands ?? []);
+      const sourceFields = new Map();
+      for (const item of snapshot.sourceMap) {
+        const fields = sourceFields.get(item.statementId) ?? [];
+        fields.push(item); sourceFields.set(item.statementId, fields);
+      }
       const commandRefs = (value, specs, source) => {
         for (const { ref, path } of assetFieldReferences(value, specs)) {
           const target = assetReferenceTarget(ref, index.data.assets);
@@ -79,12 +87,27 @@ export class StudioBuilds {
       for (const scene of snapshot.scenes) for (const instruction of scene.instructions) {
         const spec = commandRegistry.get(instruction.opcode);
         if (!spec) issues.push(buildIssue('BUILD_COMMAND_MISSING', instruction.opcode));
-        else commandRefs(instruction.args, spec.fields, instruction.source);
-        if (instruction.opcode === 'say' && instruction.args.voiceByLocale) Object.values(instruction.args.voiceByLocale).forEach(id => { if (id) add(id, null, instruction.source); });
+        else commandRefs(instruction.args, spec.fields.filter(field =>
+          !(instruction.opcode === 'say' && field.path === 'events' || ['changeBg', 'changeScene'].includes(instruction.opcode) && field.path === 'ruleImage')), instruction.source);
+        if (instruction.opcode === 'say' && instruction.args.voiceByLocale)
+          Object.values(instruction.args.voiceByLocale).forEach(id => { if (id) add(id, null, instruction.source); });
+        for (const binding of stageCommandAssetBindings(instruction.opcode, instruction.args)) {
+          const fields = sourceFields.get(instruction.statementId) ?? [];
+          const source = binding.eventId
+            ? fields.find(item => item.source.eventId === binding.eventId && /\.(?:assetId|differenceId)$/.test(item.field))?.source
+            : fields.find(item => item.field === binding.path.join('.'))?.source;
+          add(binding.assetId, binding.variantId, source ?? instruction.source);
+        }
       }
       if(snapshot.template.pages.some(page=>['cg','music'].includes(page.key))&&!snapshot.scenes.some(scene=>scene.instructions.some(instruction=>instruction.opcode==='end'&&typeof instruction.args.endingId==='string'&&instruction.args.endingId.trim())))issues.push({...buildIssue('GALLERY_ENDING_REQUIRED','鉴赏页面需要至少一个带结局标识的 end'),severity:'warning'});
-      visit([snapshot.project, snapshot.scenes.map(scene=>scene.scene), snapshot.characters, snapshot.gallery, snapshot.flows, snapshot.template]);
-      for(const binding of [...round5AssetBindings({project:snapshot.project}),...snapshot.scenes.flatMap(scene=>round5AssetBindings({scene:scene.scene})),...snapshot.characters.flatMap(character=>round5AssetBindings({character}))])add(binding.assetId,binding.variantId);
+      visit([snapshot.project, snapshot.scenes.map(({ scene: { decorLayers, ...scene } }) => scene), snapshot.characters, snapshot.gallery, snapshot.flows, snapshot.template]);
+      for (const { scene } of snapshot.scenes) {
+        const path = `scenes/${scene.id}/scene.json`;
+        const document = documents.find(item => Object.hasOwn(item.files, path));
+        for (const binding of round5AssetBindings({ scene })) add(binding.assetId, binding.variantId,
+          document && { documentId: document.documentId, revision: document.revision, field: binding.field });
+      }
+      for(const binding of [...round5AssetBindings({project:snapshot.project}),...snapshot.characters.flatMap(character=>round5AssetBindings({character}))])add(binding.assetId,binding.variantId);
       input.keepAssets.forEach(id => add(id)); if (input.font.fallbackAssetId) add(input.font.fallbackAssetId);
       const prefix = `${input.target === 'windows' ? 'windows' : 'web'}/`;
       for (const file of engine.manifest.files.filter(file => file.path.startsWith(prefix))) files.push({ path: file.path.slice(prefix.length), size: file.size, source: join(engine.directory, file.path), role: 'runtime' });
@@ -173,6 +196,7 @@ export class StudioBuilds {
       }
       const runtimeTable = registry.prepareContributions(snapshot.lock, input.target, ['runtime']); if (!runtimeTable.ok) issues.push(...runtimeTable.issues);
       const collected = new AssetCatalog(index, assetTypes).collectAssets(references, input.target); issues.push(...collected.issues);
+      const activeVariants = new Map(index.data.assets.map(asset => [asset.id, asset.activeVariantId]));
       for (const asset of collected.assets) {
         if (asset.provider) {
           const key = assetTypes.resolveResourceProviderKey(asset.provider), declaration = runtimeTable.ok ? runtimeTable.value.byKey[key] : null;
@@ -185,10 +209,9 @@ export class StudioBuilds {
           treatment: status === 'converted' ? 'converted' : status === 'direct' ? 'native' : 'blocked',
           reason: status === 'converted' ? `已采用兼容版本：${indexed?.name ?? asset.assetId}` :
             status === 'direct' ? `已验证原版：${indexed?.name ?? asset.assetId}` : `目标尚未验证：${indexed?.name ?? asset.assetId}`,
-          sources: references.filter(ref => ref.assetId === asset.assetId && (ref.variantId === null || ref.variantId === asset.variantId))
+          sources: references.filter(ref => ref.assetId === asset.assetId && (ref.variantId ?? activeVariants.get(ref.assetId)) === asset.variantId)
             .flatMap(ref => ref.source ? [ref.source] : []), required: true });
       }
-      const activeVariants = new Map(index.data.assets.map(asset => [asset.id, asset.activeVariantId]));
       const selectedAssets = [...collected.assets].sort((left, right) => Number(left.variantId !== activeVariants.get(left.assetId)) - Number(right.variantId !== activeVariants.get(right.assetId)));
       snapshot.assets = selectedAssets.map(asset => {
         const metadata = structuredClone(asset.metadata);

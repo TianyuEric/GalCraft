@@ -8,6 +8,7 @@ import { PlayerLongTermService } from '@galcraft/player-ui/long-term';
 import { emptyContributions, loadPluginRuntime } from '@galcraft/plugins';
 import { assetFilePath } from '@galcraft/assets';
 import { compileCollaborationProject } from './collaboration-compile.mjs';
+import { resolvePreviewEventSource } from './collaboration-preview-target.mjs';
 
 const ok = value => ({ ok: true, value, warnings: [] });
 const value = result => { if (!result.ok) throw new Error(result.error.message); return result.value; };
@@ -17,6 +18,7 @@ export async function authoringPreview(production, input, plugins) {
   const ctx = await production.current(), compiled = await compileCollaborationProject({production,plugins},ctx.project);
   if (!compiled.snapshot) return { issues: compiled.issues, reached: false, snapshotId: null };
   const snapshot = compiled.snapshot, entry = resolvePreviewEntry(snapshot, input.target ?? null, input.entryId, !!input.entryId);
+  const eventSource = resolvePreviewEventSource(snapshot, input);
   const domain = { projectId: snapshot.projectId, kind: 'playtest', instance: `collaboration-${createId()}` }, storage = new Map(); let revision = 0;
   const data = new PlayerDataService({ target: 'windows', storage: {
     read: async key => ok(storage.get(key) ?? null),
@@ -46,8 +48,12 @@ export async function authoringPreview(production, input, plugins) {
       if (!preparation.ok) return { snapshotId: snapshot.snapshotId, entry, target, reached: false, domain,
         issues: [...compiled.issues, ...preparation.issues], mediaPlayback: 'notExecuted' };
       const prepared = preparation.value;
+      const inspection = eventSource && prepared.reached ? await runtime.prepareDialogueInspection(prepared.id, input.eventId) : null;
+      if (inspection && !inspection.ok) return { snapshotId: snapshot.snapshotId, entry, target, reached: false, domain,
+        issues: [...compiled.issues, ...prepared.issues, ...inspection.issues], mediaPlayback: 'notExecuted' };
       return { snapshotId: snapshot.snapshotId, entry, target, reached: prepared.reached, blockedAt: prepared.blockedAt, routePreparation: prepared.routePreparation,
-        state: prepared.state, domain, issues: [...compiled.issues, ...prepared.issues], mediaPlayback: 'notExecuted' };
+        state: inspection?.value ?? prepared.state, ...(inspection ? { eventSource } : {}), domain,
+        issues: [...compiled.issues, ...prepared.issues], mediaPlayback: 'notExecuted' };
     } finally { runtime.dispose(); }
   } finally { await Promise.allSettled(instances.map(instance => instance.deactivate())); }
 }

@@ -1,10 +1,70 @@
-import React from 'react';
-import type {Asset,Interlude,SceneEntryPresentation,Transition} from '@galcraft/contracts';
+import React, { useState } from 'react';
+import type {Asset,Id,Interlude,SceneDecorLayer,SceneEntryPresentation,Transition} from '@galcraft/contracts';
 import {Button,Choice,Field} from '../components/controls.js';
 import {Input} from '../components/ui/input.js';
 import {Clapperboard,Play} from 'lucide-react';
+import { StudioNumberField } from '../components/editor-fields/StudioNumberField.js';
 import './scene-entry-editor.css';
 const fade=(durationMs=200):Transition=>({preset:'fade',durationMs,resourceId:null,easing:{family:'sine',direction:'inOut'},direction:'left'});
+
+export function SceneDecorEditor({ layers, assets, locale, change, choose }: {
+  layers: SceneDecorLayer[]; assets: Asset[]; locale: string;
+  change(layers: SceneDecorLayer[]): void;
+  choose(layer: SceneDecorLayer | null, origin: HTMLElement): Promise<SceneDecorLayer | null>;
+}) {
+  const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
+  const [selected, setSelected] = useState<Id>();
+  const index = Math.max(0, layers.findIndex(layer => layer.id === selected));
+  const active = layers[index];
+  const name = (layer: SceneDecorLayer) => assets.find(asset => asset.id === layer.assetId)?.name
+    ?? t('原图片缺失', 'Image missing', '画像なし');
+  const update = (patch: Partial<SceneDecorLayer>) => change(layers.map(layer => layer.id === active?.id ? { ...layer, ...patch } : layer));
+  const move = (direction: -1 | 1) => {
+    const next = [...layers];
+    const [layer] = next.splice(index, 1);
+    if (!layer) return;
+    next.splice(index + direction, 0, layer);
+    setSelected(layer.id); change(next);
+  };
+  const number = (key: 'x' | 'y' | 'scale' | 'cameraFollow' | 'z', label: string, step: number, min?: number, max?: number) =>
+    active && <Field label={label}><StudioNumberField label={label} value={active[key]} locale={locale} step={step} min={min} max={max}
+      unit={key === 'x' || key === 'y' ? 'px' : ''}
+      onPreview={() => {}} onCommit={value => { if (value !== active[key]) update({ [key]: value }); }}/></Field>;
+  return <section className="scene-entry-editor scene-decor-editor" aria-label={t('场景布景', 'Scene decor', 'シーンの背景レイヤー')}>
+    <section className="scene-entry-section">
+      <header className="scene-decor-heading">
+        <h3>{t('场景布景', 'Scene decor', 'シーンの背景レイヤー')}</h3>
+        <Button onClick={async event => {
+          const layer = await choose(null, event.currentTarget);
+          if (layer) { setSelected(layer.id); change([...layers, layer]); }
+        }}>{t('添加布景图层', 'Add decor layer', 'レイヤーを追加')}</Button>
+      </header>
+      <p className="scene-entry-help">{t('图层和立绘共享层级。同一层级的布景按列表顺序叠放。用指令「变换」选择舞台目标来移动镜头。',
+        'Decor shares stacking levels with figures. The list determines order between decor layers at the same level. Use Transform with the Stage target to move the camera.',
+        '背景レイヤーと立ち絵は重なり順を共有します。同じレベルの背景レイヤーはリスト順に重なります。ステージを対象に変換してカメラを動かします。')}</p>
+      {active && <>
+        <div className="scene-decor-tools">
+          <Choice label={t('编辑布景图层', 'Edit decor layer', '背景レイヤーを編集')} value={active.id}
+            options={layers.map((layer, order) => ({ value: layer.id, label: `${order + 1} · ${name(layer)}` }))} onChange={setSelected}/>
+          <Button tone="quiet" disabled={index === 0} onClick={() => move(-1)}>{t('上移', 'Move up', '上に移動')}</Button>
+          <Button tone="quiet" disabled={index === layers.length - 1} onClick={() => move(1)}>{t('下移', 'Move down', '下に移動')}</Button>
+        </div>
+        <div className="scene-decor-tools">
+          <Button tone="quiet" onClick={async event => { const layer = await choose(active, event.currentTarget); if (layer) update(layer); }}>{t('替换布景图片', 'Replace decor image', '画像を置換')}</Button>
+          <label><input type="checkbox" checked={active.visible} onChange={event => update({ visible: event.target.checked })}/> {t('显示图层', 'Show layer', 'レイヤーを表示')}</label>
+          <Button tone="quiet" onClick={() => change(layers.filter(layer => layer.id !== active.id))}>{t('移除图层', 'Remove layer', 'レイヤーを削除')}</Button>
+        </div>
+        <div className="scene-entry-grid" key={active.id}>
+          {number('x', t('横向偏移', 'Horizontal offset', '横方向のオフセット'), 1)}
+          {number('y', t('纵向偏移', 'Vertical offset', '縦方向のオフセット'), 1)}
+          {number('scale', t('缩放', 'Scale', '拡大率'), .05, .01)}
+          {number('z', t('层级', 'Stacking level', '重なり順'), 1)}
+          {number('cameraFollow', t('镜头跟随系数', 'Camera follow factor', 'カメラ追従係数'), .05, 0, 2)}
+        </div>
+      </>}
+    </section>
+  </section>;
+}
 export function EntryTransitionEditor({label,value,change,locale}:{label:string;value:Transition;change(value:Transition):void;locale:string}){
   const t=(zh:string,en:string,ja:string)=>locale==='en'?en:locale==='ja'?ja:zh;
   return <fieldset className="scene-entry-transition"><legend>{label}</legend><div className="scene-entry-grid">

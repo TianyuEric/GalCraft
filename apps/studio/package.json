@@ -74,17 +74,23 @@
     "@storybook/addon-mcp": "10.6.0",
     "@storybook/react-vite": "10.6.0",
     "@tailwindcss/vite": "4.3.3",
+    "@testing-library/react": "16.3.2",
     "@types/node": "24.13.6",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.0.1",
     "electron": "43.7.0",
+    "jsdom": "29.1.1",
     "storybook": "10.6.0",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "8.3.0"
   },
   "license": "MPL-2.0",
-  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "apps/studio"},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TianyuEric/GalCraft.git",
+    "directory": "apps/studio"
+  },
   "homepage": "https://github.com/TianyuEric/GalCraft#readme"
 }

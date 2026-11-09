@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { FileTxSchema, IdSchema, RelativePathSchema } from '@galcraft/contracts';
 import type { FileTx, Id } from '@galcraft/contracts';
+import { sceneSourcePath } from './scene-sources.js';
 
 export type FileChange = { path: string; documentId: Id; revision: number; content: string | null };
 
@@ -19,9 +20,9 @@ export async function renameWithSharingRetry(from:string,to:string):Promise<void
   }
 }
 
-function inside(root: string, path: string): string {
+function inside(root: string, path: string, documentId: Id): string {
   RelativePathSchema.parse(path);
-  if (path.startsWith('.galcraft/')) throw new Error('Internal transaction paths cannot be edited');
+  if (path.startsWith('.galcraft/') && path !== sceneSourcePath(documentId)) throw new Error('Internal transaction paths cannot be edited');
   const absolute = resolve(root, ...path.split('/'));
   if (!absolute.startsWith(resolve(root) + '\\') && !absolute.startsWith(resolve(root) + '/')) throw new Error('Path escapes project');
   return absolute;
@@ -67,7 +68,7 @@ export async function recoverTransactions(root: string): Promise<'ready' | 'reco
     await writeRecord(directory, record);
     try {
       for (const member of record.members) {
-        const target = inside(root, member.path);
+        const target = inside(root, member.path, member.documentId);
         if (member.oldExists) await replace(target, await readFile(join(directory, 'old', member.path), 'utf8'));
         else await rm(target, { force: true });
       }
@@ -91,7 +92,7 @@ export async function commitFiles(root: string, projectId: Id, changes: FileChan
   await mkdir(directory, { recursive: true });
   try {
     for (const change of changes) {
-      const target = inside(root, change.path);
+      const target = inside(root, change.path, change.documentId);
       let old: string | null;
       try { old = await readFile(target, 'utf8'); } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -117,7 +118,7 @@ export async function commitFiles(root: string, projectId: Id, changes: FileChan
     record.phase = 'installing';
     await writeRecord(directory, record);
     for (const [index, member] of record.members.entries()) {
-      const target = inside(root, member.path);
+      const target = inside(root, member.path, member.documentId);
       if (member.newExists) await replace(target, await readFile(join(directory, 'new', member.path), 'utf8'));
       else await rm(target, { force: true });
       member.installed = true;

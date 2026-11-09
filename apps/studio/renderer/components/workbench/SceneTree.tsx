@@ -1,12 +1,12 @@
 import { editorText as translate } from '../editor-fields/editor-text.js';
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Tree, type NodeRendererProps, type RowRendererProps, type TreeApi } from 'react-arborist';
 import { Menu } from '@base-ui/react/menu';
 import { ChevronDown, ChevronRight, FileText, Folder, MoreHorizontal } from 'lucide-react';
 import { Button } from '../controls.js';
 import type { ObjectMenuGroup } from './ObjectMenu.js';
 import './scene-tree.css';
-export type SceneNode = { id: string; name: string; kind: 'chapter' | 'scene'; detail?: string; children?: SceneNode[] };
+export type SceneNode = { id: string; name: string; kind: 'chapter' | 'scene'; detail?: ReactNode; children?: SceneNode[] };
 function canMove(data: SceneNode[], ids: string[], parent: string | null) {
  const chapters = new Set(data.map(n => n.id));
  const scenes = new Set(data.flatMap(n => n.children?.map(c => c.id) ?? []));
@@ -57,7 +57,7 @@ function ArboristNode({ node, style, dragHandle }: NodeRendererProps<SceneNode>)
       onKeyDown={e => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); prepareMenu(); setMenu(true); } }}>
       {node.isInternal ? <button data-slot="studio-tree-control" className="arborist-toggle" tabIndex={-1} aria-label={`${node.isOpen ? t("折叠") : t("展开")} ${node.data.name}`} onClick={e => { e.stopPropagation(); node.toggle(); }}>{node.isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button> : <span className="arborist-indent" />}
       {node.isInternal ? <Folder size={14} className="tree-icon" /> : <FileText size={14} className="tree-icon" />}
-      {node.isEditing ? <RenameInput node={node} /> : <><span className="arborist-name" title={node.data.name}>{node.data.name}</span>{node.data.detail && <span className="arborist-dirty" aria-label={t("未保存")}>{node.data.detail}</span>}{node.isInternal && <span className="arborist-count">{node.data.children?.length}</span>}
+      {node.isEditing ? <RenameInput node={node} /> : <><span className="arborist-name" title={node.data.name}>{node.data.name}</span>{node.data.detail}{node.isInternal && <span className="arborist-count">{node.data.children?.length}</span>}
         <Menu.Trigger data-slot="studio-tree-control" className="arborist-more" tabIndex={-1} aria-label={`${node.data.name} · ${t('操作')}`} onClick={e => e.stopPropagation()}><MoreHorizontal size={14} /></Menu.Trigger></>}
     </div>
     <Menu.Portal container={document.getElementById('studio-portals')}><Menu.Positioner side="right" align="start" sideOffset={4} className="tree-menu-position"><Menu.Popup className="tree-menu">

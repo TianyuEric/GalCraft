@@ -42,6 +42,14 @@ export const TransitionSchema = z.strictObject({
 });
 export type Transition = z.infer<typeof TransitionSchema>;
 export const TransitionPairSchema = z.strictObject({ enter: TransitionSchema, exit: TransitionSchema });
+export const RuleImageTransitionSchema = z.strictObject({
+  assetId: IdSchema, variantId: IdSchema.nullable().default(null), durationMs: finite.positive(),
+  softness: finite.min(0).max(1).default(.12), reverse: z.boolean().default(false),
+  easing: EasingSchema.default({ family: 'linear', direction: 'in' }),
+});
+export type RuleImageTransition = z.infer<typeof RuleImageTransitionSchema>;
+export const CompiledRuleImageTransitionSchema = RuleImageTransitionSchema.extend({ variantId: IdSchema });
+export type CompiledRuleImageTransition = z.infer<typeof CompiledRuleImageTransitionSchema>;
 export type TransitionPair = z.infer<typeof TransitionPairSchema>;
 export const BackgroundFrameSchema = z.strictObject({
   fit: z.enum(['cover', 'contain', 'native']), positionX: finite.min(0).max(1), positionY: finite.min(0).max(1),
@@ -103,6 +111,7 @@ export const StageObjectSchema = z.strictObject({
   id: IdSchema, characterId: IdSchema.nullable(), assetId: IdSchema, variantId: IdSchema,
   differenceCharacterId: IdSchema.optional(), visible: z.boolean().optional(),
   purpose: z.enum(['figure', 'illustration']).optional(),
+  decorFollow: finite.min(0).max(2).optional(),
   illustrationFrame: z.strictObject({ widthRatio: finite.positive(), heightRatio: finite.positive(),
     fit: z.enum(['contain', 'cover', 'native']) }).optional(),
   illustrationStates: z.record(z.string().min(1), IdSchema).optional(),
@@ -126,11 +135,13 @@ export const TransitionProcessSchema = z.strictObject({
   id: IdSchema, owner: ExecutionTokenSchema, objectId: IdSchema, kind: z.enum(['enter', 'replace', 'exit']),
   spec: TransitionSchema, elapsedMs: finite, seed: finite, from: StageObjectSchema.nullable(), to: StageObjectSchema.nullable(),
   custom: z.union([NativeAnimationSchema, z.array(SegmentSchema)]).optional(),
+  ruleImage: CompiledRuleImageTransitionSchema.optional(),
 });
 export type TransitionProcess = z.infer<typeof TransitionProcessSchema>;
 
 export const PresentationStateSchema = z.strictObject({
   objects: z.array(StageObjectSchema), nextEntranceOrder: z.number().int().nonnegative(),
+  decorSceneId: IdSchema.optional(),
   characterDifferences: z.record(IdSchema, z.strictObject({ differenceId: IdSchema, changedAtMs: finite,
     figure: z.strictObject({ assetId: IdSchema, variantId: IdSchema }),
     avatar: z.union([z.strictObject({ kind: z.literal('image'), assetId: IdSchema, variantId: IdSchema }),
@@ -183,7 +194,7 @@ export type PresentationDelta = {
   camera?: PresentationState['camera'];
   objects: { op: 'show' | 'replace' | 'update' | 'exit'; id: Id; value: StageObject | null }[];
   effects: EffectInstance[];
-  audio: { bus: 'bgm' | 'sfx' | 'voice' | 'ui' | 'video'; id: Id | null; state: AudioState }[];
+  audio: { bus: 'bgm' | 'sfx' | 'voice' | 'ui' | 'video'; id: Id | null; state: AudioState; dialogueEventId?: Id }[];
   voiceBinding?: VoicePlaybackBinding | null;
   text?: PresentationState['text'];
   film?: PresentationState['film'];
@@ -191,5 +202,5 @@ export type PresentationDelta = {
   styles?: PresentationState['styles'];
   backgroundVideo?: PresentationState['backgroundVideo'];
   transitions?: PresentationState['transitions'];
-  providerCommands?: { objectId: Id; command: import('./common.js').Json }[];
+  providerCommands?: { objectId: Id; command: import('./common.js').Json; source?: import('./common.js').Source }[];
 };

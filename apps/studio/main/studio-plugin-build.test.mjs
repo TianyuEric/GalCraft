@@ -1,13 +1,75 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { FixtureSnapshot } from '@galcraft/contracts/fixtures';
-import { SnapshotSchema } from '@galcraft/contracts';
+import { FixtureAsset, FixtureSnapshot, FixtureVoiceAssets } from '@galcraft/contracts/fixtures';
+import { SceneDecorLayerSchema, SnapshotSchema } from '@galcraft/contracts';
+import { assetFilePath, createAssetIndex } from '@galcraft/assets';
+import { compile } from '@galcraft/dsl';
 import { PluginManifestSchema } from '@galcraft/plugins/contracts';
 import { createOfficialTemplate } from '@galcraft/templates';
 import { StudioBuilds } from './build-providers.mjs';
 const root = resolve(import.meta.dirname, '../../../tmp/testing/studio-plugin-build');
 afterEach(async()=>{await rm(root,{recursive:true,force:true});});
+it('collects exact decor, rule images, anchored difference and sound files in release preparation', async () => {
+  const projectRoot = join(root, 'project'), project = structuredClone(FixtureSnapshot.project);
+  const [scene, target] = FixtureSnapshot.scenes.map(item => structuredClone(item.scene));
+  const template = createOfficialTemplate({ kind: 'standard' });
+  const lock = { ...FixtureSnapshot.lock, plugins: [], template: template.dependencies.find(item => item.kind === 'template') };
+  const versioned = (fixture, id, variantId, activeVariantId) => {
+    const asset = structuredClone(fixture), original = { ...asset.variants[0], id: variantId, targets: { web: 'direct' } };
+    return { ...asset, id, originalVariantId: variantId, activeVariantId, variants: [original, { ...original, id: activeVariantId }] };
+  };
+  const image = versioned(FixtureAsset, 'ImageA', 'Image1', 'Image2');
+  const decor = versioned(FixtureAsset, 'DecorA', 'Decor1', 'Decor2');
+  const rule = versioned(FixtureAsset, 'RulesA', 'Rules1', 'Rules2');
+  const audio = versioned(FixtureVoiceAssets[0], 'AudioA', 'Audio1', 'Audio2');
+  const assets = [image, decor, rule, audio];
+  scene.decorLayers = [SceneDecorLayerSchema.parse({ id: 'Layer1', assetId: decor.id, variantId: decor.originalVariantId })];
+  const character = { ...FixtureSnapshot.characters[0], differences: [{ id: 'Smile1', name: 'Smile', avatar: null,
+    figure: { assetId: image.id, variantId: image.originalVariantId } }] };
+  const ruleImage = { assetId: rule.id, variantId: rule.originalVariantId, durationMs: 300 };
+  const events = [{ id: 'Sound1', offset: 1, kind: 'sound', assetId: audio.id, variantId: audio.originalVariantId },
+    { id: 'Smile2', offset: 0, kind: 'expression', objectId: 'Figure', characterId: character.id, differenceId: 'Smile1' }];
+  const command = (opcode, id, args) => `${opcode} ${JSON.stringify(args)} @${id};`;
+  const text = [
+    command('changeBg', 'First1', { assetId: image.id, ruleImage }),
+    command('changeFigure', 'First2', { objectId: 'Figure', characterId: character.id, assetId: image.id }),
+    command('say', 'First3', { speaker: { kind: 'narrator' }, text: '甲乙', events }),
+    command('changeScene', 'First4', { sceneId: target.id, ruleImage }),
+  ].join('\n');
+  const sources = [{ documentId: 'Scene1', revision: 1, kind: 'scene', sceneId: scene.id, text },
+    { documentId: 'Scene2', revision: 1, kind: 'scene', sceneId: target.id, text: 'end {endingId:"finish"} @Second;' }];
+  const compiled = compile({ projectId: project.projectId, engineVersion: project.engineVersion, project, lock, template,
+    documents: sources, scenes: [scene, target], characters: [character], variables: [], assets, gallery: [], flows: [], cancelOperationId: 'Task01' });
+  expect(compiled.issues).toEqual([]);
+  const snapshot = compiled.snapshot;
+  const document = (documentId, path, data) => ({ documentId, revision: 1, files: { [path]: JSON.stringify({ data }) } });
+  const index = createAssetIndex('Index1');
+  index.data.assets = assets;
+  const documents = [document(project.projectId, 'project.json', project), { documentId: 'Index1', revision: 1, files: { 'assets/index.json': JSON.stringify(index) } },
+    document('Scene1', `scenes/${scene.id}/scene.json`, scene), document('Scene2', `scenes/${target.id}/scene.json`, target)];
+  for (const asset of assets) for (const variant of asset.variants) {
+    const file = join(projectRoot, assetFilePath(asset.id, variant.id, variant.entry));
+    await mkdir(join(file, '..'), { recursive: true }); await writeFile(file, Buffer.alloc(variant.files[0].bytes));
+  }
+  const engine = { manifest: { version: project.engineVersion, files: [], conversions: [], entries: { playerWeb: 'web/index.html' } }, directory: root };
+  const builds = new StudioBuilds({ projects: { currentSession: { projectId: project.projectId, withSavedSnapshot: async fn => fn(documents) }, currentRoot: projectRoot },
+    language: { lastValid: () => ({ ok: true, value: snapshot }), currentInput: () => ({}) },
+    engineCatalog: { resolveProjectEngine: async () => ({ ok: true, value: engine }) }, pluginRoot: join(root, 'plugins') });
+  let material;
+  builds.builder.planBuild = (_input, result) => { material = result; return { ok: true, value: { planId: 'Plan01' } }; };
+  const result = await builds.planBuild({ projectId: project.projectId, target: 'web', outputDirectory: join(root, 'release'),
+    releaseVersion: project.releaseVersion, snapshotId: snapshot.snapshotId, savedVersions: documents.map(({ documentId, revision }) => ({ ref: { kind: 'document', id: documentId }, revision })),
+    keepAssets: [], platformPolicy: {}, font: { mode: 'full', fallbackAssetId: null }, oldSaveFiles: [], entryMappings: [] });
+  expect(result.ok).toBe(true);
+  expect(material.issues.filter(issue => ['BUILD_ASSET_SOURCE', 'BUILD_ASSET_REFERENCE', 'ASSET_MISSING'].includes(issue.code))).toEqual([]);
+  expect(material.snapshot.assets.map(({ variantId }) => variantId).sort()).toEqual(['Audio1', 'Decor1', 'Image1', 'Image2', 'Rules1']);
+  const locations = variantId => material.capabilities.find(item => item.feature.endsWith(`/${variantId}`)).sources;
+  expect(locations('Decor1')).toEqual([{ documentId: 'Scene1', revision: 1, field: '/data/decorLayers/0/assetId' }]);
+  expect(locations('Rules1')).toMatchObject([{ statementId: 'First1', field: 'ruleImage.assetId' }, { statementId: 'First4', field: 'ruleImage.assetId' }]);
+  expect(locations('Audio1')).toMatchObject([{ eventId: 'Sound1', field: 'events.0.assetId' }]);
+  expect(locations('Image1')).toMatchObject([{ eventId: 'Smile2', field: 'events.1.differenceId' }]);
+});
 it('blocks an unrelated output directory during checking and invalidates the previous Studio plan', async () => {
   const outputDirectory = join(root, 'downloads'); await mkdir(outputDirectory, { recursive: true });
   await writeFile(join(outputDirectory, 'personal.txt'), 'keep');
@@ -36,6 +98,7 @@ it.each(['web','windows'])('removes Studio declarations and selects actual Playe
   snapshot.lock.plugins=[{kind:'plugin',id:pluginId,version:'0.1.0',targets:['web','windows'],required:true}];
   const documents=[{documentId:snapshot.projectId,revision:1,files:{'project.json':JSON.stringify({data:snapshot.project})}},
     {documentId:crypto.randomUUID(),revision:1,files:{'assets/index.json':JSON.stringify({schemaVersion:1,documentId:crypto.randomUUID(),revision:1,data:{assets:[]}})}}];
+  snapshot.documents = documents.map(({ documentId, revision }) => ({ documentId, revision }));
   const engine={manifest:{version:'0.1.0',files:[],conversions:[],entries:{playerWeb:'web/index.html',playerWindows:'windows/player.exe'}},directory:root};
   const pe=Buffer.alloc(134);pe.write('MZ');pe.writeUInt32LE(128,0x3c);pe.write('PE\0\0',128);pe.writeUInt16LE(0xaa64,132);await mkdir(join(root,'windows'),{recursive:true});await writeFile(join(root,'windows/player.exe'),pe);
   const builds=new StudioBuilds({projects:{currentSession:{projectId:snapshot.projectId,withSavedSnapshot:async action=>action(documents)},currentRoot:join(root,'project')},
@@ -71,6 +134,7 @@ it('executes the declared publish check without Editor UI and invalidates an ear
   snapshot.flowInitials=[{schemaVersion:1,id:'InitAA',name:'作者初值',projectId:snapshot.projectId,entry:position,target:position,initialProgress:{},pluginInitial:{[pluginId]:{authorOnly:true}},route:[],playerInputs:[],externalPolicy:'simulate',engineVersion:snapshot.engineVersion,pluginVersions:[snapshot.lock.engine,...snapshot.lock.plugins,snapshot.lock.template]}];
   const documents=[{documentId:snapshot.projectId,revision:1,files:{'project.json':JSON.stringify({data:snapshot.project})}},
     {documentId:crypto.randomUUID(),revision:1,files:{'assets/index.json':JSON.stringify({schemaVersion:1,documentId:crypto.randomUUID(),revision:1,data:{assets:[]}})}}];
+  snapshot.documents = documents.map(({ documentId, revision }) => ({ documentId, revision }));
   const engine={manifest:{version:'0.1.0',files:[],conversions:[],entries:{playerWeb:'web/index.html',playerWindows:'windows/player.exe'}},directory:root};
   const builds=new StudioBuilds({projects:{currentSession:{projectId:snapshot.projectId,withSavedSnapshot:async action=>action(documents)},currentRoot:join(root,'project')},language:{lastValid:()=>({ok:true,value:snapshot,warnings:[]}),currentInput:()=>({})},engineCatalog:{resolveProjectEngine:async()=>({ok:true,value:engine,warnings:[]})},pluginRoot:join(root,'plugins')});
   let material;builds.builder.planBuild=(_input,value)=>{material=value;return {ok:true,value:{planId:crypto.randomUUID()},warnings:[]};};
@@ -83,4 +147,6 @@ it('executes the declared publish check without Editor UI and invalidates an ear
   const pe=Buffer.alloc(134);pe.write('MZ');pe.writeUInt32LE(128,0x3c);pe.write('PE\0\0',128);pe.writeUInt16LE(0x8664,132);await mkdir(join(root,'windows'),{recursive:true});await writeFile(join(root,'windows/player.exe'),pe);
   await builds.planBuild({...input,target:'windows'});expect(material.issues.find(item=>item.code==='PLUGIN_PUBLISH')?.severity).toBe('error');
   expect((await builds.build(web.value.planId)).error.code).toBe('BUILD_PLAN_STALE');
+  snapshot.documents[0].revision++;
+  expect(await builds.planBuild(input)).toMatchObject({ ok: false, error: { code: 'BUILD_SNAPSHOT_REVISION' } });
 });

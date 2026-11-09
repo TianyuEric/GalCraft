@@ -2,7 +2,7 @@ import { createId, JsonSchema } from '@galcraft/contracts';
 import 'pixi.js/advanced-blend-modes';
 import { Application, Assets, BlurFilter, Container, Graphics, Rectangle, RenderTexture, Sprite, Texture, VideoSource, type Filter, type ApplicationOptions, type AccessibilitySystemOptions } from 'pixi.js';
 import { AdjustmentFilter, AdvancedBloomFilter, DotFilter, GlitchFilter, GodrayFilter, OldFilmFilter, ReflectionFilter, RGBSplitFilter } from 'pixi-filters';
-import type { EffectInstance, EffectValues, ExecutionToken, Id, PresentationState, ResolvedAsset, RestoreKey, Result, StageObject, VoicePlaybackBinding } from '@galcraft/contracts';
+import type { CompiledRuleImageTransition, EffectInstance, EffectValues, ExecutionToken, Id, PresentationState, ResolvedAsset, RestoreKey, Result, StageObject, VoicePlaybackBinding } from '@galcraft/contracts';
 import type { StageInstance, StageProvider, VoicePCM } from '@galcraft/plugins/contracts';
 import { advanceAnimations, finishAnimations, ease, sampleObjectAnimation, type AnimationCompletion } from './animation.js';
 import { copy, fail, ok } from './common.js';
@@ -18,6 +18,7 @@ import { advancePresentationTime } from './presentation-time.js';
 import { paintGridTransition } from './grid-transition.js';
 import { defaultEffectValues } from './commands.js';
 import type { ExecutableAnimation } from './animation-resource.js';
+import { RuleImageSurface } from './rule-image.js';
 
 export type VisualResource = { asset: ResolvedAsset; url: string; anchor: { x: number; y: number }; providerVersion?: string };
 export type StageResourcePort = { resolve(assetId: Id, variantId: Id): Promise<Result<VisualResource>>;
@@ -28,7 +29,9 @@ type Handle = { object: StageObject; sprite: Sprite; texture: Texture; instance:
   mask: Graphics | null; cropKey: string; croppedTexture: Texture | null };
 export type PreparedStage = { id: Id; sessionId: Id; restoreKey: RestoreKey | null; state: PresentationState;
   voiceBinding: VoicePlaybackBinding | null; resources: Id[] };
-type PreparedInternal = { descriptor: PreparedStage; handles: Map<Id, Handle>; transitionHandles: Map<Id, Handle>; weatherTextures: Map<Id, Texture> };
+type SceneReveal = { settings: CompiledRuleImageTransition; movieFrame?: HTMLCanvasElement; priorMovieFrame?: HTMLCanvasElement };
+type PreparedInternal = { descriptor: PreparedStage; handles: Map<Id, Handle>; transitionHandles: Map<Id, Handle>; weatherTextures: Map<Id, Texture>;
+  rules: Map<Id, Texture>; sceneRule: (SceneReveal & { texture: Texture }) | null };
 const sameOwner = (a: ExecutionToken | RestoreKey, b: ExecutionToken | RestoreKey) =>
   'sessionId' in a && 'sessionId' in b && a.sessionId === b.sessionId &&
   ('occurrence' in a && 'occurrence' in b ? a.occurrence === b.occurrence && a.statementId === b.statementId :
@@ -96,6 +99,7 @@ const effectFilterNames = new Set(['oldFilm', 'dot', 'reflection', 'glitch', 'rg
 const layerOrder = { background: 0, figure: 1, effect: 2, overlay: 3 } as const;
 
 export class StageController {
+  private readonly world = new Container();
   private readonly layers: Record<StageObject['layer'], Container> = {
     background: new Container(), figure: new Container(), effect: new Container(), overlay: new Container(),
   };
@@ -104,6 +108,9 @@ export class StageController {
   private handles = new Map<Id, Handle>();
   private transitionHandles = new Map<Id, Handle>();
   private crossfades = new Map<Id, { texture: RenderTexture; sprite: Sprite; container: Container }>();
+  private rules = new Map<Id, Texture>();
+  private backgroundRules = new Map<Id, RuleImageSurface>();
+  private sceneRule: { surface: RuleImageSurface; elapsedMs: number; movie: boolean; completion: Promise<void>; complete(): void } | null = null;
   private gridSurfaces = new Map<string, { source: HTMLCanvasElement; canvas: HTMLCanvasElement; texture: Texture }>();
   private state: PresentationState | null = null;
   private sessionId: Id | null = null;
@@ -119,9 +126,10 @@ export class StageController {
   private stageFilterKey = '';
   private constructor(private readonly app: Application, private readonly design: { width: number; height: number },
     private readonly resources: StageResourcePort, private readonly providers: readonly StageProvider[]) {
-    for (const layer of ['background', 'figure', 'effect', 'overlay'] as const) app.stage.addChild(this.layers[layer]);
+    app.stage.addChild(this.world);
+    for (const layer of ['background', 'figure', 'effect', 'overlay'] as const) this.world.addChild(this.layers[layer]);
     this.weather = new WeatherLayer(design.width, design.height);
-    app.stage.addChildAt(this.weather.backContainer, 1);
+    this.world.addChildAt(this.weather.backContainer, 1);
     this.layers.effect.addChild(this.weather.container);
     this.viewport = { x: 0, y: 0, width: design.width, height: design.height };
   }
@@ -134,6 +142,19 @@ export class StageController {
     return new StageController(app, design, resources, providers);
   }
   get canvas(): HTMLCanvasElement { return this.app.canvas; }
+  get sceneRuleActive(): boolean { return !!this.sceneRule && this.sceneRule.elapsedMs < this.sceneRule.surface.settings.durationMs; }
+  waitForSceneRule(): Promise<void> { return this.sceneRule?.completion ?? Promise.resolve(); }
+  completeSceneRule() {
+    if (!this.sceneRule?.movie) { this.finishSceneRule(); return; }
+    this.sceneRule.elapsedMs = this.sceneRule.surface.settings.durationMs;
+    this.sceneRule.surface.progress(this.sceneRule.elapsedMs);
+    this.sceneRule.complete();
+  }
+  finishSceneRule() {
+    if (!this.sceneRule) return;
+    this.sceneRule.surface.dispose(); this.sceneRule.complete(); this.sceneRule = null;
+    this.world.renderable = true;
+  }
   /** Copy a freshly rendered frame before WebGL releases its drawing buffer. */
   captureFrame(): HTMLCanvasElement {
     this.app.render();
@@ -243,12 +264,33 @@ export class StageController {
     }
   }
   async prepareStage(sessionId: Id, state: PresentationState, restoreKey: RestoreKey | null = null,
-    voiceBinding: VoicePlaybackBinding | null = null, providerCommands: NonNullable<import('@galcraft/contracts').PresentationDelta['providerCommands']> = []): Promise<Result<PreparedStage>> {
+    voiceBinding: VoicePlaybackBinding | null = null, providerCommands: NonNullable<import('@galcraft/contracts').PresentationDelta['providerCommands']> = [],
+    sceneReveal?: SceneReveal): Promise<Result<PreparedStage>> {
     if (state.voice && (!voiceBinding || voiceBinding.token.sessionId !== sessionId ||
       voiceBinding.token.statementId !== state.voice.statementId ||
       voiceBinding.resolution.selected?.assetId !== state.voice.assetId ||
       voiceBinding.resolution.selected.variantId !== state.voice.variantId))
       return fail('VOICE_BINDING', '舞台准备的配音解析与当前声音不一致');
+    const rules = new Map<Id, Texture>();
+    const loadRule = async (rule: CompiledRuleImageTransition): Promise<Result<Texture>> => {
+      const resource = await this.resources.resolve(rule.assetId, rule.variantId);
+      if (!resource.ok) return resource;
+      if (resource.value.asset.kind !== 'image' || resource.value.asset.metadata.imageAnimation)
+        return fail('STAGE_RULE_IMAGE', '规则图需要静态图片', ['locate']);
+      try { return ok(await Assets.load<Texture>(resource.value.url)); }
+      catch (error) { return fail('STAGE_RULE_IMAGE', String(error), ['locate', 'retry']); }
+    };
+    for (const process of state.transitions) if (process.ruleImage) {
+      const loaded = await loadRule(process.ruleImage);
+      if (!loaded.ok) return loaded;
+      rules.set(process.id, loaded.value);
+    }
+    let sceneRule: PreparedInternal['sceneRule'] = null;
+    if (sceneReveal) {
+      const loaded = await loadRule(sceneReveal.settings);
+      if (!loaded.ok) return loaded;
+      sceneRule = { ...sceneReveal, texture: loaded.value };
+    }
     const weatherTextures = new Map<Id, Texture>();
     for (const effect of state.effects.filter(effect => effect.enabled && isWeatherEffect(effect) && effect.resourceId)) {
       if (!this.resources.resolveAsset) return fail('WEATHER_RESOLVER', '粒子纹理缺少素材解析器');
@@ -280,7 +322,15 @@ export class StageController {
         const instance = created.value.instance;
         if (!instance) { this.releasePrepared(handles); return fail('STAGE_PROVIDER_MISSING', '对象没有可接受命令的演出提供者'); }
         try {
-          for (const command of commands) { const applied = instance.set(copy(command.command)); if (!applied.ok) { this.releasePrepared(handles); return applied; } }
+          for (const command of commands) {
+            const applied = instance.set(copy(command.command));
+            if (!applied.ok) {
+              this.releasePrepared(handles);
+              if (!command.source) return applied;
+              const error = { ...applied.error, source: command.source };
+              return { ...applied, error, issues: [error] };
+            }
+          }
           const captured = instance.capture(); if (!captured.ok) { this.releasePrepared(handles); return captured; }
           const checked = JsonSchema.safeParse(captured.value); if (!checked.success) { this.releasePrepared(handles); return fail('STAGE_PROVIDER_STATE', checked.error.message); }
           created.value.object.providerState = { provider: created.value.resource.asset.provider ?? '', version: created.value.resource.providerVersion ?? '0.1.0', state: checked.data };
@@ -290,7 +340,7 @@ export class StageController {
     const transitionHandles = new Map<Id, Handle>();
     for (const process of state.transitions) {
       if (!process.from) continue;
-      const current = this.handles.get(process.objectId);
+      const current = this.handles.get(process.from.id);
       if (current && !(restoreKey && current.video) && current.object.assetId === process.from.assetId && current.object.variantId === process.from.variantId &&
         handles.get(process.objectId) !== current) { transitionHandles.set(process.id, current); continue; }
       const created = await this.createHandle(process.from);
@@ -309,16 +359,31 @@ export class StageController {
       voiceBinding: voiceBinding ? copy(voiceBinding) : null,
       resources: [...new Set([...state.objects.map(item => item.assetId), ...state.objects.flatMap(item => item.imageFace ? imageFaceAssets(item.imageFace) : []),
         ...state.transitions.flatMap(item => item.from ? [item.from.assetId] : []), ...weatherTextures.keys()])] };
-    this.prepared.set(descriptor.id, { descriptor, handles, transitionHandles, weatherTextures });
+    this.prepared.set(descriptor.id, { descriptor, handles, transitionHandles, weatherTextures, rules, sceneRule });
     return ok(descriptor);
   }
   commitStage(preparedId: Id, owner: ExecutionToken | RestoreKey): Result<void> {
     const prepared = this.prepared.get(preparedId); if (!prepared) return fail('STAGE_PREPARED_MISSING', '舞台准备句柄已失效');
     if (prepared.descriptor.restoreKey && !sameOwner(prepared.descriptor.restoreKey, owner)) return fail('RESTORE_KEY', '舞台恢复身份不匹配');
     if (!prepared.descriptor.restoreKey && 'requestId' in owner) return fail('STAGE_OWNER', '普通演出需要指令令牌');
+    if (prepared.sceneRule) {
+      this.finishSceneRule();
+      if (this.state && this.visualEffects && !this.reducedMotion) {
+        const surface = new RuleImageSurface(this.app.renderer, this.design, prepared.sceneRule.texture, prepared.sceneRule.settings);
+        if (prepared.sceneRule.priorMovieFrame) surface.captureMovieFrame(prepared.sceneRule.priorMovieFrame, 'from');
+        else surface.capture(this.world, 'from');
+        const frame = prepared.sceneRule.movieFrame;
+        if (frame) surface.captureMovieFrame(frame, 'to');
+        let complete!: () => void;
+        const completion = new Promise<void>(resolve => { complete = resolve; });
+        this.sceneRule = { surface, elapsedMs: 0, movie: !!frame, completion, complete };
+        this.app.stage.addChild(surface.sprite);
+      }
+    } else if (this.sessionId !== prepared.descriptor.sessionId || prepared.descriptor.restoreKey) this.finishSceneRule();
     const previous = this.handles, previousTransitions = this.transitionHandles;
     const previousIntro = this.state?.intro, completedIntro = this.introCompleted;
     this.handles = prepared.handles; this.transitionHandles = prepared.transitionHandles;
+    this.rules = prepared.rules;
     this.state = copy(prepared.descriptor.state); this.sessionId = prepared.descriptor.sessionId; this.owner = owner;
     this.introToken = 'occurrence' in owner ? owner : null;
     this.introCompleted = Boolean(completedIntro && previousIntro && this.state.intro &&
@@ -374,7 +439,18 @@ export class StageController {
       sprite.filters = this.visualEffects ? [...filters(values), ...effectFilters(objectEffects)] : []; handle.filterKey = filterKey; }
     updateEffectTimes(sprite.filters ?? [], objectEffects);
     const source = renderResource.asset.canvas;
-    if (object.layer === 'background') {
+    if (object.decorFollow !== undefined) {
+      const camera = this.state?.camera?.current, follow = object.decorFollow;
+      const angle = (camera?.rotationDeg ?? 0) * Math.PI / 180;
+      const dx = (camera?.x ?? 0) * (follow - 1), dy = (camera?.y ?? 0) * (follow - 1);
+      const sx = camera?.scaleX || 1, sy = camera?.scaleY || 1;
+      const zoomX = (1 + (sx - 1) * follow) / sx, zoomY = (1 + (sy - 1) * follow) / sy;
+      sprite.texture = renderTexture; sprite.visible = true;
+      sprite.anchor.set(.5, .5);
+      sprite.position.set(this.design.width / 2 + values.x * zoomX + (dx * Math.cos(angle) + dy * Math.sin(angle)) / sx,
+        this.design.height / 2 + values.y * zoomY + (dy * Math.cos(angle) - dx * Math.sin(angle)) / sy);
+      sprite.scale.set(values.scaleX * zoomX, values.scaleY * zoomY);
+    } else if (object.layer === 'background') {
       sprite.texture = renderTexture;
       sprite.visible = true;
       const geometry = backgroundGeometry({ width: handle.resource.asset.metadata.width ?? sprite.texture.width,
@@ -487,22 +563,22 @@ export class StageController {
   private redraw() {
     if (!this.state) return;
     const camera = this.state.camera?.current;
-    this.app.stage.pivot.set(this.design.width / 2, this.design.height / 2);
-    this.app.stage.position.set(this.design.width / 2 + (camera?.x ?? 0), this.design.height / 2 + (camera?.y ?? 0));
-    this.app.stage.scale.set(camera?.scaleX ?? 1, camera?.scaleY ?? 1);
-    this.app.stage.rotation = (camera?.rotationDeg ?? 0) * Math.PI / 180;
-    this.app.stage.alpha = camera?.opacity ?? 1;
+    this.world.pivot.set(this.design.width / 2, this.design.height / 2);
+    this.world.position.set(this.design.width / 2 + (camera?.x ?? 0), this.design.height / 2 + (camera?.y ?? 0));
+    this.world.scale.set(camera?.scaleX ?? 1, camera?.scaleY ?? 1);
+    this.world.rotation = (camera?.rotationDeg ?? 0) * Math.PI / 180;
+    this.world.alpha = camera?.opacity ?? 1;
     const stageEffects = (this.visualEffects?this.state.effects:[]).filter(effect => effect.target === 'stage' && effect.enabled && effectFilterNames.has(effect.type));
     const stageKey = JSON.stringify([camera, stageEffects.map(({ id, type, parameters, seed, fade }) => ({ id, type, parameters, seed, fade }))]);
     if (stageKey !== this.stageFilterKey) {
-      for (const filter of this.app.stage.filters ?? []) filter.destroy();
-      this.app.stage.filters = [...(camera && this.visualEffects ? filters(camera) : []), ...effectFilters(stageEffects)]; this.stageFilterKey = stageKey;
+      for (const filter of this.world.filters ?? []) filter.destroy();
+      this.world.filters = [...(camera && this.visualEffects ? filters(camera) : []), ...effectFilters(stageEffects)]; this.stageFilterKey = stageKey;
     }
-    updateEffectTimes(this.app.stage.filters ?? [], stageEffects);
+    updateEffectTimes(this.world.filters ?? [], stageEffects);
     const surfaces: { object: StageObject; sprite: Sprite }[] = [];
     for (const process of this.state.transitions) if (process.from) {
       const handle = this.transitionHandles.get(process.id); if (!handle) continue;
-      this.drawObject(process.from, handle); this.drawTransition(handle, process, false);
+      this.drawObject(process.from, handle); if (!process.ruleImage) this.drawTransition(handle, process, false);
       handle.sprite.visible &&= stageObjectVisible(process.from, this.state.text.reading);
       surfaces.push({ object: handle.object, sprite: handle.sprite });
     }
@@ -510,17 +586,36 @@ export class StageController {
       const handle = this.handles.get(object.id); if (!handle) continue;
       this.drawObject(object, handle);
       const transition = this.state.transitions.find(process => process.objectId === object.id && process.to);
-      if (transition) this.drawTransition(handle, transition, true);
+      if (transition && !transition.ruleImage) this.drawTransition(handle, transition, true);
       handle.sprite.visible &&= stageObjectVisible(object, this.state.text.reading);
       surfaces.push({ object: handle.object, sprite: handle.sprite });
     }
     // Accumulate the weighted premultiplied images into one transparent surface before
     // compositing onto the stage. Two source-over sprites would leak the background.
-    const mixing = new Set<Id>();
+    const mixing = new Set<Id>(), revealing = new Set<Id>();
     for (const process of this.state.transitions) {
       if (process.spec.preset !== 'fade' || process.kind !== 'replace' || !process.from || !process.to) continue;
       const from = this.transitionHandles.get(process.id), to = this.handles.get(process.objectId);
       if (!from || !to) continue;
+      if (process.ruleImage) {
+        from.sprite.visible &&= this.visualEffects && !this.reducedMotion;
+        if (!this.visualEffects || this.reducedMotion) continue;
+        const texture = this.rules.get(process.id);
+        if (!texture) { from.sprite.visible = false; continue; }
+        revealing.add(process.id);
+        let reveal = this.backgroundRules.get(process.id);
+        if (!reveal) {
+          reveal = new RuleImageSurface(this.app.renderer, this.design, texture, process.ruleImage);
+          this.backgroundRules.set(process.id, reveal);
+        }
+        reveal.captureSprite(from.sprite, 'from');
+        reveal.captureSprite(to.sprite, 'to');
+        reveal.progress(process.elapsedMs);
+        from.sprite.visible = false; to.sprite.visible = false;
+        this.layers.background.addChild(reveal.sprite);
+        surfaces.push({ object: to.object, sprite: reveal.sprite });
+        continue;
+      }
       mixing.add(process.id);
       let mix = this.crossfades.get(process.id);
       if (!mix) { const texture = RenderTexture.create({ width: this.design.width, height: this.design.height });
@@ -540,8 +635,12 @@ export class StageController {
     for (const [id, mix] of this.crossfades) if (!mixing.has(id)) {
       mix.sprite.destroy(); mix.texture.destroy(true); mix.container.destroy(); this.crossfades.delete(id);
     }
+    for (const [id, reveal] of this.backgroundRules) if (!revealing.has(id)) {
+      reveal.dispose(); this.backgroundRules.delete(id);
+    }
     surfaces.sort((a, b) => layerOrder[a.object.layer] - layerOrder[b.object.layer] ||
-      a.object.current.z - b.object.current.z || a.object.entranceOrder - b.object.entranceOrder);
+      a.object.current.z - b.object.current.z || Number(a.object.decorFollow === undefined) - Number(b.object.decorFollow === undefined) ||
+      a.object.entranceOrder - b.object.entranceOrder);
     const orderedSprites = new Map<StageObject['layer'], Sprite[]>();
     for (const { object, sprite } of surfaces) {
       const sprites = orderedSprites.get(object.layer) ?? [];
@@ -556,10 +655,16 @@ export class StageController {
       if (effect.target === 'stage') { this.weather.target(effect.id, null); continue; }
       const handle = this.handles.get(effect.target.id);
       if (!handle) { this.weather.target(effect.id, null, false); continue; }
-      const bounds = handle.sprite.getBounds(), topLeft = this.app.stage.toLocal({ x: bounds.x, y: bounds.y }),
-        bottomRight = this.app.stage.toLocal({ x: bounds.x + bounds.width, y: bounds.y + bounds.height });
+      const bounds = handle.sprite.getBounds(), topLeft = this.world.toLocal({ x: bounds.x, y: bounds.y }),
+        bottomRight = this.world.toLocal({ x: bounds.x + bounds.width, y: bounds.y + bounds.height });
       this.weather.target(effect.id, { x: Math.min(topLeft.x, bottomRight.x), y: Math.min(topLeft.y, bottomRight.y),
         width: Math.abs(bottomRight.x - topLeft.x), height: Math.abs(bottomRight.y - topLeft.y) }, handle.sprite.visible);
+    }
+    if (this.sceneRule) {
+      this.world.renderable = true;
+      if (!this.sceneRule.movie) this.sceneRule.surface.capture(this.world, 'to');
+      this.sceneRule.surface.progress(this.sceneRule.elapsedMs);
+      this.world.renderable = false;
     }
     this.app.render();
     for (const [key, surface] of this.gridSurfaces) if (!this.state.transitions.some(process => key.startsWith(`${process.id}/`))) {
@@ -569,6 +674,11 @@ export class StageController {
   tick(deltaMs: number, voiceLevel = 0, pcm?: VoicePCM | null) {
     if (!this.state || this.paused) return;
     const reduced = !this.visualEffects || this.reducedMotion;
+    if (this.sceneRuleActive) {
+      const rule = this.sceneRule!;
+      rule.elapsedMs += deltaMs;
+      if (reduced || rule.elapsedMs >= rule.surface.settings.durationMs) this.completeSceneRule();
+    }
     const visualDelta = reduced ? Math.max(deltaMs,
       ...this.state.transitions.map(process => process.spec.durationMs - process.elapsedMs),
       ...this.state.effects.map(effect => effect.fade ? effect.fade.durationMs - effect.fade.elapsedMs : 0)) : deltaMs;
@@ -593,6 +703,7 @@ export class StageController {
     this.state.objects = this.state.objects.map(object => object.imageFace ? { ...object,
       imageFace: advanceImageFace(object.imageFace, deltaMs, voiceLevel, this.state?.voice?.targetObjectId === object.id) } : object);
     for (const finished of transitions.finished) {
+      this.rules.delete(finished.id);
       const from = this.transitionHandles.get(finished.id);
       if (from) { this.transitionHandles.delete(finished.id); if (![...this.handles.values(), ...this.transitionHandles.values()].includes(from)) this.release(from); }
       const to = this.handles.get(finished.objectId); if (to) this.clearMask(to);
@@ -648,13 +759,16 @@ export class StageController {
     return ok(state);
   }
   dispose() {
+    this.finishSceneRule();
+    for (const reveal of this.backgroundRules.values()) reveal.dispose();
+    this.backgroundRules.clear(); this.rules.clear();
     for (const surface of this.gridSurfaces.values()) surface.texture.destroy(true); this.gridSurfaces.clear();
     for (const mix of this.crossfades.values()) { mix.sprite.destroy(); mix.texture.destroy(true); mix.container.destroy(); } this.crossfades.clear();
     this.listener = null; for (const id of [...this.prepared.keys()]) this.discardPrepared(id);
     for (const id of [...this.retired.keys()]) this.disposeRetiredStage(id);
     for (const handle of new Set([...this.handles.values(), ...this.transitionHandles.values()])) this.release(handle);
-    for (const filter of this.app.stage.filters ?? []) filter.destroy();
-    this.app.stage.filters = [];
+    for (const filter of this.world.filters ?? []) filter.destroy();
+    this.world.filters = [];
     this.handles.clear(); this.transitionHandles.clear(); this.weather.dispose(); this.state = null; this.sessionId = null;
     this.owner = null; this.introToken = null; this.app.destroy(true);
   }

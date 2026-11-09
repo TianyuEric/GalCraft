@@ -156,15 +156,23 @@ class R4Model implements CubismModelPort {
     if (priority === 3) this.user._motionManager.setReservePriority(priority);
     else if (!this.user._motionManager.reserveMotion(priority)) return;
     this.user._motionManager.startMotionPriority(motion, false, priority);
+    this.user._motionManager.updateMotion(this.model, 0);
     if (elapsedMs > 0) this.user._motionManager.updateMotion(this.model, elapsedMs / 1000);
     this.model.saveParameters();
   }
-  setExpression(name: string | null, elapsedMs: number) {
-    this.user._expressionManager.stopAllMotions();
+  setExpression(name: string | null, elapsedMs: number, settle = false) {
+    const manager = this.user._expressionManager;
+    manager.stopAllMotions();
     if (!name) return;
     const expression = this.expressionObjects.get(name); if (!expression) return;
-    this.user._expressionManager.startMotion(expression, false);
-    if (elapsedMs > 0) this.user._expressionManager.updateMotion(this.model, elapsedMs / 1000);
+    manager.startMotion(expression, false);
+    const elapsed = settle ? Math.max(0, expression.getFadeInTime() * 1000) : elapsedMs;
+    if (settle || elapsed > 0) {
+      this.model.loadParameters();
+      manager.updateMotion(this.model, 0);
+      if (elapsed > 0) manager.updateMotion(this.model, elapsed / 1000);
+    }
+    return elapsed;
   }
   update(deltaMs: number, options: CubismOptions, lipLevel: number, pcm?: VoicePCM | null) {
     if (this.paused) return;
@@ -196,10 +204,10 @@ class R4Model implements CubismModelPort {
     }
     if (options.physics) this.user._physics?.evaluate(this.model, delta);
     this.user._pose?.updateParameters(this.model, delta);
-    this.model.update();
   }
   draw() {
     if (!this.initialized) return;
+    this.model.update();
     this.gl.viewport(0, 0, this.surface.width, this.surface.height);
     this.gl.clearColor(0, 0, 0, 0); this.gl.clear(this.gl.COLOR_BUFFER_BIT);
     const renderer = this.user.getRenderer();
@@ -211,14 +219,33 @@ class R4Model implements CubismModelPort {
     this.context.drawImage(this.surface, 0, 0);
   }
   pause(paused: boolean) { this.paused = paused; }
+  private parameterValues(): Record<string, number> {
+    return Object.fromEntries(Object.keys(this.parameterRanges).map(id => [id, this.model.getParameterValueById(this.ids.getId(id))]));
+  }
+  private applyParameterValues(values: Record<string, Json>) {
+    for (const [id, value] of Object.entries(values)) if (typeof value === 'number' && this.parameterRanges[id])
+      this.model.setParameterValueById(this.ids.getId(id), value);
+  }
   capture() {
-    return { parameterValues: Object.fromEntries(Object.keys(this.parameterRanges).map(id => [id, this.model.getParameterValueById(this.ids.getId(id))])),
+    const parameterValues = this.parameterValues();
+    // Keep the motion base separate from the composed expression frame when replacing an instance.
+    this.model.loadParameters();
+    const parameterBase = this.parameterValues();
+    this.applyParameterValues(parameterValues);
+    return { parameterValues,
       partOpacity: Object.fromEntries(this.partIds.map(id => [id, this.model.getPartOpacityById(this.ids.getId(id))])),
-      automatic: { breath: this.user._breath._currentTime, blink: this.user._eyeBlink ? Object.fromEntries(
+      automatic: { parameterBase, breath: this.user._breath._currentTime, blink: this.user._eyeBlink ? Object.fromEntries(
         ['_blinkingState', '_nextBlinkingTime', '_stateStartTimeSeconds', '_userTimeSeconds'].map(key => [key, this.user._eyeBlink[key]])) : null } as Json };
   }
   restoreAutomatic(value: Json) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const base = value.parameterBase;
+    if (base && typeof base === 'object' && !Array.isArray(base)) {
+      const displayed = this.parameterValues();
+      this.applyParameterValues(base);
+      this.model.saveParameters();
+      this.applyParameterValues(displayed);
+    }
     if (typeof value.breath === 'number') this.user._breath._currentTime = value.breath;
     if (value.blink && this.user._eyeBlink) Object.assign(this.user._eyeBlink, value.blink);
   }

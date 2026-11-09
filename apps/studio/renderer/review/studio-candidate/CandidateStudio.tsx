@@ -41,7 +41,8 @@ import { CandidateProjectCenter } from './components/CandidateProjectCenter.js';
 import {CandidatePreferencesDialog} from './components/CandidatePreferencesDialog.js';
 import { CandidateHistoryDialog } from './components/CandidateHistoryDialog.js';
 import { CandidateSaveReview } from './components/CandidateSaveReview.js';
-import { CandidateButton, CandidateIconButton, CandidateInput, CandidateMenuButton, CandidateToolbar } from './components/controls/index.js';
+import { CandidateButton, CandidateIconButton, CandidateInput, CandidateMenuButton } from './components/controls/index.js';
+import { StudioChromeHeader, StudioChromeToolbar, StudioChromeToolGroup } from '../../components/workbench/StudioChrome.js';
 import { candidateAssets } from './application/services.js';
 import '../../styles/studio-theme.css';
 import './styles/studio.css';
@@ -306,31 +307,34 @@ function WorkspaceContent({ preferenceKey, initialLayout = 'balanced', initialVi
   const targetData=targetPath?JSON.parse(targetDocument!.files[targetPath]!):null;
   const currentTarget = state.activeView==='preferences'?'个人偏好':!state.commandTarget&&state.activeView.startsWith('production')?'制作草稿':project.scenes.find(scene => scene.id === state.commandTarget||store.documentId(scene.id)===state.commandTarget)?.name ?? project.characters.find(character=>character.id===targetData?.data?.id)?.name ?? targetData?.pluginDocument?.name ?? targetData?.data?.name ?? (targetPath==='project.json'?project.name:targetPath==='assets/index.json'?'素材库':targetPath==='dependencies.lock.json'?'引擎与插件':targetPath??'未选中文档');
   return <CandidateTaskPanelsProvider onOpen={open} onNavigate={taskNavigate}><div ref={root} className="gc-candidate authoring-shell" data-theme={ui.theme} onKeyDownCapture={keydown}>
-    <header className="candidate-top"><CandidateButton onClick={onProjects}><strong>GalCraft Studio</strong></CandidateButton><CandidateButton onClick={()=>open('overview')} className="candidate-project" title={project.name}><span>{project.name}</span></CandidateButton><span className="candidate-review-label">候选审核</span>
-      <div className="candidate-command-anchor"><CandidateButton className="candidate-command-trigger" variant="outline" onClick={()=>openCommands('objects')}><Search size={14}/>查找对象<kbd>Ctrl P</kbd></CandidateButton>
+    <StudioChromeHeader className="candidate-top" searchClassName="candidate-command-anchor"
+      brand={<CandidateButton onClick={onProjects}><strong>GalCraft Studio</strong></CandidateButton>}
+      project={<CandidateButton onClick={()=>open('overview')} className="candidate-project" title={project.name}><span>{project.name}</span></CandidateButton>}
+      context={<span className="candidate-review-label">候选审核</span>}
+      search={<><CandidateButton className="candidate-command-trigger" variant="outline" onClick={()=>openCommands('objects')}><Search size={14}/>查找对象<kbd>Ctrl P</kbd></CandidateButton>
         {ui.commandOpen && <div className="candidate-command-menu"><div className="candidate-command-modes" aria-label="搜索模式"><CandidateButton aria-pressed={effectiveMode==='objects'} onClick={()=>{setCommandMode('objects');setQuery('');setCommandIndex(0);search.current?.focus();}}>对象</CandidateButton><CandidateButton aria-pressed={effectiveMode==='commands'} onClick={()=>{setCommandMode('commands');setQuery('');setCommandIndex(0);search.current?.focus();}}>命令</CandidateButton><small>使用 &gt; 查命令，@ 查对象</small></div><CandidateInput ref={search} aria-label={effectiveMode==='objects'?'搜索作品对象':'搜索候选命令'} role="combobox" aria-expanded="true" aria-controls={commandsId} aria-activedescendant={filtered[commandIndex] ? `${commandsId}-${filtered[commandIndex]!.id}` : undefined} value={query} onChange={event => { setQuery(event.target.value); setCommandIndex(0); }} onKeyDown={event => {
           if (event.nativeEvent.isComposing) return;
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setCommandIndex(index => filtered.length ? (index + (event.key === 'ArrowDown' ? 1 : -1) + filtered.length) % filtered.length : 0); }
           if (event.key === 'Enter' && filtered[commandIndex]) { event.preventDefault(); runCommand(filtered[commandIndex]!); }
         }}/><div id={commandsId} role="listbox" aria-label="候选命令">{filtered.map((command, index) => <CandidateButton id={`${commandsId}-${command.id}`} key={command.id} role="option" tabIndex={-1} aria-selected={index === commandIndex} aria-disabled={!!command.disabled} title={command.disabled} onClick={() => runCommand(command)}><span>{command.label}</span><small>{command.disabled??(recent.includes(command.id)?'最近使用':'')}</small></CandidateButton>)}{!filtered.length && <p>没有匹配结果</p>}</div></div>}
-      </div><CandidateButton onClick={onPreferences}>个人偏好</CandidateButton><CandidateIconButton label={ui.theme === 'light' ? '切换深色' : '切换浅色'} onClick={() => void store.updatePreferences(preferences => { preferences.theme = preferences.theme === 'light' ? 'dark' : 'light'; })}>{ui.theme === 'light' ? <Moon size={15}/> : <Sun size={15}/>}</CandidateIconButton><CandidateIconButton label="集成说明" aria-pressed={integration} onClick={() => setIntegration(value => !value)}><Info size={15}/></CandidateIconButton>
-    </header>
-    <CandidateToolbar className="candidate-toolbar" label="工作台命令">
-      <CandidateMenuButton label="工作面" actions={[[`writing:${ui.sceneId}`,'当前场景文稿'],[`commands:${ui.sceneId}`,'当前场景指令'],[`source:${ui.sceneId}`,'当前场景源码'],...Object.entries(names)].map(([id,label])=>({id:id!,label:label!,run:()=>open(id!)}))}><LayoutPanelLeft size={15}/>工作面</CandidateMenuButton>
-      <div className="candidate-toolbar-group">{[['制作','production'],['协作','collaboration'],['插件','plugins'],['发布','publish']].map(([name,id])=><CandidateButton key={id} onClick={()=>open(id!)}>{name}</CandidateButton>)}</div>
-      <span className="candidate-spacer"/>
-      <div className="candidate-toolbar-group"><CandidateIconButton label="撤销当前目标" title={`撤销 · ${currentTarget}`} disabled={!state.canUndo||state.activeView==='preferences'} onClick={() => void store.undo()}><Undo2 size={14}/></CandidateIconButton><CandidateIconButton label="重做当前目标" disabled={!state.canRedo||state.activeView==='preferences'} onClick={() => void store.redo()}><Redo2 size={14}/></CandidateIconButton></div>
-      <CandidateMenuButton label="工作台布局" actions={[
+      </>}
+      actions={<><CandidateButton onClick={onPreferences}>个人偏好</CandidateButton><CandidateIconButton label={ui.theme === 'light' ? '切换深色' : '切换浅色'} onClick={() => void store.updatePreferences(preferences => { preferences.theme = preferences.theme === 'light' ? 'dark' : 'light'; })}>{ui.theme === 'light' ? <Moon size={15}/> : <Sun size={15}/>}</CandidateIconButton><CandidateIconButton label="集成说明" aria-pressed={integration} onClick={() => setIntegration(value => !value)}><Info size={15}/></CandidateIconButton></>}
+    />
+    <StudioChromeToolbar className="candidate-toolbar gc-candidate-tools" label="工作台命令"
+      workfaces={<CandidateMenuButton label="工作面" actions={[[`writing:${ui.sceneId}`,'当前场景文稿'],[`commands:${ui.sceneId}`,'当前场景指令'],[`source:${ui.sceneId}`,'当前场景源码'],...Object.entries(names)].map(([id,label])=>({id:id!,label:label!,run:()=>open(id!)}))}><LayoutPanelLeft size={15}/>工作面</CandidateMenuButton>}
+      routes={<StudioChromeToolGroup className="candidate-toolbar-group">{[['制作','production'],['协作','collaboration'],['插件','plugins'],['发布','publish']].map(([name,id])=><CandidateButton key={id} onClick={()=>open(id!)}>{name}</CandidateButton>)}</StudioChromeToolGroup>}
+      history={<StudioChromeToolGroup className="candidate-toolbar-group"><CandidateIconButton label="撤销当前目标" title={`撤销 · ${currentTarget}`} disabled={!state.canUndo||state.activeView==='preferences'} onClick={() => void store.undo()}><Undo2 size={14}/></CandidateIconButton><CandidateIconButton label="重做当前目标" disabled={!state.canRedo||state.activeView==='preferences'} onClick={() => void store.redo()}><Redo2 size={14}/></CandidateIconButton></StudioChromeToolGroup>}
+      layout={<CandidateMenuButton label="工作台布局" actions={[
         ...([['balanced','默认工作区'],['writing','专注写作'],['source','文稿与源码'],['documents','两个文档并排'],['stage','舞台主导']] as const).map(([id,label])=>({id,label,run:()=>dock.current?.preset(id)})),
         {id:'save-layout',label:'保存布局',separatorBefore:true,run:()=>dock.current?.savePreset('我的候选布局')},
         {id:'restore-layout',label:'恢复布局',run:()=>dock.current?.restorePreset('我的候选布局')}
-      ]}>布局</CandidateMenuButton>
-      <div className="candidate-toolbar-group candidate-save-actions"><CandidateButton variant="outline" disabled={state.saving||!state.canSaveCurrent} title="Ctrl+S · 当前目标及必要关联" onClick={()=>void store.save(false)}><Save size={14}/>{state.saving?'保存中…':'保存'}</CandidateButton><CandidateMenuButton label="保存选项" actions={[
+      ]}>布局</CandidateMenuButton>}
+      save={<StudioChromeToolGroup className="candidate-toolbar-group candidate-save-actions" split><CandidateButton variant="outline" disabled={state.saving||!state.canSaveCurrent} title="Ctrl+S · 当前目标及必要关联" onClick={()=>void store.save(false)}><Save size={14}/>{state.saving?'保存中…':'保存'}</CandidateButton><CandidateMenuButton label="保存选项" actions={[
         {id:'save-all',label:'保存全部',shortcut:'Ctrl Shift S',disabledReason:state.saving?'正在保存，请稍候':undefined,run:()=>void store.save()},
         {id:'save-review',label:'保存审阅',disabledReason:state.saving?'正在保存，请稍候':undefined,run:()=>void store.reviewSave()}
-      ]}/></div>
-      <CandidateButton variant="primary" onClick={runPreview}><Play size={14}/>运行预览</CandidateButton>
-    </CandidateToolbar>
+      ]}/></StudioChromeToolGroup>}
+      preview={<CandidateButton variant="primary" onClick={runPreview}><Play size={14}/>运行预览</CandidateButton>}
+    />
     {state.historyReview&&<CandidateHistoryDialog plan={state.historyReview} onConfirm={accepted=>store.confirmHistory(accepted)}/>}
     {state.saveReview&&<CandidateSaveReview initialPlan={state.saveReview.plan} initialDocuments={state.saveReview.documents} scope={state.saveReview.scope} locale={store.controller.preferences.locale} bridge={store.services.bridge.documents} names={Object.fromEntries(project.scenes.map(scene=>[store.documentId(scene.id),scene.name]))} close={()=>store.closeSaveReview()} save={async plan=>{if(!await store.savePlan(plan))throw new Error('保存未完成，工作内容已保留。请刷新范围或重试。');}} changed={async(receipt,documentId)=>{await store.controller.acceptExternalEdit(receipt,documentId);store.refreshFromHost();}}/>}
     {state.error && <div className="candidate-save-error" role="alert">保存失败：{state.error}<CandidateButton onClick={() => void store.retrySave()}>重试保存</CandidateButton></div>}

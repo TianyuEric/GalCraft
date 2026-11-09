@@ -44,6 +44,7 @@ export type VersionRef = z.infer<typeof VersionRefSchema>;
 export const SourceSchema = z.strictObject({
   documentId: IdSchema,
   statementId: IdSchema.optional(),
+  eventId: IdSchema.optional(),
   field: z.string().optional(),
   range: z.strictObject({ start: RevisionSchema, end: RevisionSchema }).refine(value => value.end >= value.start).optional(),
   revision: RevisionSchema,

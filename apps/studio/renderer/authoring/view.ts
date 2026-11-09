@@ -10,7 +10,9 @@ import { createId, NativeAnimationSchema, StageWeatherPresets } from '@galcraft/
 import { readTemplateDocuments } from '@galcraft/templates';
 import { dialoguePortraitField } from './dialogue-portrait-field.js';
 import { dialogueTextField } from './dialogue-text-field.js';
-import { DialogueContentSchema, dialoguePlainText, replaceDialogueText } from '@galcraft/contracts';
+import { InlineWaitFields, waitEventValues, type WaitInput } from './inline-wait-fields.js';
+import { DialogueContentSchema, DialogueEventSchema, dialogueAnchorOffsets, dialoguePlainText, replaceDialogueText } from '@galcraft/contracts';
+import type { DialogueEvent } from '@galcraft/contracts';
 import { createAssetInspector, disposeAssetInspector } from './asset-inspector.js';
 import { createAssetDetails } from './asset-details.js';
 import { showObjectMenu, isObjectMenuKey, objectMenuSelection } from '../components/workbench/ObjectMenu.js';
@@ -29,8 +31,8 @@ import { commandName, createCommandPicker } from './command-picker.js';
 import { MiniStage } from './mini-stage.js';
 import { AnimationTargetPicker, groupAnimationTargets, type AnimationTargetAvailability, type AnimationTargetOption } from './AnimationTargetPicker.js';
 import { CharacterDifferencePicker } from './characters/CharacterDifferencePicker.js';
-import { SceneEntryEditor } from './scene-entry-editor.js';
-import { SceneEntryPresentationSchema, round5AssetBindings } from '@galcraft/contracts';
+import { SceneDecorEditor, SceneEntryEditor } from './scene-entry-editor.js';
+import { SceneDecorLayerSchema, SceneEntryPresentationSchema, round5AssetBindings } from '@galcraft/contracts';
 import { Disclosure } from '../components/disclosure.js';
 import { createBatchDialogueEditor } from './batch-dialogue.js';
 import { DebugRouteIntent } from './debug-route-intent.js';
@@ -41,11 +43,11 @@ import { codeBlock } from '../components/code-block.js';
 import { prepareNativeDialog } from '../components/motion.js';
 import { installTransientScrollbars } from '@galcraft/player-ui';
 /// <reference types="vite/client" />
-import type { Asset, AssetKind, AssetListIdentity, BackgroundAdoptionScope, BackgroundReference, CharacterDifference, FieldSpec, Id, Json, Ref, Result, Source, StudioBridge, StudioPreferences } from '@galcraft/contracts';
+import type { Asset, AssetKind, AssetListIdentity, BackgroundAdoptionScope, BackgroundReference, CharacterDifference, FieldSpec, Id, Json, Ref, Result, SceneDecorLayer, SceneEntryPresentation, Source, StudioBridge, StudioPreferences } from '@galcraft/contracts';
 import { IdSchema } from '@galcraft/contracts';
 import { createCommandRegistry, parse, parseExpression, printExpression } from '@galcraft/dsl';
 import { AuthoringController, classifyAssetDrop, mergeDialoguePaste, previewDialoguePaste } from './controller.js';
-import type { AssetQuery, AuthoringServices, StudioLocale } from './controller.js';
+import type { AssetQuery, AuthoringServices, AuthoringSource, StatementEditTarget, StudioLocale } from './controller.js';
 import { mountScriptEditor } from './script-editor.js';
 import './workspace.css';
 import { configureAudioPreview, type PreviewPlayback } from './audio-preview.js';
@@ -53,17 +55,19 @@ import { attachCardReorder } from './card-reorder.js';
 import { framingPresets, portraitFraming, type FramingPreset } from './framing-presets.js';
 import { commandIcon } from './command-icon.js';
 import { actionIcon } from '../components/action-icon.js';
-import { ShellHeader, type ShellAction } from '../components/shell-header.js';
+import type { ShellAction } from '../components/shell-header.js';
 import { requestDialog } from '../components/request-dialog.js';
 import { reviewFileConflicts } from '../components/document-recovery.js';
 import { SaveChangeList, readableDocument } from '../components/change-list.js';
 import { SaveReview, requestSaveReview } from '../components/save-review.js';
-import { RailNavigation, type RailItem } from '../components/rail-navigation.js';
+import type { RailItem } from '../components/rail-navigation.js';
+import type { DockHandle } from '../components/workbench/DockWorkspace.js';
 import { captureAuthoringFocus, hasLocalTextHistory, markAuthoringFocus, restoreAuthoringFocus } from './focus.js';
 import { SceneVisualFields } from './scene-visual-fields.js';
 import { EffectField } from './effect-field.js';
 import { BackgroundObjectField } from './background-object-field.js';
 import { BackgroundTransition } from './background-transition.js';
+import { ruleImageField } from './rule-image-field.js';
 import { SceneGraph, mountSceneGraphDialog } from './scene-graph.js';
 import { mountMoveInstructionsDialog } from './move-instructions-dialog.js';
 import { buildMoveInstructionsModel, resolveMovePosition } from './move-instructions-model.js';
@@ -138,6 +142,7 @@ type PersistentWorkspaceInput = {
 };
 
 type Page = 'projects' | 'editor' | 'assets' | 'pages' | 'production' | 'assistant' | 'collaboration' | 'plugins' | 'publish' | `extension:${string}`;
+type SceneStatementSource = { sceneId: Id; documentId: Id; statementId: Id; eventId?: Id; projectId?: Id; revision?: number };
 type PasteSpeaker = { kind: 'character'; id: Id } | { kind: 'narrator' };
 type PasteMapping = { speakers: Record<string, PasteSpeaker>; newCharacters: { id: Id; name: string }[] };
 type ShellServices = AuthoringServices & {
@@ -223,6 +228,7 @@ function inputFor(spec: FieldSpec, value: unknown, onCommit: FieldCommit, assets
     const root = el('div', spec.path === 'rgb' ? 'effect-color-field' : 'effect-number-field'); context.visualEffectField(root, spec, value, onCommit); return root;
   }
   if (context?.command === 'say' && spec.path === 'text') return dialogueTextField(value, locale, onCommit);
+  if (spec.path === 'ruleImage' && context) return ruleImageField(value, onCommit, assets, locale, context);
   const label = (field: FieldSpec) => fieldLabel(field, locale, context?.command);
   const hint = (field: FieldSpec) => fieldHint(field, label(field), locale, context?.command);
   if (spec.path === 'animationId' && context?.command === 'stopAnimation') {
@@ -287,29 +293,13 @@ function inputFor(spec: FieldSpec, value: unknown, onCommit: FieldCommit, assets
     const root = el('section', 'portrait-model-controls');
     if (context.assetEditor?.(root, (value ?? {}) as Json, onCommit)) return root;
   }
-  if (spec.path === 'model' && context) return renderPortraitModel(spec, value, context.modelAsset,
-    context.modelAsset?.kind === 'live2d' ? 'live2d' : context.figureKind ?? 'image', locale,
-    (field, next, commit) => inputFor(field, next, commit, assets, references, locale, false, framingSize, context), onCommit,
-    context.modelAsset?.kind === 'live2d' && context.services.inspectModelAsset ? async () => {
-      const result = await context.services.inspectModelAsset!(context.modelAsset!.id);
-      if (result.ok && result.value) context.cache(result.value);
-      return result;
-    } : undefined);
+  if (spec.path === 'model' && context) return renderPortraitModel(
+    context.modelAsset?.kind === 'live2d' ? 'live2d' : context.figureKind ?? 'image', locale);
   if (spec.type === 'object') {
     let current = value && typeof value === 'object' && !Array.isArray(value) ? { ...value as Record<string, Json> } : {} as Record<string, Json>;
     if (!spec.children?.length) {
       const empty = el('p', 'authoring-field-empty', tr(locale, '此指令没有可调整的自定义参数。', 'This command has no custom parameters to adjust.', 'このコマンドには調整できるカスタムパラメーターがありません。'));
       return empty;
-    }
-    if (['imageMouth','imageBlink'].includes(spec.path) && context && !context.draft) {
-      const wrapper=el('section','image-animation-editor'),status=el('p','field-help');
-      status.hidden=true;
-      const content=()=>inputFor(spec,current,next=>{current=next as Record<string,Json>;status.hidden=false;apply.hidden=false;status.textContent=tr(locale,'设置尚未应用','Settings are not applied yet','設定はまだ適用されていません');},assets,references,locale,false,framingSize,{...context,draft:true});
-      const apply=button(tr(locale,'应用这组设置','Apply these settings','この設定を適用'),async()=>{
-        const errors=validateFields([spec],{[spec.path]:current},label,locale);
-        if(errors.length){status.textContent=errors.map(error=>error.message).join(' · ');return;}
-        const result=await onCommit(current);if(result?.ok){const ids=commandAssetIds(spec.children??[],current);if(ids.length)await recordAssetsPicked(context.services,context.projectId,ids);}
-      });apply.hidden=true;wrapper.append(content(),status,apply);return wrapper;
     }
     const group = el('fieldset', 'authoring-field-group'); group.append(el('legend', '', label(spec)));
     if (spec.path === 'target' && spec.children?.some(child => child.refKind === 'object')) group.classList.add('animation-target-fields');
@@ -326,16 +316,14 @@ function inputFor(spec: FieldSpec, value: unknown, onCommit: FieldCommit, assets
     for (const originalChild of spec.children ?? []) {
       if (spec.path === 'target' && ['object','station','stage'].includes(String(current.kind)) && (originalChild.path === 'id' && current.kind !== 'object' || originalChild.path === 'station' && current.kind !== 'station')) continue;
       const child = context?.command === 'end' && spec.path === 'target' && (current.kind === 'scene' && originalChild.path === 'sceneId' || current.kind === 'page' && originalChild.path === 'pageId') ? { ...originalChild, required: true } : originalChild;
-      if (['imageMouth', 'imageBlink'].includes(spec.path) && child.path !== 'enabled' && current.enabled !== true) continue;
       if (context?.command === 'end' && spec.path === 'target' && child.path !== 'kind') {
         const kind = current.kind ?? 'title';
         if (kind === 'title' || kind === 'page' && child.path !== 'pageId' || kind === 'scene' && !['sceneId', 'labelId'].includes(child.path)) continue;
       }
       const path = child.path; const row = el(context?.visualEffectField || child.refKind === 'object' ? 'div' : 'label', 'authoring-field');
-      const childLabel=child.refKind==='object'?tr(locale,'舞台对象','Stage object','舞台オブジェクト'):child.path==='enabled'&&['imageMouth','imageBlink'].includes(spec.path)?tr(locale,'启用','Enabled','有効'):label(child);
+      const childLabel=child.refKind==='object'?tr(locale,'舞台对象','Stage object','舞台オブジェクト'):label(child);
       row.append(el('span', '', childLabel + (child.required && !(child.path==='id'&&child.refKind==='statement') ? tr(locale, ' · 必填', ' · Required', ' · 必須') : ''))); row.append(inputFor(child, current[path],
         next => { current = { ...current, [path]: next }; if (next === null && !child.required && !child.nullable) delete current[path]; const result = onCommit(current);
-          if (path === 'enabled' && ['imageMouth', 'imageBlink'].includes(spec.path)) group.replaceWith(inputFor(spec,current,onCommit,assets,references,locale,false,framingSize,context));
           if (path === 'kind' && context?.command === 'end' && spec.path === 'target') group.replaceWith(inputFor(spec,current,onCommit,assets,references,locale,false,framingSize,context));
           return result; }, assets, references, locale, false, framingSize, context ? { ...context, fieldPath: `${context.fieldPath ?? spec.path}.${child.path}` } : context));
       sectionFor(path).append(row);
@@ -465,7 +453,6 @@ export class AuthoringWorkspace {
   private disposed=false;
   private recoveryPending = false;
   private recoveryReviewOpen = false;
-  private railCollapsed = localStorage.getItem('studio:railCollapsed') === 'true';
   private importingAssets = false;
   private inspectorMoreOpen = false;
   private narrowPanel: 'left'|'right'|'' = '';
@@ -485,10 +472,9 @@ export class AuthoringWorkspace {
   private pluginRenderLocale = '';
   private projectsNode = el('div', 'project-mount');
   private projectsRoot: Root | null = null;
-  private headerNode = el('header', 'authoring-header');
-  private headerRoot: Root | null = null;
-  private railNode = el('nav', 'studio-rail');
-  private railRoot: Root | null = null;
+  private dock = { current: null as DockHandle | null };
+  private dockLayout: Json | undefined;
+  private stageRegion: HTMLElement | null = null;
   private inspectorRoots: Root[] = [];
   private resourceProcessorRoot: Root | null = null;
   private resourceProcessorUnapplied = false;
@@ -497,7 +483,6 @@ export class AuthoringWorkspace {
   private setResourceProcessorUnapplied = (dirty: boolean) => { this.resourceProcessorUnapplied=dirty;void this.reportAuthoringDrafts(); };
   private resourceProcessorNode = el('div');
   private renderedSceneId: Id | null = null;
-  private renderedView: string | null = null;
   private focusRenderSequence = 0;
   private projectCreateUnapplied = false;
   private setProjectCreateUnapplied = (dirty: boolean) => { this.projectCreateUnapplied = dirty; };
@@ -533,6 +518,13 @@ export class AuthoringWorkspace {
   private activeDocument = '';
   private treeSelected: string[] = [];
   private sceneContexts = new Map<Id, { view: AuthoringController['view']; selection: AuthoringController['selection']; caret: AuthoringController['caret']; scroll: AuthoringController['scroll'] }>();
+  private sceneViewContexts = new Map<Id, Map<AuthoringController['view'], { selection: AuthoringController['selection']; caret: AuthoringController['caret']; scroll: AuthoringController['scroll'] }>>();
+  private splitSceneViews = new Map<Id, [AuthoringController['view'], AuthoringController['view']]>();
+  private fixedStageSource: SceneStatementSource | null = null;
+  private fixedInspectorSource: SceneStatementSource | null = null;
+  private focusedDialogueEvent: { sceneId: Id; statementId: Id; eventId: Id } | null = null;
+  private composingSceneInputs = new Set<HTMLElement>();
+  private deferredSceneRender = false;
   private scriptSessions = new Map<Id, { node: HTMLElement; editor: Awaited<ReturnType<typeof mountScriptEditor>> }>();
   private writingInputs = new Map<Id, HTMLTextAreaElement>();
   private renderedRevision: number | null = null;
@@ -599,6 +591,8 @@ export class AuthoringWorkspace {
   page: Page = 'projects';
   private readonly debugRouteIntent = new DebugRouteIntent();
   private miniStage: MiniStage | null = null;
+  private animationMiniStage: MiniStage | null = null;
+  private get animationStage() { return this.animationMiniStage ?? this.miniStage; }
   private renderedPage: Page | null = null;
   private pageScroll = new Map<Page, number>();
   private messageValue = '';
@@ -636,14 +630,17 @@ export class AuthoringWorkspace {
   private mattingBusy = false;
   private preparingModel = false;
   private sidebarState = initialSidebarState();
-  private searchOrigin: { sceneId: Id; view: 'cards' | 'writing' | 'script'; statementId: Id | null } | null = null;
+  private searchOrigin: { sceneId: Id; revision: number; view: AuthoringController['view']; selection: AuthoringController['selection']; caret: AuthoringController['caret']; scroll: AuthoringController['scroll'] } | null = null;
   private scriptEditor: Awaited<ReturnType<typeof mountScriptEditor>> | null = null;
+  private scriptReveal: { documentId: Id; revision: number; offset: number } | null = null;
   private scriptDrafts = new Map<Id, string>();
+  private scriptDraftOrigins = new Map<Id, number>();
   private writingDrafts = new Map<Id, string>();
+  private writingDraftOrigin: { documentId: Id; revision: number } | null = null;
   private writingPending = Promise.resolve(true);
   private sessionId: Id | null = null;
   private commandShortcut = (event: KeyboardEvent) => {
-    if (!this.root.isConnected || event.defaultPrevented || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey) || hasWorkbenchModal()) return;
+    if (!this.root.isConnected || event.defaultPrevented || event.isComposing || this.composingSceneInputs.size || event.altKey || !(event.ctrlKey || event.metaKey) || hasWorkbenchModal()) return;
     const key = event.key.toLowerCase();
     if (key === 'p') { event.preventDefault(); this.openCommandCenter(event.shiftKey ? 'commands' : 'objects'); }
     else if (key === 's') { event.preventDefault(); void this.save(event.shiftKey); }
@@ -676,9 +673,10 @@ export class AuthoringWorkspace {
       if (current?.project?.projectId === this.controller.source.project.projectId) this.sessionId = current.project.sessionId;
       await this.loadQuickAssets(); await this.refreshStudioPlugins();
     }
-    const restored = this.controller.workbench; this.documents = restored?.documents.filter(doc => doc.kind !== 'scene' || this.controller.source?.scenes.some(scene => scene.sceneId === doc.objectId)) ?? [];
+    this.restoreSceneLayout();
+    const active = this.restoreWorkbenchDocuments();
     await this.restoreInputDraft(); this.inputDraftReady = true;
-    const active = this.documents.find(doc => doc.id === restored?.active); if (active && !this.activeDocument) await this.openDocument(active); else this.render();
+    await this.resumeWorkbench(active);
     if (this.controller.source) void this.checkRecovery();
     const collaborationBridge=this.services.bridge as import('../../desktop-bridge.js').DesktopBridge;
     if(collaborationBridge.onCollaborationChanged)this.collaborationSubscriptions.push(collaborationBridge.onCollaborationChanged(()=>{void (async()=>{if(!await this.flushScript())return;await this.controller.refresh();this.render();})();}));
@@ -700,7 +698,7 @@ export class AuthoringWorkspace {
       void (async () => { if (!await this.flushScript()) return; this.studioPlugins?.publishScope(); this.studioPlugins?.openTools('context.menu'); })();
     });
     this.root.addEventListener('keydown', event => {
-      if (event.defaultPrevented || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
+      if (event.defaultPrevented || event.isComposing || this.composingSceneInputs.size || event.altKey || !(event.ctrlKey || event.metaKey)) return;
       const target = event.target as HTMLElement;
       if (hasWorkbenchModal()) return;
       const key = event.key.toLowerCase();
@@ -723,14 +721,14 @@ export class AuthoringWorkspace {
     this.assetExplorerMount?.typeRoot.unmount(); this.assetExplorerMount?.objectRoot.unmount(); this.assetExplorerMount = null;
     this.collaborationSubscriptions.splice(0).forEach(unsubscribe=>unsubscribe());
     this.closeSubscription?.(); this.closeSubscription = null; this.productionSubscription?.(); this.productionSubscription = null; this.production?.stop();
-    this.stopStartup?.(); this.designer?.dispose(); this.miniStage?.dispose(); this.effectEditor?.dispose();
+    this.stopStartup?.(); this.designer?.dispose(); this.miniStage?.dispose(); this.animationMiniStage?.dispose(); this.effectEditor?.dispose();
     for (const session of this.scriptSessions.values()) session.editor.dispose(); this.scriptSessions.clear(); this.writingInputs.clear();
     this.resourceProcessorRoot?.unmount(); this.resourceProcessorRoot = null;
     this.playerNameEditor?.dispose();this.languageRoot?.unmount(); this.startupRoot?.unmount(); this.characterRoot?.unmount(); this.graphRoot?.unmount(); this.projectsRoot?.unmount(); this.workbench?.unmount();
-    this.authoringToolbarRoot?.unmount(); this.headerRoot?.unmount(); this.railRoot?.unmount(); this.shellRoot?.unmount(); this.shellRoot = null; this.controller.close(); void this.studioPlugins?.dispose();
+    this.authoringToolbarRoot?.unmount(); this.shellRoot?.unmount(); this.shellRoot = null; this.controller.close(); void this.studioPlugins?.dispose();
   }
   private presetLifecycle(args: Record<string, unknown>, preset: AppliedAnimationPreset) {
-    const object = this.miniStage?.animationTarget(args.target);
+    const object = this.animationStage?.animationTarget(args.target);
     if (!object) throw new Error(tr(this.controller.preferences.locale, '先在当前舞台确认具体对象，再应用出入场预设。', 'Confirm the specific object on the current stage before applying an entrance or exit preset.', '現在の舞台で対象を確認してから登退場プリセットを適用してください。'));
     const background = object.layer === 'background', command = background ? 'changeBg' : object.purpose === 'illustration' ? 'changeIllustration' : 'changeFigure';
     const transition = { preset: 'custom', direction: 'left', resourceId: null, animation: preset.animation,
@@ -791,8 +789,7 @@ export class AuthoringWorkspace {
         const draw = (active = true) => { const current = !draft && statementId ? this.controller.parsed()?.parsed.cst.find(node => node.id === statementId)?.object?.value as Record<string, unknown> | undefined : undefined;
         if (!dirty) animationValue = NativeAnimationSchema.safeParse(current?.animation ?? value).data ?? animationValue;
         animationTarget = current?.target ?? animationTarget;
-        if (animationTarget && typeof animationTarget === 'object' && (animationTarget as { kind?: string }).kind === 'object') this.miniStage?.highlightObject(String((animationTarget as { id?: string }).id));
-        if (this.miniStage && this.miniStage.root.parentElement !== preview) preview.append(this.miniStage.root);
+        if (animationTarget && typeof animationTarget === 'object' && (animationTarget as { kind?: string }).kind === 'object') this.animationStage?.highlightObject(String((animationTarget as { id?: string }).id));
         const target = createCommandRegistry(this.controller.source!.project.engineVersion).get('setComplexAnimation')?.fields.find(field => field.path === 'target');
         if (target) targets.replaceChildren(inputFor(target, animationTarget, async next => { animationTarget = next; args.target = next;
           if (draft) return; const result = await this.controller.editFields([{ field: 'target', op: 'set', value: next }], statementId ? [statementId] : []); if (this.notice(result)) this.render(); return result;
@@ -800,12 +797,12 @@ export class AuthoringWorkspace {
         flushSync(() => root.render(createElement(AnimationWorkbench, { guiDraft:this.professionalInputs.get(id) as unknown as import('./professional/AnimationWorkbench.js').AnimationGuiDraft,onGuiDraftChange:state=>{this.professionalInputs.set(id,asJson(state));this.persistInputDraft();},animation: animationValue, locale: this.controller.preferences.locale, active,
           preview: createElement(DomRegion, { node: preview }), statusLabel: tr(this.controller.preferences.locale,'确认后进入作品，保存后落盘','Apply to working content; save to disk','確定して作品に適用、保存してディスクへ'),
           targetLabel: tr(this.controller.preferences.locale,'上方选择预览与执行目标','Choose the preview and execution target above','上で対象を選択'),
-          presetContext: this.miniStage?.animationContext(animationTarget) ?? { stageWidth: this.controller.source!.project.canvas.width },
-          onGenerate: request => { const object = this.miniStage?.animationTarget(animationTarget); return this.createAnimationWithAi({ ...request, targetContext: JSON.stringify({ canvas: this.controller.source!.project.canvas, target: animationTarget, object: object ? { id: object.id, assetId: object.assetId, variantId: object.variantId, layer: object.layer, station: object.station, current: object.current, framing: object.framing, backgroundFrame: object.backgroundFrame } : null }) }, { sceneId: scene?.sceneId, statementId }); },
+          presetContext: this.animationStage?.animationContext(animationTarget) ?? { stageWidth: this.controller.source!.project.canvas.width },
+          onGenerate: request => { const object = this.animationStage?.animationTarget(animationTarget); return this.createAnimationWithAi({ ...request, targetContext: JSON.stringify({ canvas: this.controller.source!.project.canvas, target: animationTarget, object: object ? { id: object.id, assetId: object.assetId, variantId: object.variantId, layer: object.layer, station: object.station, current: object.current, framing: object.framing, backgroundFrame: object.backgroundFrame } : null }) }, { sceneId: scene?.sceneId, statementId }); },
           onPreset: async preset => { await this.applyComplexPreset(args,preset,draft,commit,statementId??undefined,replaceDraft); animationValue=preset.animation;editRevision=this.controller.scene?.revision; if(preset.lifecycle!=='property')this.finishFormDocument(id); },
           onDraftChange: next => { dirty = next; this.documents = this.documents.map(document => document.id === id ? { ...document, dirty: next || this.controller.scene?.dirty } : document); this.refreshDocumentTabs(); },
           onChange: async next => { if (!draft && (this.controller.scene?.sceneId !== scene?.sceneId||this.controller.scene?.revision!==editRevision)) throw new Error(tr(this.controller.preferences.locale,'请返回来源场景后重试。','Return to the source scene and retry.','元のシーンを開いて再試行してください。')); const result = await commit(next as unknown as Json); if (result && !result.ok) throw new Error(result.error.message); animationValue = next;editRevision=this.controller.scene?.revision; },
-          onPreview: (next, time) => { if (active) void this.miniStage?.sampleAnimation(next, time, animationTarget); },
+          onPreview: (next, time) => { if (active) void this.animationStage?.sampleAnimation(next, time, animationTarget); },
           onSave: async (name, animation) => { const result = await this.services.saveAnimation?.({ name, animation }); if (!result) throw new Error('动画资源保存服务不可用'); if (!result.ok) throw new Error(result.error.message);
             const asset = await this.services.getAsset?.(result.value.assetId); if (asset?.ok && asset.value) this.assetCache.set(asset.value.id, asset.value);
             await this.controller.refresh(); return tr(this.controller.preferences.locale,'动画已入库，可在演出预设或出入场中选择。','Animation saved. Select it in a preset or transition.','保存済み。プリセットや切り替えで選択できます。'); },
@@ -909,7 +906,12 @@ export class AuthoringWorkspace {
     this.lastInputContent.set(draft.projectId, serialized);
     this.inputDraftStore.schedule(draft.projectId, JSON.parse(serialized) as Json);
   }
-  async flushInputDrafts(): Promise<void> { this.persistInputDraft(); await this.inputDraftStore.flush(); }
+  async flushInputDrafts(): Promise<void> {
+    this.persistInputDraft();
+    await this.inputDraftStore.flush();
+    const resume = await this.controller.flushResume();
+    if (!resume.ok) throw new Error(issueText(resume.error, this.controller.preferences.locale));
+  }
   private async restoreInputDraft() {
     const source = this.controller.source; if (!source || this.inputDraftRestoredProject === source.project.projectId) return;
     const projectId = source.project.projectId; this.inputDraftRestoring = true; let original: Json | null = null;
@@ -926,6 +928,12 @@ export class AuthoringWorkspace {
         this.message = tr(this.controller.preferences.locale,'部分输入的来源已变化。请复核保留的输入后继续。','The source of some inputs changed. Review the retained inputs before continuing.','一部の入力元が変更されました。保持した入力を確認してください。');
       } else {
         this.inputOriginVersions=structuredClone(draft.versions);this.scriptDrafts = new Map(draft.scripts); this.writingDrafts = new Map(draft.writing); this.designerResume = draft.designer;
+        for (const scene of source.scenes) {
+          const revision = draft.versions.find(item => item.documentId === scene.documentId)?.revision;
+          if (revision === undefined) continue;
+          if (this.scriptDrafts.has(scene.sceneId)) this.scriptDraftOrigins.set(scene.sceneId, revision);
+          if (this.writingDrafts.size && scene.sceneId === draft.sceneId) this.writingDraftOrigin = { documentId: scene.documentId, revision };
+        }
         this.publishGuiDraft = draft.publish; this.resourceProcessorGuiDraft = draft.resourceProcessor;
         this.characterGuiDraft = draft.character; this.characterSelected = draft.character?.selected ?? undefined;
         this.startupGuiDraft = draft.startup; this.languageGuiDraft = draft.language; this.playerNameGuiDraft = draft.playerName;
@@ -965,7 +973,11 @@ export class AuthoringWorkspace {
     if (adapter.sceneId && !scene) return false;
     if (scene) this.controller.selectScene(scene.sceneId);
     const beforeId = typeof adapter.beforeId === 'string' ? adapter.beforeId : null;
-    if (adapter.kind === 'entry') await this.openEntryPresentation(adapter.entryKind as 'chapter'|'scene',String(adapter.objectId),{draft:adapter.draft as unknown as import('@galcraft/contracts').SceneEntryPresentation,original:String(adapter.original)});
+    if (adapter.kind === 'entry') await this.openEntryPresentation(adapter.entryKind as 'chapter'|'scene', String(adapter.objectId), {
+      draft: adapter.draft as unknown as SceneEntryPresentation, original: String(adapter.original),
+      decorDraft: Array.isArray(adapter.decorDraft) ? SceneDecorLayerSchema.array().parse(adapter.decorDraft) : undefined,
+      decorOriginal: typeof adapter.decorOriginal === 'string' ? adapter.decorOriginal : undefined,
+    });
     else if(adapter.kind==='projectSettings')await this.openProjectSettings(adapter.draft as unknown as import('./ProjectSettingsEditor.js').ProjectSettingsGuiDraft);
     else if(adapter.kind==='storyStructure')await this.openStoryStructure(adapter.draft as unknown as import('./StoryStructureEditor.js').StoryStructureGuiDraft);
     else if (adapter.kind === 'paste') await this.pasteDialog({beforeId,draft:adapter.draft as unknown as import('./batch-dialogue.js').BatchDialogueGuiDraft});
@@ -1063,13 +1075,15 @@ export class AuthoringWorkspace {
     this.publishGuiDraft=null;this.publishUnapplied=false;this.resourceProcessorGuiDraft=null;this.resourceProcessorUnapplied=false;
     this.resourceProcessorRoot?.unmount(); this.resourceProcessorRoot=null; this.resourceProcessorInspector.replaceChildren();
     this.production?.stop(); this.production = null; this.designer?.dispose(); this.designer = null; this.designerResume = null; this.miniStage?.dispose(); this.miniStage = null;
+    this.animationMiniStage?.dispose(); this.animationMiniStage = null;
     this.productionSubscription?.(); this.productionSubscription = null;
     this.designerProjectRevision = null; this.designerSceneRevisions.clear();
     this.workbench?.unmount(); this.workbench = null;
     for (const session of this.scriptSessions.values()) session.editor.dispose(); this.scriptSessions.clear(); this.scriptEditor = null;
     this.writingInputs.clear();
     for(const form of this.formDocuments.values())form.dispose?.(); this.formDocuments.clear(); this.productionUnapplied=false; this.insertions.clear(); this.recentObjects=[];this.cardRangeAnchor=null;this.treeCreateEditor=null; this.debugRouteIntent.clear(); this.characterSelected=undefined;this.characterAsset=null;
-    this.documents = []; this.activeDocument = ''; this.sceneContexts.clear(); this.treeSelected = [];
+    this.documents = []; this.activeDocument = ''; this.sceneContexts.clear(); this.sceneViewContexts.clear(); this.scriptDraftOrigins.clear(); this.scriptReveal = null; this.writingDraftOrigin = null; this.composingSceneInputs.clear(); this.treeSelected = [];
+    this.restoreSceneLayout();
     this.playerNameEditor?.dispose();this.playerNameEditor = null; this.languageRoot?.unmount(); this.languageRoot=null; this.projectNode.replaceChildren(); this.characterRoot?.unmount(); this.characterRoot = null; this.characterDraft = false; this.graphRoot?.unmount(); this.graphRoot = null;
     this.startupRoot?.unmount(); this.startupRoot = null; this.stopStartup?.(); this.stopStartup = null; this.startupDraft = false; this.startupGeneration++;
     this.effectEditor?.dispose(); this.effectEditor = null;
@@ -1083,15 +1097,191 @@ export class AuthoringWorkspace {
     await this.studioPlugins?.dispose(); this.studioPlugins = null; this.services.assetUi = undefined; this.assetTypes = []; ++this.assetQueryGeneration;
     this.assetInspectorView && disposeAssetInspector(this.assetInspectorView.node); this.assetInspectorView = null;
     if (this.controller.source) await this.loadQuickAssets();
-    await this.refreshStudioPlugins(); this.page = this.controller.source ? 'editor' : 'projects'; await this.restoreInputDraft(); this.render();
+    await this.refreshStudioPlugins(); this.page = this.controller.source ? 'editor' : 'projects';
+    const active = this.restoreWorkbenchDocuments();
+    await this.restoreInputDraft();
+    await this.resumeWorkbench(active);
   }
   private rememberScene(): void {
     if (this.controller.scene) this.sceneContexts.set(this.controller.scene.sceneId, { view: this.controller.view, selection: structuredClone(this.controller.selection), caret: { ...this.controller.caret }, scroll: { ...this.controller.scroll } });
   }
+  private restoreSceneLayout(): void {
+    const workbench = this.controller.workbench;
+    this.dockLayout = workbench?.dockLayout;
+    this.stageRegion = null;
+    this.splitSceneViews = new Map(workbench?.sceneSplits?.map(({ sceneId, views }) => [sceneId, views]));
+    this.fixedStageSource = workbench?.stageSource ?? null;
+    this.fixedInspectorSource = workbench?.inspectorSource ?? null;
+    this.focusedDialogueEvent = null;
+  }
+  private restoreWorkbenchDocuments(): AuthorDocument | undefined {
+    const workbench = this.controller.workbench;
+    this.documents = workbench?.documents.filter(document => document.kind !== 'scene' ||
+      this.controller.source?.scenes.some(scene => scene.sceneId === document.objectId)) ?? [];
+    return this.documents.find(document => document.id === workbench?.active);
+  }
+  private async resumeWorkbench(active: AuthorDocument | undefined): Promise<void> {
+    if (active && !this.activeDocument) {
+      await this.openDocument(active);
+      if (this.activeDocument) return;
+    }
+    this.render();
+  }
+  private rememberWorkbench(): void {
+    this.controller.rememberWorkbench({
+      documents: this.documents.filter(doc => !doc.preview && !this.formDocuments.has(doc.id)).map(({ id, title, kind, objectId }) => ({ id, title, kind, ...(objectId ? { objectId } : {}) })),
+      active: this.formDocuments.get(this.activeDocument)?.source ?? this.activeDocument,
+      ...(this.splitSceneViews.size ? { sceneSplits: [...this.splitSceneViews].map(([sceneId, views]) => ({ sceneId, views })) } : {}),
+      ...(this.fixedStageSource ? { stageSource: this.fixedStageSource } : {}),
+      ...(this.fixedInspectorSource ? { inspectorSource: this.fixedInspectorSource } : {}),
+      ...(this.dockLayout ? { dockLayout: this.dockLayout } : {}),
+    });
+  }
+  private sceneViews(sceneId = this.controller.scene?.sceneId): readonly AuthoringController['view'][] {
+    const current = this.controller.view, split = sceneId ? this.splitSceneViews.get(sceneId) : null;
+    return split ? split.includes(current) ? split : [split[0], current] : [current];
+  }
+  private sceneViewContext() {
+    return { selection: structuredClone(this.controller.selection), caret: { ...this.controller.caret }, scroll: { ...this.controller.scroll } };
+  }
+  private scenePaneContext(sceneId: Id, view: AuthoringController['view']) {
+    return this.sceneViewContexts.get(sceneId)?.get(view) ?? this.sceneViewContext();
+  }
+  private setScenePaneScroll(sceneId: Id, view: AuthoringController['view'], scroll: AuthoringController['scroll']): void {
+    if (this.controller.scene?.sceneId !== sceneId) return;
+    if (view === this.controller.view) { this.controller.setScroll(scroll.statementId, scroll.offsetPx, scroll.scrollLeft); return; }
+    const views = this.sceneViewContexts.get(sceneId) ?? new Map();
+    views.set(view, { ...this.scenePaneContext(sceneId, view), scroll });
+    this.sceneViewContexts.set(sceneId, views);
+  }
+  private activateSceneView(view: AuthoringController['view']): void {
+    const scene = this.controller.scene, current = this.controller.view;
+    if (!scene || current === view) return;
+    const context = this.sceneViewContext();
+    const views = this.sceneViewContexts.get(scene.sceneId) ?? new Map();
+    views.set(current, context);
+    this.sceneViewContexts.set(scene.sceneId, views);
+    const next = views.get(view) ?? context;
+    this.controller.changeView(view);
+    this.controller.selection = structuredClone(next.selection);
+    this.controller.caret = { ...next.caret };
+    this.controller.scroll = { ...next.scroll };
+  }
+  private async changeSceneView(view: AuthoringController['view']): Promise<void> {
+    const scene = this.controller.scene;
+    if (!scene || !await this.flushScript() || this.controller.scene?.sceneId !== scene.sceneId) return;
+    this.chooseSceneView(view);
+    this.render();
+  }
+  private chooseSceneView(view: AuthoringController['view']): void {
+    const scene = this.controller.scene;
+    if (!scene) return;
+    const split = this.splitSceneViews.get(scene.sceneId);
+    if (split && !split.includes(view)) {
+      this.splitSceneViews.set(scene.sceneId, split[0] === this.controller.view ? [view, split[1]] : [split[0], view]);
+    }
+    this.activateSceneView(view);
+  }
+  private async splitScene(view: AuthoringController['view'] | null): Promise<boolean> {
+    const scene = this.controller.scene;
+    if (!scene || !await this.flushScript() || this.controller.scene?.sceneId !== scene.sceneId) return false;
+    if (!view) this.splitSceneViews.delete(scene.sceneId);
+    else if (this.controller.view !== view) this.splitSceneViews.set(scene.sceneId, [this.controller.view, view]);
+    this.render();
+    return true;
+  }
+  private setSceneComposition(input: HTMLElement, active: boolean): void {
+    if (active) this.composingSceneInputs.add(input);
+    else this.composingSceneInputs.delete(input);
+    if (!active && !this.composingSceneInputs.size && this.deferredSceneRender) {
+      this.deferredSceneRender = false;
+      requestAnimationFrame(() => this.render());
+    }
+  }
+  private selectedSceneSource(eventId?: Id): SceneStatementSource | null {
+    const scene = this.controller.scene, statementId = this.controller.selection?.primaryId;
+    if (!scene || !statementId) { this.focusedDialogueEvent = null; return null; }
+    const target = { sceneId: scene.sceneId, documentId: scene.documentId, statementId,
+      projectId: this.controller.source?.project.projectId, revision: scene.revision };
+    if (eventId) return { ...target, eventId };
+    const focused = this.focusedDialogueEvent;
+    if (focused?.sceneId === scene.sceneId && focused.statementId === statementId) {
+      const eventTarget = { ...target, eventId: focused.eventId };
+      if (this.resolveSceneSource(eventTarget)) return eventTarget;
+    }
+    this.focusedDialogueEvent = null;
+    return target;
+  }
+  private resolveSceneSource(target: SceneStatementSource | null, view: AuthoringController['view'] = 'cards') {
+    if (!target || target.projectId && target.projectId !== this.controller.source?.project.projectId) return null;
+    const scene = this.controller.source?.scenes.find(item => item.sceneId === target.sceneId && item.documentId === target.documentId);
+    const state = scene && this.controller.parsed(view, scene);
+    const node = state?.parsed.cst.find(item => item.valid && item.id === target.statementId);
+    if (!scene || !state || !node) return null;
+    const values = node.object?.value as Record<string, unknown> | undefined;
+    const events = node.command === 'say' && Array.isArray(values?.events) ? values.events : [];
+    const parsedEvent = target.eventId ? DialogueEventSchema.safeParse(events.find(event => event && typeof event === 'object' && 'id' in event && event.id === target.eventId)) : undefined;
+    if (parsedEvent && !parsedEvent.success) return null;
+    return { scene, state, node, event: parsedEvent?.data };
+  }
+  private async openSceneTarget(sceneId: Id): Promise<boolean> {
+    const tabId = `scene:${sceneId}`;
+    if (this.page !== 'editor' || this.activeDocument !== tabId || this.controller.scene?.sceneId !== sceneId)
+      await this.openDocument({ kind: 'scene', objectId: sceneId });
+    return this.activeDocument === tabId && this.controller.scene?.sceneId === sceneId;
+  }
+  private revealScriptOffset(statementId: Id | null, offset: number): void {
+    const scene = this.controller.scene;
+    if (!scene) return;
+    this.controller.setCaret(statementId, offset);
+    this.scriptReveal = { documentId: scene.documentId, revision: scene.revision, offset };
+  }
+  private sourceControls(panel: 'stage' | 'inspector'): HTMLElement {
+    const locale = this.controller.preferences.locale, stage = panel === 'stage';
+    const fixed = stage ? this.fixedStageSource : this.fixedInspectorSource;
+    const followed = this.selectedSceneSource(), target = fixed ?? followed;
+    const resolved = this.resolveSceneSource(target);
+    const controls = el('div', 'authoring-source-controls');
+    controls.dataset.sourcePanel = panel;
+    controls.dataset.sourceMode = fixed ? 'fixed' : 'follow';
+    if (target) {
+      controls.dataset.sourceScene = target.sceneId;
+      controls.dataset.sourceDocument = target.documentId;
+      controls.dataset.sourceStatement = target.statementId;
+      if (target.eventId) controls.dataset.sourceEvent = target.eventId;
+    }
+    if (resolved) controls.dataset.sourceRevision = String(resolved.scene.revision);
+    controls.dataset.sourceAvailable = String(Boolean(resolved));
+    const label = fixed ? stage ? tr(locale, '恢复舞台跟随', 'Resume stage following', '舞台の追従を再開') : tr(locale, '恢复属性跟随', 'Resume properties following', 'プロパティの追従を再開')
+      : stage ? tr(locale, '固定舞台来源', 'Pin stage source', '舞台の出典を固定') : tr(locale, '固定属性来源', 'Pin properties source', 'プロパティの出典を固定');
+    const toggle = button(label, () => {
+      const next = fixed ? null : followed;
+      if (stage) this.fixedStageSource = next;
+      else this.fixedInspectorSource = next;
+      this.render();
+    });
+    toggle.disabled = !fixed && !resolved;
+    if (fixed && !resolved) {
+      const status = el('p', '', tr(locale, '固定来源已失效。可恢复跟随后重新选择。', 'The pinned source is unavailable. Resume following to choose again.', '固定した出典を利用できません。追従を再開して選び直してください。'));
+      status.setAttribute('role', 'status');
+      controls.append(status);
+    }
+    else if (fixed && resolved) controls.append(el('p', '', `${resolved.scene.name} · ${resolved.node.command}`));
+    controls.append(toggle);
+    const sceneId = (fixed ? resolved?.scene : this.controller.scene)?.sceneId;
+    if (stage && sceneId) controls.append(button(tr(locale, '场景布景', 'Scene decor', 'シーンの背景レイヤー'),
+      () => this.openEntryPresentation('scene', sceneId, undefined, true)));
+    return controls;
+  }
   private refreshDocumentTabs(): void {
     void this.reportAuthoringDrafts();
-    queueMicrotask(() => { if (!this.shellProps || !this.shellRoot) return; this.shellProps = { ...this.shellProps, documents: this.documents }; this.shellRoot.render(createElement(AuthoringWorkbench, this.shellProps)); });
+    queueMicrotask(() => {
+      if (!this.shellProps || !this.shellRoot) return;
+      this.shellProps = { ...this.shellProps, documents: this.documents, chrome: { ...this.shellProps.chrome, dirty: this.workbenchDirty() } };
+      this.shellRoot.render(createElement(AuthoringWorkbench, this.shellProps));
+    });
   }
+  private workbenchDirty(): boolean { return this.controller.status.dirty || this.writingDrafts.size > 0 || this.scriptDrafts.size > 0; }
   /** Public document entrypoint for core pages and plugin consumers. */
   async openDocument(document: Omit<AuthorDocument, 'id' | 'title'> & { id?: string; title?: string }): Promise<void> {
     if (!await this.flushScript()) return;
@@ -1225,18 +1415,28 @@ export class AuthoringWorkspace {
     const createSlot=this.root.querySelector('.scene-tree-create-slot');
     if(createSlot)createSlot.append(row);else if(parentRow)parentRow.after(row);else this.root.querySelector('.gc-wb-explorer .gc-wb-tree')?.prepend(row);input.focus();
   }
-  private async openEntryPresentation(kind: 'chapter' | 'scene', objectId: string, resume?: {draft:import('@galcraft/contracts').SceneEntryPresentation;original:string}): Promise<void> {
+  private async openEntryPresentation(kind: 'chapter' | 'scene', objectId: string, resume?: {
+    draft: SceneEntryPresentation; original: string; decorDraft?: SceneDecorLayer[]; decorOriginal?: string;
+  }, focusDecor = false): Promise<void> {
     if (!this.inputDraftRestoring && !await this.flushScript()) return;
     const source = this.controller.source; if (!source) return;
-    const id = `entry:${kind}:${objectId}`, opened = this.documents.find(document => document.id === id); if (opened) { await this.openDocument(opened); return; }
-    if (this.formDocuments.has(id)) { const locale=this.controller.preferences.locale;const retained: AuthorDocument = { id, kind: 'route', objectId: 'editor', title: `${kind==='chapter'?tr(locale,'章节开场','Chapter opening','章の開始'):tr(locale,'场景开场','Scene opening','シーンの開始')} · ${kind === 'chapter' ? source.project.chapters.find(chapter => chapter.id === objectId)?.name : source.scenes.find(scene => scene.sceneId === objectId)?.name}` }; this.documents = openAuthorDocument(this.documents, retained); await this.openDocument(retained); return; }
+    const showDecor = () => requestAnimationFrame(() => {
+      const button = this.formDocuments.get(id)?.node.querySelector<HTMLButtonElement>('.scene-decor-heading button');
+      if (button?.isConnected) button.focus();
+    });
+    const id = `entry:${kind}:${objectId}`, opened = this.documents.find(document => document.id === id);
+    if (opened) { await this.openDocument(opened); if (focusDecor) showDecor(); return; }
+    if (this.formDocuments.has(id)) { const locale=this.controller.preferences.locale;const retained: AuthorDocument = { id, kind: 'route', objectId: 'editor', title: `${kind==='chapter'?tr(locale,'章节开场','Chapter opening','章の開始'):tr(locale,'场景开场','Scene opening','シーンの開始')} · ${kind === 'chapter' ? source.project.chapters.find(chapter => chapter.id === objectId)?.name : source.scenes.find(scene => scene.sceneId === objectId)?.name}` }; this.documents = openAuthorDocument(this.documents, retained); await this.openDocument(retained); if (focusDecor) showDecor(); return; }
     const listed = await this.services.bridge.documents.list(); if (!listed.ok) throw new Error(listed.error.message);
     const scene = source.scenes.find(scene => scene.sceneId === objectId), chapter = source.project.chapters.find(chapter => chapter.id === objectId);
     const ownerId = kind === 'chapter' ? source.projectDocumentId : scene?.documentId;
     const owner = listed.value.find(document => document.documentId === ownerId); if (!owner) return;
     const rawPath = Object.keys(owner.files).find(path => path.endsWith('.json'))!, data = JSON.parse(owner.files[rawPath]!).data;
     const originalValue = kind === 'chapter' ? data.chapters.find((chapter: { id: string }) => chapter.id === objectId)?.presentation : data.presentation;
-    let original = resume?.original ?? JSON.stringify(originalValue ?? null), draft = resume?.draft ?? SceneEntryPresentationSchema.parse(originalValue ?? { title: null, interlude: null }), dirty = !!resume, busy = false;
+    const normalizePresentation = (value: unknown) => SceneEntryPresentationSchema.parse(value ?? { title: null, interlude: null });
+    let original = resume?.original ?? JSON.stringify(originalValue ?? null), draft = resume?.draft ?? normalizePresentation(originalValue), dirty = !!resume, busy = false;
+    let decorOriginal = resume?.decorOriginal ?? JSON.stringify(data.decorLayers ?? []);
+    let decorDraft = resume?.decorDraft ?? SceneDecorLayerSchema.array().parse(data.decorLayers ?? []);
     const locale = this.controller.preferences.locale, container = el('section','scene-entry-document'), content = el('div'), status = el('p', 'field-help'), error = el('p', 'authoring-form-error'), actions = el('footer', 'authoring-toolbar'), react = createRoot(content);
     status.setAttribute('role','status');
     error.setAttribute('role', 'alert'); container.append(content, status, error, actions);
@@ -1247,28 +1447,71 @@ export class AuthoringWorkspace {
         const current = await this.services.bridge.documents.list(); if (!current.ok) throw new Error(current.error.message);
         const document = current.value.find(document => document.documentId === ownerId); if (!document) throw new Error('入口对象已移除');
         const before = JSON.parse(document.files[rawPath]!).data, old = kind === 'chapter' ? before.chapters.find((chapter: { id: string }) => chapter.id === objectId)?.presentation : before.presentation;
-        if (JSON.stringify(old ?? null) !== original) throw new Error(tr(locale, '入口配置已变化，请保留输入并重新打开审阅。', 'Entry settings changed. Keep your input and reopen for review.', '入口設定が変更されました。入力を保持して再確認してください。'));
-        const after = kind === 'chapter' ? { ...before, chapters: before.chapters.map((chapter: { id: string }) => chapter.id === objectId ? { ...chapter, presentation: checked.data } : chapter) } : { ...before, presentation: checked.data };
-        const bindings = round5AssetBindings(kind === 'chapter' ? { project: after } : { scene: after });
-        const result = await this.applyWorkbenchObject({ label: tr(locale, '修改入口演出', 'Edit entry presentation', '入口演出を変更'), origin: 'field', expected: [{ ref: { kind: 'document', id: document.documentId }, revision: document.revision }],
-          patches: [{ kind: 'json', documentId: document.documentId, changes: [{ path: kind === 'chapter' ? '/data/chapters' : '/data/presentation', before: kind === 'chapter' ? before.chapters : before.presentation ?? null, after: kind === 'chapter' ? after.chapters : checked.data, op: 'set' }] }], preparedAssets: [], requiredRefs: bindings.map(binding => ({ kind: binding.variantId ? 'variant' : 'asset', id: binding.variantId ?? binding.assetId })) });
-        if (result) throw new Error(result); original = JSON.stringify(checked.data); dirty = false;
+        if (JSON.stringify(old ?? null) !== original || kind === 'scene' && JSON.stringify(before.decorLayers ?? []) !== decorOriginal)
+          throw new Error(tr(locale, '场景设置已变化，当前输入仍保留。请还原或比较后重试。', 'Scene settings changed. Your input is retained. Restore or compare the settings before retrying.', 'シーン設定が変更されました。入力は保持されています。復元または比較して再試行してください。'));
+        if (kind === 'scene') {
+          const presentationChanged = JSON.stringify(checked.data) !== JSON.stringify(normalizePresentation(JSON.parse(original)));
+          const decorChanged = JSON.stringify(decorDraft) !== JSON.stringify(SceneDecorLayerSchema.array().parse(JSON.parse(decorOriginal)));
+          if (presentationChanged || decorChanged) {
+            const result = await this.controller.authorOperation({ op: 'scene.update', id: objectId, changes: {
+              ...(presentationChanged ? { presentation: checked.data } : {}), ...(decorChanged ? { decorLayers: decorDraft } : {}),
+            } }, current.value);
+            if (!result.ok) throw new Error(issueText(result.error, locale));
+            if (presentationChanged) original = JSON.stringify(checked.data);
+            if (decorChanged) decorOriginal = JSON.stringify(decorDraft);
+          }
+        } else {
+          const after = { ...before, chapters: before.chapters.map((chapter: { id: string }) => chapter.id === objectId ? { ...chapter, presentation: checked.data } : chapter) };
+          const bindings = round5AssetBindings({ project: after });
+          const result = await this.applyWorkbenchObject({ label: tr(locale, '修改入口演出', 'Edit entry presentation', '入口演出を変更'), origin: 'field', expected: [{ ref: { kind: 'document', id: document.documentId }, revision: document.revision }],
+            patches: [{ kind: 'json', documentId: document.documentId, changes: [{ path: '/data/chapters', before: before.chapters, after: after.chapters, op: 'set' }] }], preparedAssets: [], requiredRefs: bindings.map(binding => ({ kind: binding.variantId ? 'variant' : 'asset', id: binding.variantId ?? binding.assetId })) });
+          if (result) throw new Error(result);
+          original = JSON.stringify(checked.data);
+        }
+        dirty = false;
         this.documents = this.documents.map(item => item.id === id ? { ...item, dirty: true } : item); this.refreshDocumentTabs();
         status.textContent = tr(locale, '已应用 · 待保存。保存作品时审阅实际差异。', 'Applied · Unsaved. Review the actual changes when saving.', '適用済み・未保存。作品の保存時に差分を確認してください。');
+        if (kind === 'scene') this.render();
       } finally { busy = false; refreshActions(); }
     };
-    const draw = () => react.render(createElement(SceneEntryEditor, { value: draft, assets: [...this.assetCache.values()], locale,
-      change: value => { draft = value; dirty = true; status.textContent = tr(locale,'未应用 · 应用后进入工作区，保存后落盘。','Unapplied · Apply to working content, then save to disk.','未適用・作業内容に適用してから保存してください。'); this.documents = this.documents.map(item => item.id === id ? { ...item, dirty: true } : item); this.refreshDocumentTabs(); refreshActions(); draw(); } }));
+    const changed = () => {
+      dirty = true;
+      status.textContent = tr(locale, '未应用 · 应用后进入工作区，保存后落盘。', 'Unapplied · Apply to working content, then save to disk.', '未適用・作業内容に適用してから保存してください。');
+      this.documents = this.documents.map(item => item.id === id ? { ...item, dirty: true } : item);
+      this.refreshDocumentTabs(); refreshActions(); draw();
+    };
+    const draw = () => {
+      const assets = [...this.assetCache.values()];
+      react.render(createElement('div', {},
+        createElement(SceneEntryEditor, { value: draft, assets, locale, change: value => { draft = value; changed(); } }),
+        kind === 'scene' && createElement(SceneDecorEditor, {
+          layers: decorDraft, assets, locale, change: layers => { decorDraft = layers; changed(); },
+          choose: async (layer, origin) => {
+            const choice = await openAssetPicker({ services: this.services, projectId: source.project.projectId, sceneId: objectId,
+              allowedKinds: ['image'], locale, mode: 'compact', scope: this.root, returnFocus: origin, remember: false,
+              purpose: tr(locale, '布景图片', 'Decor image', '背景レイヤーの画像'),
+              currentAssetId: layer?.assetId, currentVariantId: layer?.variantId,
+              onApply: async () => ({ ok: true, value: undefined, warnings: [] }),
+            });
+            if (!choice) return null;
+            this.assetCache.set(choice.asset.id, choice.asset);
+            return SceneDecorLayerSchema.parse({ id: createId(), ...layer, assetId: choice.assetId,
+              variantId: choice.variantId ?? choice.asset.activeVariantId });
+          },
+        }),
+      ));
+    };
     const reload = async (force = false) => {
       if (dirty && !force || busy) return;
       const current = await this.services.bridge.documents.list(); if (!current.ok || dirty && !force) return;
       const document = current.value.find(document => document.documentId === ownerId); if (!document?.files[rawPath]) return;
       const data = JSON.parse(document.files[rawPath]!).data, value = kind === 'chapter' ? data.chapters.find((chapter: { id: string }) => chapter.id === objectId)?.presentation : data.presentation;
-      const next = JSON.stringify(value ?? null);
+      const next = JSON.stringify(value ?? null), nextDecor = JSON.stringify(data.decorLayers ?? []);
       status.textContent = document.dirty ? tr(locale,'已应用 · 待保存。','Applied · Unsaved.','適用済み・未保存。') : tr(locale,'已保存 · 当前工作区设置。','Saved · Current workspace settings.','保存済み・現在の作業設定。');
       if (this.documents.find(item => item.id === id)?.dirty !== document.dirty) { this.documents = this.documents.map(item => item.id === id ? { ...item, dirty: document.dirty } : item); this.refreshDocumentTabs(); }
-      if (next === original && !force) return;
-      original = next; draft = SceneEntryPresentationSchema.parse(value ?? { title: null, interlude: null }); dirty = false; error.textContent = '';
+      if (next === original && nextDecor === decorOriginal && !force) return;
+      original = next; draft = normalizePresentation(value); dirty = false; error.textContent = '';
+      decorOriginal = nextDecor; decorDraft = SceneDecorLayerSchema.array().parse(data.decorLayers ?? []);
       this.documents = this.documents.map(item => item.id === id ? { ...item, dirty: document.dirty } : item); this.refreshDocumentTabs(); draw();
       refreshActions();
     };
@@ -1279,10 +1522,11 @@ export class AuthoringWorkspace {
     actions.append(restore,preview,applyButton);refreshActions();
     status.textContent = owner.dirty ? tr(locale,'已应用 · 待保存。预览会应用当前设置后启动试玩。','Applied · Unsaved. Preview applies these settings before playtesting.','適用済み・未保存。プレビューは設定を適用して試遊します。') : tr(locale,'已保存 · 预览会应用当前设置后启动试玩。','Saved · Preview applies these settings before playtesting.','保存済み・プレビューは設定を適用して試遊します。');
     draw(); this.openFormDocument(id, `${kind==='chapter'?tr(locale,'章节开场','Chapter opening','章の開始'):tr(locale,'场景开场','Scene opening','シーンの開始')} · ${chapter?.name ?? scene?.name}`, container, () => dirty, () => react.unmount(), active => { if (active) void reload(); });
-    this.formDocuments.get(id)!.capture = () => asJson({kind:'entry',entryKind:kind,objectId,draft,original});
-    this.formDocuments.get(id)!.scope = { documentId: owner.documentId, ...(kind === 'chapter' ? { paths: ['/data/chapters'] } : { paths: ['/data/presentation'] }) };
+    this.formDocuments.get(id)!.capture = () => asJson({kind:'entry',entryKind:kind,objectId,draft,original,...(kind === 'scene' ? { decorDraft, decorOriginal } : {})});
+    this.formDocuments.get(id)!.scope = { documentId: owner.documentId, paths: kind === 'chapter' ? ['/data/chapters'] : ['/data/presentation', '/data/decorLayers'] };
     const inspector=el('section','authoring-inspector');inspector.append(el('h2','',chapter?.name??scene?.name??''),el('p','',kind==='chapter'?tr(locale,'章节开场 · 在本章首场景播放','Chapter opening · Plays at the first scene','章の開始・最初のシーンで再生'):tr(locale,'场景开场 · 在本场景正文前播放','Scene opening · Plays before this scene','シーンの開始・本文の前に再生')),el('p','field-help',tr(locale,'短标题卡与全屏间幕在中央设置。应用后进入工作区，保存后落盘。','Configure the title card and fullscreen interlude in the document. Apply to working content, then save to disk.','中央でタイトルと幕間を設定します。作業内容に適用してから保存してください。')));
     this.formDocuments.get(id)!.inspector=inspector;this.render();
+    if (focusDecor) showDecor();
     for (let offset = 0;; offset += 100) { const queried = await this.services.queryAssets({ kind: null, text: '', offset, limit: 100 }); if (!queried.ok) break; queried.value.items.forEach(asset => this.assetCache.set(asset.id, asset)); if (offset + queried.value.items.length >= queried.value.total) break; } draw();
   }
   private async previewScene(sceneId: string, entryId?: string): Promise<void> {
@@ -1478,29 +1722,38 @@ export class AuthoringWorkspace {
   }
   private async flushWriting(): Promise<boolean> {
     this.writingPending = this.writingPending.then(async () => {
+      if (this.composingSceneInputs.size) return false;
       for (const [id, text] of this.writingDrafts) {
-        this.controller.select([id]);
-        const previous = this.controller.parsed()?.parsed.cst.find(node => node.id === id)?.object?.value as Record<string, unknown> | undefined;
+        const scene = this.controller.scene, project = this.controller.source?.project;
+        if (!scene || !project) return false;
+        const expected = this.writingDraftOrigin ?? scene;
+        const target: StatementEditTarget = { projectId: project.projectId, sceneId: scene.sceneId, documentId: expected.documentId, revision: expected.revision, statementIds: [id] };
+        const previous = this.controller.parsed('writing')?.parsed.cst.find(node => node.id === id)?.object?.value as Record<string, unknown> | undefined;
         const content = DialogueContentSchema.safeParse(previous?.text).data ?? '';
-        const result = await this.controller.editFields([{ field: 'text', op: 'set', value: replaceDialogueText(content, text) }]);
-        if (!this.notice(result)) return false;
+        const result = await this.controller.editDialogue({ op: 'dialogue.update', sceneId: scene.sceneId, statementId: id,
+          text: replaceDialogueText(content, text) }, target);
+        if (!this.notice(result)) { this.updateStatus(); return false; }
         if (this.writingDrafts.get(id) === text) this.writingDrafts.delete(id);
+        const revision = result.value.documents.find(item => item.ref.id === scene.documentId)?.revision;
+        if (revision !== undefined) this.writingDraftOrigin = { documentId: scene.documentId, revision };
       }
+      if (this.writingDrafts.size) return false;
+      this.writingDraftOrigin = null;
       return true;
     });
     return this.writingPending;
   }
   private async flushScript(): Promise<boolean> {
-    if((this.scriptDrafts.size||this.writingDrafts.size)&&this.inputOriginVersions){const source=this.controller.source,versions=new Map(this.inputOriginVersions.map(item=>[item.documentId,item.revision]));if(source?.scenes.some(scene=>(this.scriptDrafts.has(scene.sceneId)||this.writingDrafts.size>0&&scene.sceneId===this.controller.scene?.sceneId)&&versions.get(scene.documentId)!==scene.revision)){this.messageTone='error';this.message=tr(this.controller.preferences.locale,'来源场景已变化。原输入已保留，请复核后继续。','The source scene changed. Your input is retained for review.','元のシーンが変更されました。入力を保持して確認してください。');return false;}}
+    if (this.composingSceneInputs.size) return false;
     if (!await this.flushWriting()) return false;
     if (this.scriptEditor) return this.scriptEditor.flush();
     const scene = this.controller.scene;
     const cached = scene && this.scriptSessions.get(scene.sceneId);
     if (cached && this.scriptDrafts.has(scene!.sceneId)) return cached.editor.flush();
     if (!scene || !this.scriptDrafts.has(scene.sceneId)) return true;
-    const result = await this.controller.editScript(this.scriptDrafts.get(scene.sceneId)!, scene.sceneId);
+    const result = await this.controller.editScript(this.scriptDrafts.get(scene.sceneId)!, scene.sceneId, this.scriptDraftOrigins.get(scene.sceneId));
     if (!this.notice(result)) return false;
-    this.scriptDrafts.delete(scene.sceneId); return true;
+    this.scriptDrafts.delete(scene.sceneId); this.scriptDraftOrigins.delete(scene.sceneId); return true;
   }
   private async save(all: boolean, documentId: Id | null = null): Promise<void> {
     await this.playerNameEditor?.waitForApply();
@@ -1617,8 +1870,7 @@ export class AuthoringWorkspace {
     this.revealInspector();
   }
   private revealInspector(): void {
-    const toggle = this.root.querySelector<HTMLButtonElement>('.gc-wb-layout-tools button[data-workbench-action="inspector"]');
-    if (toggle?.getAttribute('aria-pressed') !== 'true') toggle?.click();
+    if (this.shellProps?.inspectorAvailable !== false) this.dock.current?.open('studio-inspector', { focus: false });
   }
   private assetInspector(): HTMLElement {
     const root = el('section', 'authoring-inspector asset-workbench-inspector'), asset = this.focusedAsset, locale = this.controller.preferences.locale;
@@ -1639,7 +1891,7 @@ export class AuthoringWorkspace {
     }, rename: name => this.renameAsset(asset.id, name), preview: variantId => { void this.previewAsset(asset.id, variantId); }, reveal: () => { void this.services.revealEntity({ kind: 'asset', id: asset.id }).then(result => this.notice(result)); }, transparent: () => { void this.removeAssetBackground(asset); } });
     const character = this.controller.source?.characters.find(item => item.id === asset.characterId), scenes = this.controller.source?.scenes.filter(item => asset.sceneIds.includes(item.sceneId)) ?? [];
     inspector.append(el('p', '', [character?.name, ...scenes.map(scene => scene.name)].filter(Boolean).join(' · ')));
-    inspector.append(button(tr(locale,'查看引用','View references','参照を表示'), async () => { const source=this.controller.source; if(!source)return; Object.assign(this.sidebarState,{tab:'search',mode:'asset',target:asset.id,targetLabel:asset.name,scope:'project',offset:0}); await runSidebarSearch({services:this.services,source,sceneId:this.controller.scene?.sceneId??null,state:this.sidebarState}); this.page='editor';this.render(); }));
+    inspector.append(button(tr(locale,'查看引用','View references','参照を表示'), () => this.findAssetReferences(asset.id, asset.name)));
     if (asset.kind === 'animation') inspector.append(button(tr(locale,'编辑动画素材','Edit animation asset','アニメーション素材を編集'), ()=>this.openAnimationAsset(asset)));
     const summary=el('p','',selectionText);summary.hidden=this.selectedAssets.size<2;inspector.prepend(summary);this.assetInspectorView={asset,locale,node:inspector,summary};
     return inspector;
@@ -1780,23 +2032,41 @@ export class AuthoringWorkspace {
   }
   private async locateHit(source: Source): Promise<void> {
     if (!await this.flushScript()) return;
-    if (!this.services.locate || !this.controller.scene) return;
-    if (!this.searchOrigin) this.searchOrigin = { sceneId: this.controller.scene.sceneId, view: this.controller.view, statementId: this.controller.selection?.primaryId ?? null };
+    if (!this.services.locate) return;
+    const previous = this.controller.scene;
+    const origin = previous && { sceneId: previous.sceneId, revision: previous.revision, view: this.controller.view,
+      selection: this.controller.selection, caret: this.controller.caret, scroll: this.controller.scroll };
     const found = await this.services.locate(source); if (!this.notice(found)) return;
     const scene = this.controller.source?.scenes.find(item => item.documentId === found.value?.documentId);
     if (!scene || !found.value) { this.message = '来源已变化'; this.render(); return; }
-    this.controller.selectScene(scene.sceneId);
+    if (!await this.openSceneTarget(scene.sceneId)) return;
+    this.searchOrigin ??= origin;
+    this.sidebarState.located = !!this.searchOrigin;
     if (found.value.statementId) this.controller.select([found.value.statementId]);
-    if (this.controller.view === 'script') this.controller.setCaret(found.value.statementId, found.value.start);
+    if (this.controller.view === 'script') this.revealScriptOffset(found.value.statementId, found.value.start);
+    else this.controller.setScroll(found.value.statementId, 0, 0);
+    this.render();
+  }
+  private async findAssetReferences(assetId: Id, name: string): Promise<void> {
+    const source = this.controller.source;
+    if (!source) return;
+    await this.navigate('editor');
+    if (this.page !== 'editor' || this.controller.source?.project.projectId !== source.project.projectId) return;
+    Object.assign(this.sidebarState, { tab: 'search', mode: 'asset', target: assetId, targetLabel: name, scope: 'project', offset: 0 });
+    const search = runSidebarSearch({ services: this.services, source: this.controller.source, sceneId: this.controller.scene?.sceneId ?? null, state: this.sidebarState, locale: this.controller.preferences.locale });
+    this.render();
+    this.dock.current?.open('studio-search');
+    await search;
     this.render();
   }
   private async locateIssue(source: Source): Promise<void> {
     if (!await this.flushScript()) return;
     const scene = this.controller.source?.scenes.find(item => item.documentId === source.documentId);
     if (!scene || scene.revision !== source.revision) { this.message = '来源已变化'; this.render(); return; }
-    this.controller.selectScene(scene.sceneId);
-    this.controller.changeView('script');
-    this.controller.setCaret(source.statementId ?? null, source.range?.start ?? 0);
+    if (!await this.openSceneTarget(scene.sceneId)) return;
+    if (this.controller.scene?.revision !== source.revision) { this.message = '来源已变化'; this.render(); return; }
+    this.chooseSceneView('script');
+    this.revealScriptOffset(source.statementId ?? null, source.range?.start ?? 0);
     this.render();
   }
   private notice<T>(result: Result<T>, recovery?: { label: string; run(): void }): result is Extract<Result<T>, { ok: true }> {
@@ -1825,6 +2095,7 @@ export class AuthoringWorkspace {
   }
   render(): void {
     if(this.disposed)return;
+    if (this.composingSceneInputs.size) { this.deferredSceneRender = true; return; }
     void this.reportAuthoringDrafts();
     if (this.page !== 'assets' && this.assetInspectorView) { disposeAssetInspector(this.assetInspectorView.node); this.assetInspectorView = null; }
     const formDocumentId = this.activeDocument, formDocument = this.formDocuments.get(formDocumentId);
@@ -1832,13 +2103,15 @@ export class AuthoringWorkspace {
     this.studioPlugins?.clearFieldEditors();
     this.studioPlugins?.publishScope();
     const focusRenderSequence = ++this.focusRenderSequence;
-    const sameEditor = this.renderedPage === this.page && this.renderedSceneId === (this.controller.scene?.sceneId ?? null) && this.renderedView === this.controller.view;
+    const sameEditor = this.renderedPage === this.page && this.renderedSceneId === (this.controller.scene?.sceneId ?? null);
     const focus = sameEditor ? captureAuthoringFocus(this.root) : null;
     const scriptFocused = sameEditor && Boolean(document.activeElement?.closest('.monaco-editor'));
-    const previousCenter = this.root.querySelector<HTMLElement>('.authoring-center');
-    const preserveCenter = sameEditor && this.pluginRenderLocale === this.controller.preferences.locale && this.renderedRevision === (this.controller.scene?.revision ?? null) && previousCenter;
+    const previousCenter = sameEditor && this.pluginRenderLocale === this.controller.preferences.locale
+      ? this.root.querySelector<HTMLElement>('.authoring-scene-views') : null;
+    const previousBeside = previousCenter ? this.root.querySelector<HTMLElement>('.authoring-scene-beside') : null;
+    const sameRevision = this.renderedRevision === (this.controller.scene?.revision ?? null);
     this.renderedRevision = this.controller.scene?.revision ?? null;
-    this.renderedSceneId = this.controller.scene?.sceneId ?? null; this.renderedView = this.controller.view;
+    this.renderedSceneId = this.controller.scene?.sceneId ?? null;
     for (const region of this.inspectorRoots) region.unmount(); this.inspectorRoots = [];
     const previousContent = this.root.querySelector<HTMLElement>('.studio-content');
     if (previousContent && this.renderedPage) this.pageScroll.set(this.renderedPage, previousContent.scrollTop);
@@ -1851,20 +2124,11 @@ export class AuthoringWorkspace {
     this.previewAudioCleanup?.(); this.previewAudioCleanup = null;
     this.previewMedia?.pause(); this.previewMedia = null;
     const locale = this.controller.preferences.locale;
-    if (this.root.lang !== locale) { this.miniStage?.dispose(); this.miniStage = null; if(this.designer){this.designerResume=this.designer.capture();this.designer.dispose();this.designer=null;} }
+    if (this.root.lang !== locale) { this.miniStage?.dispose(); this.miniStage = null; this.animationMiniStage?.dispose(); this.animationMiniStage = null; this.stageRegion = null; if(this.designer){this.designerResume=this.designer.capture();this.designer.dispose();this.designer=null;} }
     this.root.lang = locale; this.root.dataset.theme = this.controller.preferences.theme;
     let portals = document.getElementById('studio-portals');
     if (!portals) { portals = el('div'); portals.id = 'studio-portals'; document.body.append(portals); installTransientScrollbars(portals); observeFormHints(portals); }
     portals.dataset.theme = this.controller.preferences.theme; portals.lang = locale;
-    const shell = el('div', 'authoring-shell');
-    shell.dataset.railCollapsed = String(this.railCollapsed);
-    this.headerRoot ??= createRoot(this.headerNode);
-    this.headerRoot.render(createElement(ShellHeader, { locale, theme: this.controller.preferences.theme,
-      project: this.controller.source?.project.name, dirty: this.controller.status.dirty,
-      collapsed: this.railCollapsed, toggleSidebar: () => { this.railCollapsed = !this.railCollapsed; localStorage.setItem('studio:railCollapsed', String(this.railCollapsed)); this.render(); },
-      preferences: value => { void this.preference(p => ({ ...p, ...value })); },
-      action: value => { void this.shellAction(value).catch(error => { this.message = String(error); this.render(); }); } }));
-    const body = el('div','studio-body'), rail = this.railNode; rail.ariaLabel = 'Studio';
     const routes = [['projects',this.t('projects'),'folder'],['editor',this.t('editor'),'edit'],['assets',this.t('assets'),'image'],['production',tr(locale,'制作','Produce','制作'),'spark'],['collaboration',tr(locale,'协作','Collaborate','連携'),'collaboration'],['pages',designerText('页面',locale),'layout'],['plugins',tr(locale,'插件','Plugins','拡張'),'package'],['publish',tr(locale,'发布','Publish','公開'),'publish']] as const;
     const railItems: RailItem[] = routes.map(([page,label,icon]) => ({key:page,label,icon,current:this.page===page || page==='pages'&&this.page==='assistant',disabled:page!=='projects'&&!this.controller.source}));
     const extensions = this.studioPlugins?.workbenches() ?? [];
@@ -1874,8 +2138,7 @@ export class AuthoringWorkspace {
         railItems.push({key,label,icon:'package',current:this.page===key,extension:true});
       }
     }
-    this.railRoot ??= createRoot(rail); this.railRoot.render(createElement(RailNavigation,{items:railItems,locale,navigate:key=>{void this.navigate(key as Page);}}));
-    const content=el('div','studio-content' + (['production','assistant','collaboration','plugins','publish'].includes(this.page) ? ' workbench-route-host' : '') + (['production','assistant'].includes(this.page) ? ' production-document-host' : '') + (routeChanged ? ' route-enter' : ''));body.append(content);shell.append(body);
+    const content=el('div','studio-content' + (['production','assistant','collaboration','plugins','publish'].includes(this.page) ? ' workbench-route-host' : '') + (['production','assistant'].includes(this.page) ? ' production-document-host' : '') + (routeChanged ? ' route-enter' : ''));
     if (this.studioPlugins?.loadError) { const error = el('p', 'workbench-error', this.studioPlugins.loadError); error.setAttribute('role', 'alert'); content.append(error); }
     if (this.message && !this.noticeIssue) { const notice = el('div', 'authoring-notice'); notice.dataset.tone = this.messageTone; notice.setAttribute('role', this.messageTone === 'error' ? 'alert' : 'status');
       const dismiss = button('', () => { this.message = ''; this.noticeText=''; this.render(); }); dismiss.ariaLabel = tr(locale, '关闭提示', 'Dismiss notification', '通知を閉じる'); dismiss.append(actionIcon('close'));
@@ -1886,9 +2149,9 @@ export class AuthoringWorkspace {
       const pause = () => { if (this.noticeTimer) clearTimeout(this.noticeTimer); };
       notice.onpointerenter = pause; notice.addEventListener('focusin', pause);
       const resume = () => { if (this.messageTone !== 'error') dismissLater(5000); }; notice.onpointerleave = resume; notice.addEventListener('focusout', resume);
-      if(this.noticeAsset)notice.append(button(tr(locale,'查看引用','View references','参照を表示'),async()=>{
-        const source=this.controller.source;if(!source)return;Object.assign(this.sidebarState,{tab:'search',mode:'asset',target:this.noticeAsset!,targetLabel:this.assetCache.get(this.noticeAsset!)?.name??'',scope:'project',offset:0});
-        this.page='editor';await runSidebarSearch({services:this.services,source,sceneId:this.controller.scene?.sceneId??null,state:this.sidebarState});this.render();}));
+      const assetId = this.noticeAsset;
+      if (assetId) notice.append(button(tr(locale, '查看引用', 'View references', '参照を表示'),
+        () => this.findAssetReferences(assetId, this.assetCache.get(assetId)?.name ?? '')));
       notice.append(actionIcon(this.messageTone === 'success' ? 'check' : 'info'), el('span', '', this.message), dismiss); content.append(notice); }
     if (this.page === 'projects') content.append(this.projects());
     if (this.page === 'editor') content.append(this.editor());
@@ -1902,6 +2165,7 @@ export class AuthoringWorkspace {
       (scope, intent) => { this.designerResume=this.designer!.capture();void this.openProduction(scope, intent); }, this.studioPlugins?.componentDefinitions() ?? [], (key, title) => { if (this.activeDocument === 'startup' || this.formDocuments.has(this.activeDocument)) return; const document: AuthorDocument = { id: `page:${key}`, kind: 'page', objectId: key, title }; this.documents = openAuthorDocument(this.documents, document); this.activeDocument = document.id; this.render(); }, () => this.save(false), source => { void this.navigate('editor').then(()=>this.locateIssue(source)); }, () => this.controller.scene&&this.controller.selection?.primaryId?{documentId:this.controller.scene.documentId,revision:this.controller.scene.revision,statementId:this.controller.selection.primaryId}:null,()=>this.render(),()=>{void this.reportAuthoringDrafts();}); startDesigner = true; } content.append(this.designer.root); }
     if (this.page === 'pages' && this.controller.source) { const source = this.controller.source; refreshDesigner = !startDesigner && (this.designerProjectRevision !== source.projectRevision || source.scenes.some(scene => this.designerSceneRevisions.get(scene.sceneId) !== scene.revision)); this.designerProjectRevision = source.projectRevision; this.designerSceneRevisions = new Map(source.scenes.map(scene => [scene.sceneId, scene.revision])); }
     const source=this.controller.source;
+    if (source) this.mountDockStage(source);
     this.production?.setVisible(['production','assistant'].includes(this.page));
     if(source&&(this.workbench||['production','assistant','collaboration','plugins','publish'].includes(this.page))) {
       this.production ??= new ProductionSession(workbenchBridge(this.services.bridge),source.project.projectId, () => this.controller.preferences.locale);
@@ -1910,10 +2174,10 @@ export class AuthoringWorkspace {
       this.workbench ??= createRoot(this.workbenchNode);if(['production','assistant','collaboration','plugins','publish'].includes(this.page))content.append(this.workbenchNode);
       const changed=async(receipt?: EditReceipt)=>{if(receipt)await this.controller.acceptExternalEdit(receipt);else await this.controller.refresh();this.render();};
       this.workbench.render(createElement('div',{className:'workbench-pages'},
-        createElement('div',{hidden:!['production','assistant'].includes(this.page)},createElement(Production,{productionHost:this.studioPlugins,onUnappliedChange:this.setProductionUnapplied,onReviewChange:this.setProductionReview,session:this.production,services:this.services,locale,page:this.page==='assistant'?'pages':'production',navigate:(page:string)=>void this.navigate(page as Page),changed,documentActive:['production','assistant'].includes(this.page),inspectorContainer:this.productionInspector,explorerContainer:this.productionExplorer,revealInspector:()=>{ const toggle = this.root.querySelector<HTMLButtonElement>('.gc-wb-layout-tools button[data-workbench-action="inspector"]'); if (toggle?.getAttribute('aria-pressed') !== 'true') toggle?.click(); }})),
+        createElement('div',{hidden:!['production','assistant'].includes(this.page)},createElement(Production,{productionHost:this.studioPlugins,onUnappliedChange:this.setProductionUnapplied,onReviewChange:this.setProductionReview,session:this.production,services:this.services,locale,page:this.page==='assistant'?'pages':'production',navigate:(page:string)=>void this.navigate(page as Page),changed,documentActive:['production','assistant'].includes(this.page),inspectorContainer:this.productionInspector,explorerContainer:this.productionExplorer,revealInspector:()=>this.revealInspector()})),
         createElement('div',{hidden:this.page!=='collaboration'},createElement(Collaboration,{bridge:(this.services.bridge as import('../../desktop-bridge.js').DesktopBridge).collaboration,locale,active:this.page==='collaboration',explorerContainer:this.collaborationExplorer,inspectorContainer:this.collaborationInspector})),
         createElement('div',{hidden:this.page!=='plugins'},createElement(Plugins,{bridge:workbenchBridge(this.services.bridge),locale,projectId:source.project.projectId,authorHost:this.studioPlugins,explorerContainer:this.pluginsExplorer,inspectorContainer:this.pluginsInspector,documentActive:this.page==='plugins',revealInspector:()=>this.revealInspector(),changed:async()=>{await this.controller.refresh();await this.refreshStudioPlugins();this.render();}})),
-        createElement('div',{hidden:this.page!=='publish'},createElement(Publish,{onHistoryReady:this.setPublishHistory,key:this.publishDraftRevision,guiDraft:this.publishGuiDraft,onGuiDraftChange:this.capturePublishGui,services:this.services,source,locale,changed,onUnappliedChange:this.setPublishUnapplied,saveAll:()=>this.save(true),explorerContainer:this.publishExplorer,inspectorContainer:this.publishInspector,documentActive:this.page==='publish',revealInspector:()=>this.revealInspector()}))));
+        createElement('div',{hidden:this.page!=='publish'},createElement(Publish,{onHistoryReady:this.setPublishHistory,key:this.publishDraftRevision,guiDraft:this.publishGuiDraft,onGuiDraftChange:this.capturePublishGui,services:this.services,source,locale,changed,onUnappliedChange:this.setPublishUnapplied,saveAll:()=>this.save(true),explorerContainer:this.publishExplorer,inspectorContainer:this.publishInspector,documentActive:this.page==='publish',revealInspector:()=>this.revealInspector(),locateSource:target=>{void this.locateIssue(target);}}))));
     }
     if (source && this.studioPlugins) {
       if (this.page.startsWith('extension:')) this.studioPlugins.mountWorkbench(this.page.slice('extension:'.length), content);
@@ -1924,34 +2188,37 @@ export class AuthoringWorkspace {
       }
     }
     const status=el('div','studio-status');status.id='studio-status';
-    let documentContent: HTMLElement = content, documentToolbar: HTMLElement | null = null, explorer: HTMLElement | null = null, inspector: HTMLElement | null = null, problems: HTMLElement | null = null;
+    let documentContent: HTMLElement = content, documentToolbar: HTMLElement | null = null, explorer: HTMLElement | null = null, search: HTMLElement | null = null, inspector: HTMLElement | null = null, problems: HTMLElement | null = null;
+    let beside: AuthoringWorkbenchProps['beside'];
+    let activateScenePane: AuthoringWorkbenchProps['activateScenePane'];
     const editor = content.querySelector<HTMLElement>('.authoring-editor');
     if (editor) {
       documentToolbar = editor.querySelector<HTMLElement>(':scope > .authoring-toolbar');
-      explorer = editor.querySelector<HTMLElement>('.authoring-sidebar');
-      if (!explorer) { const nav = editor.querySelector<HTMLElement>('.authoring-nav'); nav?.querySelector('.authoring-scene-tree')?.remove(); explorer = nav; }
+      search = editor.querySelector<HTMLElement>('.authoring-sidebar');
       inspector = editor.querySelector<HTMLElement>('.authoring-inspector'); problems = editor.querySelector<HTMLElement>('.authoring-diagnostic-content');
-      documentContent = editor.querySelector<HTMLElement>('.authoring-center') ?? content;
-      if (preserveCenter) {
-        const actions = documentContent.querySelector('.authoring-selection-tools');
-        documentContent = preserveCenter;
-        for (const card of documentContent.querySelectorAll<HTMLElement>('[data-statement-id]')) {
-          const selected = this.controller.selection?.statementIds.includes(card.dataset.statementId!) ?? false;
-          card.classList.toggle('selected', selected);
-        }
-        // Keep text inputs and their local history, but replace selection-dependent controls.
-        if (actions) documentContent.querySelector('.authoring-selection-tools')?.replaceWith(actions);
-      }
-      else if (this.controller.view === 'writing') {
-        for (const input of documentContent.querySelectorAll<HTMLTextAreaElement>('.authoring-writing-input')) { const id = input.closest<HTMLElement>('[data-statement-id]')?.dataset.statementId; if (!id) continue; const previous = this.writingInputs.get(id); if (previous) { if (!this.writingDrafts.has(id) && previous.value !== input.value) { previous.value = input.value; resetWritingHistory(previous); } previous.disabled = input.disabled; input.replaceWith(previous); } else { this.writingInputs.set(id, input); attachWritingHistory(input); } }
+      const sceneViews = editor.querySelector<HTMLElement>('.authoring-scene-views');
+      const active = this.documents.find(item => item.id === this.activeDocument);
+      if (sceneViews && this.activeDocument !== 'empty' && !formDocument && (!active || active.kind === 'scene' || active.kind === 'route')) {
+        const panes = this.mountScenePanes(sceneViews, previousCenter, previousBeside, sameRevision);
+        documentContent = panes.group;
+        const documentId = this.controller.scene?.documentId;
+        const [primary, companion] = this.sceneViews();
+        const activate = (view: AuthoringController['view']) => {
+          if (this.controller.scene?.documentId !== documentId || this.controller.view === view) return;
+          this.activateSceneView(view);
+          queueMicrotask(() => this.render());
+        };
+        if (primary) activateScenePane = () => activate(primary);
+        if (panes.beside && companion) beside = { node: panes.beside, title: this.t(companion), activate: () => activate(companion), close: () => this.splitScene(null) };
       }
       const insertion = this.insertions.get(this.controller.scene?.sceneId ?? '');
       if (insertion) {
         if (insertion.node !== insertion.placeholder) inspector?.prepend(insertion.node);
-        const target = insertion.beforeId ? documentContent.querySelector<HTMLElement>(`[data-statement-id="${CSS.escape(insertion.beforeId)}"]`) : null;
-        if (target) target.before(insertion.placeholder); else (documentContent.querySelector('.authoring-card-list,.authoring-writing-list') ?? documentContent).append(insertion.placeholder);
+        const selector = `[data-scene-view="${this.controller.view}"]`;
+        const view = documentContent.querySelector<HTMLElement>(selector) ?? beside?.node.querySelector<HTMLElement>(selector) ?? documentContent;
+        const target = insertion.beforeId ? view.querySelector<HTMLElement>(`[data-statement-id="${CSS.escape(insertion.beforeId)}"]`) : null;
+        if (target) target.before(insertion.placeholder); else (view.querySelector('.authoring-card-list,.authoring-writing-list') ?? view).append(insertion.placeholder);
       }
-      const active = this.documents.find(item => item.id === this.activeDocument);
       if (active?.kind === 'project') {
         documentContent = active.objectId === 'preferences' ? inspector?.querySelector<HTMLElement>('.workbench-preferences') ?? content : this.projectDocument();
         documentToolbar = null; inspector = el('section', 'authoring-inspector'); inspector.append(el('h2','',active.title),el('p','',active.objectId === 'preferences' ? '偏好保存在本机工作台。' : `${source?.project.name} · ${source?.project.engineVersion}`));
@@ -1977,7 +2244,17 @@ export class AuthoringWorkspace {
     for (const slot of content.querySelectorAll<HTMLElement>(':scope > .studio-plugin-slot')) { inspector ??= el('aside', 'authoring-inspector'); inspector.append(slot); }
     const noticeRegion = el('div');
     for (const notice of content.querySelectorAll<HTMLElement>(':scope > .authoring-notice,:scope > .workbench-error')) noticeRegion.append(notice);
-    const notice = this.noticeIssue ? createElement(IssueNotice, { issue: this.noticeIssue, locale, dismiss: () => { this.message = ''; this.render(); }, recovery: this.noticeRecovery ?? (this.noticeAsset ? { label: tr(locale, '查看引用', 'View references', '参照を表示'), run: () => { const source = this.controller.source; if (!source) return; Object.assign(this.sidebarState, { tab: 'search', mode: 'asset', target: this.noticeAsset!, targetLabel: this.assetCache.get(this.noticeAsset!)?.name ?? '', scope: 'project', offset: 0 }); this.page = 'editor'; void runSidebarSearch({ services: this.services, source, sceneId: this.controller.scene?.sceneId ?? null, state: this.sidebarState }).then(() => this.render()); } } : this.noticeIssue.source ? { label: tr(locale, '定位问题', 'Locate issue', '問題へ移動'), run: () => { void this.locateIssue(this.noticeIssue!.source!); } } : undefined) }) : noticeRegion.childElementCount ? createElement(DomRegion, { node: noticeRegion }) : undefined;
+    const noticeAsset = this.noticeAsset;
+    const notice = this.noticeIssue ? createElement(IssueNotice, {
+      issue: this.noticeIssue, locale, dismiss: () => { this.message = ''; this.render(); },
+      recovery: this.noticeRecovery ?? (noticeAsset ? {
+        label: tr(locale, '查看引用', 'View references', '参照を表示'),
+        run: () => { void this.findAssetReferences(noticeAsset, this.assetCache.get(noticeAsset)?.name ?? ''); },
+      } : this.noticeIssue.source ? {
+        label: tr(locale, '定位问题', 'Locate issue', '問題へ移動'),
+        run: () => { void this.locateIssue(this.noticeIssue!.source!); },
+      } : undefined),
+    }) : noticeRegion.childElementCount ? createElement(DomRegion, { node: noticeRegion }) : undefined;
     if (this.activeDocument !== 'startup' || this.page !== 'pages') { if (this.startupRoot) this.startupDocument(false); if (this.stopStartup) { this.startupGeneration++; this.stopStartup(); } }
     if (this.page === 'pages' && !this.documents.some(item => item.id === this.activeDocument && ['page', 'startup'].includes(item.kind))) { const capture = this.designer?.capture(); const document: AuthorDocument = { id: `page:${capture?.page ?? 'title'}`, title: capture?.page ?? '页面', kind: 'page', objectId: capture?.page }; this.documents = openAuthorDocument(this.documents, document); this.activeDocument = document.id; }
     this.documents = this.documents.map(document => {
@@ -1990,8 +2267,6 @@ export class AuthoringWorkspace {
         : document.kind === 'startup' ? { ...document, dirty: this.startupDraft || source?.projectDirty }
         : document.kind === 'page' ? { ...document, title: this.designer?.workbenchPages().find(page => page.id === document.objectId)?.name ?? designerPageName(document.objectId ?? document.id.slice(5), locale), dirty: this.designer?.hasWorkingChanges() ?? document.dirty } : document;
     });
-    const animationPreview = formDocument?.node.querySelector('.animation-stage-preview');
-    if (animationPreview && this.miniStage) animationPreview.append(this.miniStage.root);
     this.shellRoot ??= createRoot(this.shellNode); if (this.shellNode.parentNode !== this.root) this.root.append(this.shellNode);
     if (formDocument) { this.activeDocument = formDocumentId; documentContent = formDocument.node; documentToolbar = null; inspector = formDocument.inspector ?? el('section','authoring-inspector',tr(locale,'输入保留在本次编辑会话；应用后进入作品工作区，再通过保存落盘。','Input is kept in this editing session. Apply it to working content, then save to disk.','入力は今回の編集セッションに保持されます。作業内容に適用してから保存してください。')); }
     documentContent.querySelector('.document-recovery-notice')?.remove();
@@ -1999,77 +2274,219 @@ export class AuthoringWorkspace {
     const activeKind = this.documents.find(item => item.id === this.activeDocument)?.kind;
     const pilot = this.page === 'editor' && (!activeKind || activeKind === 'scene' || activeKind === 'scene-graph');
     this.root.dataset.authoringPilot = String(pilot); portals.dataset.authoringPilot = String(pilot);
-    this.shellProps = { source: source ?? null, characterExplorer: this.characterExplorer, locale, page: this.page, header: this.headerNode, activity: rail, documents: this.documents, active: this.activeDocument, content: documentContent, toolbar: documentToolbar, explorer, inspector, problems, status, notice,
-      layout: this.controller.preferences.layout, inspectorAvailable: !(['production','assistant'].includes(this.page) && this.productionReview), inspectorShown: this.inspectorShown, selected: this.page === 'pages' && this.activeDocument === 'startup' ? ['startup'] : this.page === 'pages' && this.designer ? [this.designer.workbenchPage(), ...this.designer.capture().selected] : this.treeSelected, select: ids => { this.treeSelected = ids; this.render(); }, open: document => { void this.openDocument(document); }, pin: id => { this.documents = this.documents.map(document => document.id === id ? { ...document, preview: false } : document); this.render(); }, close: id => this.closeDocument(id),
+    const actionFailed = (error: unknown) => { this.message = String(error); this.messageTone = 'error'; this.render(); };
+    this.shellProps = { source: source ?? null, characterExplorer: this.characterExplorer, locale, page: this.page,
+      chrome: { locale, theme: this.controller.preferences.theme, project: source?.project.name, dirty: this.workbenchDirty(),
+        items: railItems, navigate: key => { void this.navigate(key as Page).catch(actionFailed); },
+        action: value => { void this.shellAction(value).catch(actionFailed); },
+        preferences: value => { void this.preference(p => ({ ...p, ...value })); },
+        preview: source ? () => { void this.runPlaytest('stage').catch(actionFailed); } : undefined },
+      documents: this.documents, active: this.activeDocument, content: documentContent, activateScenePane, beside, toolbar: documentToolbar, explorer, search, stage: this.stageRegion, inspector, problems, status, notice,
+      dock: this.dock, dockLayout: this.dockLayout, dockNotice: message => { studioToasts.add({ title: message }); },
+      dockLayoutChange: layout => { this.dockLayout = asJson(JSON.parse(JSON.stringify(layout))); this.rememberWorkbench(); },
+      namedLayouts: this.controller.preferences.namedDockLayouts,
+      writeNamedLayouts: async layouts => {
+        const result = await this.controller.setPreference(p => ({ ...p, namedDockLayouts: JSON.parse(JSON.stringify(layouts)) as StudioPreferences['namedDockLayouts'] }));
+        if (!result.ok) throw new Error(result.error.message);
+        this.render();
+      },
+      layout: this.controller.preferences.layout, inspectorAvailable: !(['production','assistant'].includes(this.page) && this.productionReview), inspectorShown: this.inspectorShown, selected: this.page === 'pages' && this.activeDocument === 'startup' ? ['startup'] : this.page === 'pages' && this.designer ? [this.designer.workbenchPage(), ...this.designer.capture().selected] : this.treeSelected, select: ids => { this.treeSelected = ids; this.render(); }, open: document => this.openDocument(document), pin: id => { this.documents = this.documents.map(document => document.id === id ? { ...document, preview: false } : document); this.refreshDocumentTabs(); }, close: id => this.closeDocument(id),
       rename: async (id, name) => { if (!await this.flushScript() || !this.controller.source) return '当前输入尚未应用'; return this.applyWorkbenchObject(renameWorkbenchObject(this.controller.source, id, name)); },
       move: async (ids, parent, index) => { if (!await this.flushScript() || !this.controller.source) return; const error = await this.applyWorkbenchObject(moveWorkbenchObjects(this.controller.source, ids, parent, index)); if (error) { this.message = error; this.render(); } }, create: (kind, parent) => this.createWorkbenchObject(kind, parent),
       entryPresentation: (kind, id) => { void this.openEntryPresentation(kind, id); },
-      reorder: ids => { this.documents = ids.flatMap(id => this.documents.find(doc => doc.id === id) ?? []); this.render(); },
-      layoutChange: layout => { void this.preference(preferences => ({ ...preferences, layout: { ...preferences.layout, ...layout } })); }, pageNodes: this.page === 'pages' ? this.designer?.workbenchPages() : undefined, pageOpen: (id, pinned) => { void this.openDocument({ kind: 'page', objectId: id, title: this.designer?.workbenchPages().find(page => page.id === id)?.name ?? id, preview: !pinned }); }, componentNodes: this.page === 'pages' ? this.designer?.workbenchComponents() : undefined, componentSelect: ids => { this.designer?.selectComponents(ids); this.render(); }, componentMove:(ids,parent)=>{void this.designer?.moveComponents(ids,parent);},componentRename:(id,name)=>this.designer?.renameComponent(id,name)??Promise.resolve(), confirm: this.documentConfirm,
+      sceneDecor: id => { void this.openEntryPresentation('scene', id, undefined, true); },
+      reorder: ids => {
+        if (ids.length !== this.documents.length || ids.some(id => !this.documents.some(doc => doc.id === id))) return;
+        this.documents = ids.flatMap(id => this.documents.find(doc => doc.id === id) ?? []);
+        this.rememberWorkbench();
+        this.refreshDocumentTabs();
+      },
+      pageNodes: this.page === 'pages' ? this.designer?.workbenchPages() : undefined, pageOpen: (id, pinned) => { void this.openDocument({ kind: 'page', objectId: id, title: this.designer?.workbenchPages().find(page => page.id === id)?.name ?? id, preview: !pinned }); }, componentNodes: this.page === 'pages' ? this.designer?.workbenchComponents() : undefined, componentSelect: ids => { this.designer?.selectComponents(ids); this.render(); }, componentMove:(ids,parent)=>{void this.designer?.moveComponents(ids,parent);},componentRename:(id,name)=>this.designer?.renameComponent(id,name)??Promise.resolve(), confirm: this.documentConfirm,
     }; flushSync(() => this.shellRoot!.render(createElement(AuthoringWorkbench, this.shellProps!)));
     completeFormHints(this.root, locale); if (!formDocument) documentContent.scrollTop = this.pageScroll.get(this.page) ?? documentContent.scrollTop;
     markAuthoringFocus(this.root); restoreAuthoringFocus(this.root,focus);
     requestAnimationFrame(()=>{if(focusRenderSequence===this.focusRenderSequence){markAuthoringFocus(this.root);if(document.activeElement===document.body)restoreAuthoringFocus(this.root,focus);}});
     this.updateStatus();
-    this.controller.rememberWorkbench({ documents: this.documents.filter(doc => !doc.preview && !this.formDocuments.has(doc.id)).map(({ id, title, kind, objectId }) => ({ id, title, kind, ...(objectId ? { objectId } : {}) })), active: this.formDocuments.get(this.activeDocument)?.source ?? this.activeDocument });
+    this.rememberWorkbench();
     if (startDesigner && this.designer) void this.designer.start().then(async () => { const active=this.documents.find(d=>d.id===this.activeDocument); if(active?.kind==='page'&&active.objectId)await this.designer!.openPage(active.objectId); this.render(); }).catch(error => { this.message = String(error); this.render(); });
     else if (refreshDesigner && this.designer) void this.designer.refresh().then(() => this.render()).catch(error => { this.message = String(error); this.render(); });
     const thumbnailGeneration = ++this.thumbnailGeneration;
-    if (this.page === 'assets' || this.page === 'editor' && this.controller.view === 'cards') {
+    if (this.page === 'assets' || this.page === 'editor' && this.sceneViews().includes('cards')) {
       void this.loadThumbnails(thumbnailGeneration);
       for(const details of this.root.querySelectorAll('details'))details.addEventListener('toggle',()=>{if(details.open)void this.loadThumbnails(thumbnailGeneration);});
     }
     else if (this.thumbnailsActive) {
       this.thumbnailsActive = false; void loadVisibleAssetThumbnails(this.services);
     }
-    const cardScroller = this.root.querySelector<HTMLElement>('.authoring-center');
-    if (cardScroller && this.controller.view !== 'script') {
+    const scene = this.controller.scene;
+    if (scene) for (const cardScroller of this.root.querySelectorAll<HTMLElement>('[data-scene-view="writing"],[data-scene-view="cards"]')) {
+      const view = cardScroller.dataset.sceneView as 'writing' | 'cards';
+      const context = view === this.controller.view ? this.sceneViewContext() : this.scenePaneContext(scene.sceneId, view);
       const anchors = [...cardScroller.querySelectorAll<HTMLElement>('[data-statement-id]')];
-      const anchor = anchors.find(item => item.dataset.statementId === this.controller.scroll.statementId) ??
-        anchors.find(item => item.dataset.statementId === this.controller.selection?.primaryId);
+      const anchor = anchors.find(item => item.dataset.statementId === context.scroll.statementId) ??
+        anchors.find(item => item.dataset.statementId === context.selection?.primaryId);
       if (anchor) {
-        anchor.scrollIntoView({ block: 'nearest' });
-        cardScroller.scrollTop = Math.max(0, anchor.getBoundingClientRect().top - cardScroller.getBoundingClientRect().top + cardScroller.scrollTop - this.controller.scroll.offsetPx);
+        cardScroller.scrollTop = Math.max(0, anchor.getBoundingClientRect().top - cardScroller.getBoundingClientRect().top + cardScroller.scrollTop - context.scroll.offsetPx);
       }
-      cardScroller.addEventListener('scroll', () => {
+      cardScroller.onscroll = () => {
         const top = cardScroller.getBoundingClientRect().top;
         const visible = [...cardScroller.querySelectorAll<HTMLElement>('[data-statement-id]')].find(item => item.getBoundingClientRect().bottom > top);
-        this.controller.setScroll(visible?.dataset.statementId ?? null, visible ? visible.getBoundingClientRect().top - top : 0, cardScroller.scrollLeft);
-      });
+        this.setScenePaneScroll(scene.sceneId, view, { statementId: visible?.dataset.statementId ?? null,
+          offsetPx: visible ? visible.getBoundingClientRect().top - top : 0, scrollLeft: cardScroller.scrollLeft });
+      };
     }
     let scriptContainer = this.root.querySelector<HTMLElement>('.authoring-script-editor');
-    const scene = this.controller.scene;
     if (scriptContainer && scene && source) {
-      const cached = this.scriptSessions.get(scene.sceneId); if (cached) { scriptContainer.replaceWith(cached.node); scriptContainer = cached.node; }
+      const cached = this.scriptSessions.get(scene.sceneId);
+      if (cached && cached.node !== scriptContainer) { scriptContainer.replaceWith(cached.node); scriptContainer = cached.node; }
+      const scriptNode = scriptContainer, context = this.controller.view === 'script' ? this.sceneViewContext() : this.scenePaneContext(scene.sceneId, 'script');
+      const revealOffset = this.scriptReveal?.documentId === scene.documentId && this.scriptReveal.revision === scene.revision ? this.scriptReveal.offset : undefined;
+      this.scriptReveal = null;
       const input: Parameters<typeof mountScriptEditor>[0] = { container: scriptContainer, scene, engineVersion: source.project.engineVersion,
       wordWrap: this.controller.preferences.editor.wordWrap, fontSize: this.controller.preferences.editor.fontSize,
-      selectedId: this.controller.selection?.primaryId ?? null, documentOffset: this.controller.caret.documentOffset,
-      scroll: this.controller.scroll,
+      selectedId: context.selection?.primaryId ?? null, documentOffset: context.caret.documentOffset,
+      scroll: context.scroll, revealOffset,
       initialText: this.scriptDrafts.get(scene.sceneId),
       locale: this.controller.preferences.locale,
-      onDraft: text => { if (text === null) this.scriptDrafts.delete(scene.sceneId); else this.scriptDrafts.set(scene.sceneId, text); void this.reportAuthoringDrafts();this.updateMiniStage(); },
+      onDraft: text => {
+        if (text === null) { this.scriptDrafts.delete(scene.sceneId); this.scriptDraftOrigins.delete(scene.sceneId); }
+        else {
+          if (!this.scriptDraftOrigins.has(scene.sceneId)) this.scriptDraftOrigins.set(scene.sceneId, this.controller.source?.scenes.find(item => item.documentId === scene.documentId)?.revision ?? scene.revision);
+          this.scriptDrafts.set(scene.sceneId, text);
+        }
+        void this.reportAuthoringDrafts(); this.updateMiniStage();
+      },
       references: [...this.references(),
         ...[...this.assetCache.values()].map(item => ({ kind: 'asset' as const, id: item.id, name: item.name, detail:[item.folder.join('/'),item.kind].filter(Boolean).join(' · ') }))],
       variables: source.variables ?? [],
         pluginCommands: this.studioPlugins?.commandSpecs() ?? [],
         pluginConditions: this.studioPlugins?.conditionMetadata() ?? [],
-        onCaret: (id, documentOffset) => { this.controller.setCaret(id, documentOffset); this.studioPlugins?.publishScope(); this.updateMiniStage(); },
-        onSelection: (statementIds, textRange) => { this.controller.setTextSelection(statementIds, textRange); this.studioPlugins?.publishScope(); },
-      onScroll: (id, offsetPx, scrollLeft) => this.controller.setScroll(id, offsetPx, scrollLeft),
-      onCommit: async text => { const result = await this.controller.editScript(text, scene.sceneId); if (this.notice(result)) {
-        if (this.scriptDrafts.get(scene.sceneId) === text) this.scriptDrafts.delete(scene.sceneId); this.render(); return true; } return false; },
+        onCaret: (id, documentOffset) => {
+          if (this.controller.scene?.documentId !== scene.documentId || this.controller.view !== 'script') return;
+          const previous = this.controller.selection?.primaryId;
+          const previousEvent = this.focusedDialogueEvent?.eventId;
+          const node = this.controller.parsed('script')?.parsed.cst.find(item => item.id === id);
+          const events = node?.command === 'say' ? node.fields.find(field => field.key === 'events')?.valueNode.items : undefined;
+          const event = events?.find(item => documentOffset >= item.start && documentOffset < item.end);
+          const parsedEvent = DialogueEventSchema.safeParse(event?.value);
+          this.focusedDialogueEvent = id && parsedEvent.success ? { sceneId: scene.sceneId, statementId: id, eventId: parsedEvent.data.id } : null;
+          this.controller.setCaret(id, documentOffset); this.studioPlugins?.publishScope(); this.updateMiniStage();
+          if ((previous !== this.controller.selection?.primaryId || previousEvent !== this.focusedDialogueEvent?.eventId) && scriptNode.contains(document.activeElement)) queueMicrotask(() => this.render());
+        },
+        onSelection: (statementIds, textRange) => {
+          if (this.controller.scene?.documentId !== scene.documentId || this.controller.view !== 'script') return;
+          this.controller.setTextSelection(statementIds, textRange); this.studioPlugins?.publishScope();
+        },
+      onScroll: (statementId, offsetPx, scrollLeft) => this.setScenePaneScroll(scene.sceneId, 'script', { statementId, offsetPx, scrollLeft }),
+      onComposition: active => this.setSceneComposition(scriptNode, active),
+      onCommit: async text => {
+        const result = await this.controller.editScript(text, scene.sceneId, this.scriptDraftOrigins.get(scene.sceneId) ?? scene.revision);
+        if (!this.notice(result)) { this.updateStatus(); return false; }
+        if (this.scriptDrafts.get(scene.sceneId) === text) {
+          this.scriptDrafts.delete(scene.sceneId);
+          this.scriptDraftOrigins.delete(scene.sceneId);
+        } else {
+          const revision = result.value.documents.find(item => item.ref.id === scene.documentId)?.revision;
+          if (revision !== undefined) this.scriptDraftOrigins.set(scene.sceneId, revision);
+        }
+        this.render(); return true;
+      },
     };
       if (cached) { cached.editor.update(input); this.scriptEditor = cached.editor; }
       else { const container = scriptContainer; void mountScriptEditor(input).then(editor => { this.scriptSessions.set(scene.sceneId, { node: container, editor }); if (container.isConnected) { this.scriptEditor = editor; if (scriptFocused) container.querySelector<HTMLTextAreaElement>('textarea')?.focus(); } }); }
     }
   }
+  private mountScenePanes(next: HTMLElement, previous: HTMLElement | null, previousBeside: HTMLElement | null, sameRevision: boolean): { group: HTMLElement; beside: HTMLElement | null } {
+    const group = previous?.dataset.sceneDocument === next.dataset.sceneDocument ? previous ?? next : next;
+    const desired = [...next.querySelectorAll<HTMLElement>(':scope > [data-scene-view]')];
+    const companion = previousBeside?.dataset.sceneDocument === next.dataset.sceneDocument && previousBeside
+      ? previousBeside : el('div', 'authoring-scene-beside');
+    companion.dataset.sceneDocument = next.dataset.sceneDocument;
+    companion.dataset.sceneRevision = group.dataset.sceneRevision = next.dataset.sceneRevision;
+    const old = new Map([...group.querySelectorAll<HTMLElement>(':scope > [data-scene-view]'),
+      ...companion.querySelectorAll<HTMLElement>(':scope > [data-scene-view]')].map(pane => [pane.dataset.sceneView, pane]));
+    for (const pane of old.values()) if (!desired.some(item => item.dataset.sceneView === pane.dataset.sceneView)) pane.remove();
+    group.dataset.split = next.dataset.split ?? 'false';
+    for (const [index, pane] of desired.entries()) {
+      const existing = old.get(pane.dataset.sceneView), retained = sameRevision && existing && existing !== pane;
+      const active = retained ? existing : pane;
+      if (retained) {
+        const selected = new Set([...pane.querySelectorAll<HTMLElement>('[data-statement-id].selected')].map(card => card.dataset.statementId));
+        for (const card of existing.querySelectorAll<HTMLElement>('[data-statement-id]')) card.classList.toggle('selected', selected.has(card.dataset.statementId));
+        const selectedEvent = pane.querySelector<HTMLElement>('.authoring-dialogue-marker[aria-pressed="true"]')?.dataset.eventId;
+        for (const marker of existing.querySelectorAll<HTMLElement>('.authoring-dialogue-marker')) marker.ariaPressed = String(marker.dataset.eventId === selectedEvent);
+        for (const selector of ['.authoring-pane-title', '[data-scene-baseline]', '.authoring-selection-tools']) {
+          const prior = existing.querySelector(selector), replacement = pane.querySelector(selector);
+          if (prior && replacement) prior.replaceWith(replacement);
+          else if (prior) prior.remove();
+          else if (replacement) existing.prepend(replacement);
+        }
+      } else {
+        for (const input of pane.querySelectorAll<HTMLTextAreaElement>('.authoring-writing-input')) {
+          const id = input.closest<HTMLElement>('[data-statement-id]')?.dataset.statementId;
+          if (!id) continue;
+          const key = `${next.dataset.sceneDocument}/${id}`, previousInput = this.writingInputs.get(key);
+          if (previousInput) {
+            if (!this.writingDrafts.has(id) && previousInput.value !== input.value) { previousInput.value = input.value; resetWritingHistory(previousInput); }
+            previousInput.disabled = input.disabled;
+            input.replaceWith(previousInput);
+          } else { this.writingInputs.set(key, input); attachWritingHistory(input); }
+        }
+        if (existing && existing !== pane) existing.replaceWith(pane);
+      }
+      const container = index === 0 ? group : companion;
+      if (active.parentElement !== container) container.append(active);
+    }
+    return { group, beside: desired.length > 1 ? companion : null };
+  }
+  private mountDockStage(source: AuthoringSource): void {
+    const createStage = (animation: boolean) => new MiniStage(this.services, snapshot => {
+      const edit = this.effectEditor, preview = this.fieldPreview;
+      const stageTarget = (animation ? null : this.fixedStageSource) ?? this.selectedSceneSource();
+      for (const change of [edit ? { ...edit, value: edit.draft } : null, preview]) {
+        if (!change || change.sceneId !== stageTarget?.sceneId || change.statementId !== stageTarget.statementId) continue;
+        const instruction = snapshot.scenes.find(scene => scene.scene.id === change.sceneId)?.instructions.find(item => item.statementId === change.statementId);
+        if (!instruction) continue;
+        const args = structuredClone(instruction.args) as Record<string, Json>, parts = change.field.split('.');
+        let target = args;
+        for (const key of parts.slice(0, -1)) { target[key] ??= {}; target = target[key] as Record<string, Json>; }
+        target[parts.at(-1)!] = structuredClone(change.value); instruction.args = args;
+      }
+    }, this.controller.preferences.locale, this.debugRouteIntent);
+    this.miniStage ??= createStage(false);
+    const region = this.stageRegion ??= el('section', 'authoring-stage-region');
+    region.style.setProperty('--studio-stage-aspect', String(source.project.canvas.width / source.project.canvas.height));
+    const controls = this.sourceControls('stage');
+    const previous = region.querySelector(':scope > [data-source-panel="stage"]');
+    if (previous) previous.replaceWith(controls); else region.prepend(controls);
+    if (this.miniStage.root.parentElement !== region) region.append(this.miniStage.root);
+    const animationMount = this.formDocuments.get(this.activeDocument)?.node.querySelector('.animation-stage-preview');
+    if (animationMount) {
+      this.animationMiniStage ??= createStage(true);
+      if (this.animationMiniStage.root.parentElement !== animationMount) animationMount.append(this.animationMiniStage.root);
+    } else if (this.animationMiniStage) {
+      this.animationMiniStage.dispose();
+      this.animationMiniStage = null;
+    }
+    this.updateMiniStage();
+  }
   private updateMiniStage() {
-    const source = this.controller.source, selected = this.controller.selection;
+    const source = this.controller.source;
     if (!source || !this.miniStage) return;
-    const pending = this.controller.scene ? this.scriptDrafts.has(this.controller.scene.sceneId) : false;
-    const target = !pending && selected?.primaryId && this.controller.scene ? { sceneId: this.controller.scene.sceneId, statementId: selected.primaryId } : null;
-    const edit = this.effectEditor;
-    this.miniStage.update(JSON.stringify([source.project.projectId, source.projectRevision, source.scenes.map(scene => [scene.sceneId, scene.revision]), source.characters.map(character=>character.afterstory), target, pending, this.fieldPreview, edit && target?.sceneId === edit.sceneId && target.statementId === edit.statementId ? edit.draft : null]), target, pending ? tr(this.controller.preferences.locale,'脚本正在编辑，移出编辑区后更新预览。','Editing script; leave the editor to update the preview.','スクリプト編集中。編集欄を離れるとプレビューを更新します。') : undefined);
+    const update = (stage: MiniStage, pin: SceneStatementSource | null) => {
+      const chosen = pin ?? this.selectedSceneSource();
+      const pending = chosen ? this.scriptDrafts.has(chosen.sceneId) : false;
+      const resolved = !pending && chosen ? this.resolveSceneSource(chosen) : null;
+      const target = chosen && resolved ? { sceneId: chosen.sceneId, statementId: chosen.statementId, documentId: chosen.documentId,
+        revision: resolved.scene.revision, ...(chosen.eventId ? { eventId: chosen.eventId } : {}) } : null;
+      const edit = this.effectEditor;
+      const locale = this.controller.preferences.locale;
+      const message = pending ? tr(locale,'脚本正在编辑，移出编辑区后更新预览。','Editing script; leave the editor to update the preview.','スクリプト編集中。編集欄を離れるとプレビューを更新します。')
+        : pin && !target ? tr(locale, '固定舞台来源已失效。', 'The pinned stage source is unavailable.', '固定した舞台の出典を利用できません。') : undefined;
+      stage.update(JSON.stringify([source.project.projectId, source.projectRevision, source.scenes.map(scene => [scene.sceneId, scene.revision]), source.characters.map(character=>character.afterstory), target, message, this.fieldPreview, edit && target?.sceneId === edit.sceneId && target.statementId === edit.statementId ? edit.draft : null]), target, message);
+    };
+    update(this.miniStage, this.fixedStageSource);
+    if (this.animationMiniStage) update(this.animationMiniStage, null);
   }
   private openCommandCenter(mode: CommandMode) {
     const locale = this.controller.preferences.locale, t = (zh: string, en: string, ja: string) => tr(locale, zh, en, ja);
@@ -2084,7 +2501,7 @@ export class AuthoringWorkspace {
       ...([-1,1] as const).map(direction=>({id:`move-tab-${direction}`,label:direction<0?t('文档标签向左移动','Move document tab left','文書タブを左へ'):t('文档标签向右移动','Move document tab right','文書タブを右へ'),group:t('文档','Documents','文書'),disabled:!this.activeDocument||this.documents.findIndex(d=>d.id===this.activeDocument)+direction<0||this.documents.findIndex(d=>d.id===this.activeDocument)+direction>=this.documents.length?t('已在边缘或没有文档','No document or already at the edge','文書がないか端にあります'):undefined,run:()=>{const ids=this.documents.map(d=>d.id),at=ids.indexOf(this.activeDocument);[ids[at],ids[at+direction]]=[ids[at+direction]!,ids[at]!];this.shellProps?.reorder(ids);}})),
       ...(this.studioPlugins?.tools('commands.palette') ?? []).map(entry=>({id:`plugin:${entry.pluginId}:${entry.tool.key}`,label:entry.title,group:t('插件命令','Plugin commands','拡張コマンド'),detail:entry.pluginId,disabled:entry.available?undefined:entry.reason,run:()=>this.studioPlugins?.openPublicTool(entry.pluginId,entry.tool.key)})),
     ];
-    showCommandCenter({mode,locale,anchor:this.root.dataset.authoringPilot === 'true' ? this.root.querySelector<HTMLElement>('.shell-command-center') : null,error:reason=>{this.message=String(reason);this.messageTone='error';this.render();},load:async(query,kind)=>{
+    showCommandCenter({mode,locale,anchor:this.root.querySelector<HTMLElement>('.shell-command-center'),error:reason=>{this.message=String(reason);this.messageTone='error';this.render();},load:async(query,kind)=>{
       const match=(items:CommandEntry[])=>items.filter(item=>`${item.label} ${item.group} ${item.detail??''}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
       if(kind==='commands')return match(commands); if(!source)return [];
       const objects:CommandEntry[]=[
@@ -2123,8 +2540,8 @@ export class AuthoringWorkspace {
       if (this.notice(result)) { this.render(); studioToasts.add({title: `${this.t(action)}：${this.controller.historyLabel}`}); } return;
     }
     if (action === 'preferences') return this.openDocument({kind:'project',id:'workbench-settings',objectId:'preferences',title:tr(this.controller.preferences.locale,'工作台偏好','Workbench preferences','ワークスペース設定')});
-    if (action === 'resetLayout') return this.preference(p => ({ ...p, layout: { ...p.layout, left: 240, right: 320, bottom: 200 } }));
-    this.controller.changeView(action); await this.navigate('editor');
+    if (action === 'resetLayout') { this.dock.current?.preset('balanced'); return; }
+    this.chooseSceneView(action); await this.navigate('editor');
   }
   private async activeHistoryScope(): Promise<{ documentId: Id; paths?: string[] } | null> {
     const source = this.controller.source;
@@ -2442,11 +2859,15 @@ export class AuthoringWorkspace {
     }));
     return this.characterNode;
   }
-  private async runPlaytest(from: 'entry' | 'scene' | 'statement'): Promise<void> {
+  private async runPlaytest(from: 'entry' | 'scene' | 'statement' | 'stage'): Promise<void> {
     if (!await this.flushScript()) return;
     await this.controller.flushResume();
     const scene = this.controller.scene, statement = from === 'scene' ? this.controller.parsed()?.parsed.cst.find(node => node.id)?.id : this.controller.selection?.primaryId;
-    try { await startPlaytest(this.root, this.services, from !== 'entry' && scene && statement ? { sceneId: scene.sceneId, statementId: statement } : null, () => this.render(), this.controller.preferences.locale, this.debugRouteIntent); }
+    const stage = from === 'stage' ? this.fixedStageSource ?? this.selectedSceneSource() : null;
+    if (stage && !this.resolveSceneSource(stage)) throw new Error(tr(this.controller.preferences.locale, '舞台来源已失效，请重选来源或恢复跟随。', 'The stage source is unavailable. Pick a source or resume following.', 'ステージの参照元が利用できません。参照元を選び直すか追従に戻してください。'));
+    const target = stage ? { sceneId: stage.sceneId, statementId: stage.statementId }
+      : from !== 'entry' && scene && statement ? { sceneId: scene.sceneId, statementId: statement } : null;
+    try { await startPlaytest(this.root, this.services, target, () => this.render(), this.controller.preferences.locale, this.debugRouteIntent); }
     catch (error) { this.messageTone = 'error'; this.message = String(error); this.render(); }
   }
   private async deleteStatements(ids: Id[]): Promise<void> {
@@ -2493,7 +2914,8 @@ export class AuthoringWorkspace {
       locale: this.controller.preferences.locale, view: this.controller.view, dirty: status.dirty || this.writingDrafts.size > 0, saveState: status.save,
       hasSelection: Boolean(this.controller.selection?.primaryId), hasStatements: Boolean(this.controller.parsed()?.parsed.cst.some(node => node.id)),
       readOnly: this.controller.parsed()?.readOnly ?? true, pluginTools: Boolean(this.studioPlugins?.tools('commands.palette').length),
-      changeView: async view => { if (!await this.flushScript()) return; this.controller.changeView(view); this.render(); },
+      changeView: view => { void this.changeSceneView(view); },
+      sideBySide: this.controller.scene ? { views: this.sceneViews(), open: view => { void this.splitScene(view); }, close: () => { void this.splitScene(null); } } : undefined,
       play: from => { void this.runPlaytest(from); },
       action: action => {
         if (action === 'save') void this.save(false);
@@ -2522,6 +2944,393 @@ export class AuthoringWorkspace {
       ? { ...document, dirty: Boolean(scene?.dirty || this.writingDrafts.size), preview: this.writingDrafts.size ? false : document.preview } : document);
     this.refreshDocumentTabs(); this.updateStatus(); this.renderAuthoringToolbar();
   }
+  private recordWritingDraft(scene: NonNullable<AuthoringController['scene']>, id: Id, text: string, base: string): void {
+    if (text === base) this.writingDrafts.delete(id);
+    else {
+      this.writingDraftOrigin ??= { documentId: scene.documentId, revision: this.controller.scene?.documentId === scene.documentId ? this.controller.scene.revision : scene.revision };
+      this.writingDrafts.set(id, text);
+    }
+    if (!this.writingDrafts.size) this.writingDraftOrigin = null;
+  }
+  private async editDialogueAt(sceneId: Id, statementId: Id, offset: number, action: DialogueEvent['kind'] | 'split' | 'merge') {
+    if (!await this.flushScript()) return;
+    const scene = this.controller.scene, source = this.controller.source;
+    if (!scene || !source || scene.sceneId !== sceneId) return;
+    const state = this.controller.parsed('writing', scene);
+    const node = state?.parsed.cst.find(item => item.id === statementId && item.command === 'say');
+    if (!node || state?.readOnly) return;
+    const args = node.object?.value as Record<string, unknown> | undefined;
+    const content = DialogueContentSchema.parse(args?.text ?? '');
+    const locale = this.controller.preferences.locale, t = (zh: string, en: string, ja: string) => tr(locale, zh, en, ja);
+    if (action !== 'merge' && !dialogueAnchorOffsets(content).has(offset)) {
+      this.message = t('请把光标放在完整字符或插值的边界。', 'Place the caret at a character or interpolation boundary.', '文字または補間の境界にカーソルを置いてください。');
+      this.messageTone = 'error'; this.render(); return;
+    }
+    const target = { projectId: source.project.projectId, sceneId, documentId: scene.documentId, revision: scene.revision, statementIds: [statementId] };
+    if (action === 'split' || action === 'merge') {
+      const next = state!.parsed.cst[state!.parsed.cst.indexOf(node) + 1]?.id;
+      if (action === 'merge' && !next) return;
+      const result = await this.controller.editDialogue(action === 'split' ? { op: 'dialogue.split', sceneId, statementId, offset }
+        : { op: 'dialogue.merge', sceneId, statementId, nextStatementId: next! }, target);
+      if (this.notice(result)) this.render();
+      return;
+    }
+    const events = (Array.isArray(args?.events) ? args.events : []).map(event => DialogueEventSchema.parse(event));
+    const id = createId();
+    const add = async (event: DialogueEvent) => {
+      const result = await this.controller.editDialogue({ op: 'dialogue.update', sceneId, statementId, events: [...events, event] }, target, id);
+      if (result.ok) {
+        if (this.controller.scene?.sceneId === sceneId) {
+          this.focusedDialogueEvent = { sceneId, statementId, eventId: id };
+          this.controller.select([statementId]);
+        }
+        this.render();
+      }
+      return result;
+    };
+    if (action === 'sound') {
+      await openAssetPicker({ services: this.services, projectId: target.projectId, sceneId, allowedKinds: ['audio'], locale,
+        purpose: t('句内短音效', 'Inline sound effect', '台詞内の効果音'), scope: this.root, remember: false,
+        onApply: choice => add({ id, kind: 'sound', offset, assetId: choice.assetId, variantId: choice.variantId }) });
+      return;
+    }
+    const caption = t(`正文位置 ${offset}`, `Text boundary ${offset}`, `本文の位置 ${offset}`);
+    if (action === 'wait') {
+      let wait: WaitInput = { duration: '', automatic: '' };
+      await requestDialog({ title: t('插入句内等待', 'Insert inline wait', '台詞内に待機を追加'), locale, description: caption,
+        content: createElement(InlineWaitFields, { initial: wait, locale, change: value => { wait = value; } }),
+        confirm: async () => { const result = await add({ id, kind: 'wait', offset, ...waitEventValues(wait) });
+          if (!this.notice(result)) throw new Error(result.error.message); } });
+      return;
+    }
+    const visible = new Map<Id, { characterId?: Id; assetId?: Id; variantId?: Id }>();
+    for (const previous of state!.parsed.cst) {
+      if (previous === node) break;
+      if (previous.command !== 'changeFigure') continue;
+      const figure = previous.object?.value as Record<string, unknown> | undefined;
+      if (typeof figure?.objectId !== 'string') continue;
+      if (figure.op === 'exit') { visible.delete(figure.objectId); continue; }
+      const prior = figure.op === 'replace' ? visible.get(figure.objectId) : undefined;
+      visible.set(figure.objectId, {
+        characterId: typeof figure.characterId === 'string' ? figure.characterId : prior?.characterId,
+        assetId: typeof figure.assetId === 'string' ? figure.assetId : prior?.assetId,
+        variantId: typeof figure.variantId === 'string' ? figure.variantId : typeof figure.assetId === 'string' ? undefined : prior?.variantId,
+      });
+    }
+    const differences: { event: DialogueEvent; label: string }[] = [];
+    for (const [objectId, figure] of visible) {
+      const character = source.characters.find(item => item.id === figure.characterId);
+      const cached = figure.assetId ? this.assetCache.get(figure.assetId) : undefined;
+      const fetched = figure.assetId && !cached ? await this.services.getAsset?.(figure.assetId) : undefined;
+      const model = cached ?? (fetched?.ok ? fetched.value : null);
+      if (model) this.assetCache.set(model.id, model);
+      if (model && model.kind === 'live2d') {
+        const variant = model.variants.find(item => item.id === (figure.variantId ?? model.activeVariantId));
+        if (variant) for (const expressionName of variant.groupCapabilities?.expressions ?? []) differences.push({
+          event: { id, kind: 'live2dExpression', offset, objectId, assetId: model.id, variantId: variant.id, expressionName },
+          label: `${character?.name ?? model.name} · ${expressionName} · Live2D · ${objectId}`,
+        });
+      } else if (character) for (const difference of character.differences ?? []) differences.push({
+        event: { id, kind: 'expression', offset, objectId, characterId: character.id, differenceId: difference.id },
+        label: `${character.name} · ${difference.name} · ${objectId}`,
+      });
+    }
+    if (!differences.length) {
+      this.message = t('此句前需有带图片差分或 Live2D 命名表情的在场立绘。', 'Show a figure with image variations or named Live2D expressions before this line.', 'この台詞の前に画像差分または Live2D の名前付き表情を持つ立ち絵を表示してください。');
+      this.messageTone = 'error'; this.render(); return;
+    }
+    let selected = 0;
+    await requestDialog({ title: t('插入句内表情', 'Insert inline expression', '台詞内に表情を追加'), locale, description: caption,
+      content: createElement('label', { className: 'authoring-field' }, t('在场立绘与表情', 'Figure and expression', '立ち絵と表情'),
+        createElement('select', { onChange: (event: React.ChangeEvent<HTMLSelectElement>) => { selected = Number(event.target.value); } },
+          differences.map((item, index) => createElement('option', { key: index, value: index }, item.label)))),
+      confirm: async () => {
+        const result = await add(differences[selected]!.event);
+        if (!this.notice(result)) throw new Error(result.error.message); } });
+  }
+  private scenePane(source: NonNullable<AuthoringController['source']>, scene: NonNullable<AuthoringController['scene']>, view: AuthoringController['view'], split: boolean): HTMLElement {
+    const center = el('section', 'authoring-center'); center.style.fontFamily = this.controller.preferences.editor.fontFamily;
+    center.style.fontSize = `${this.controller.preferences.editor.fontSize}px`;
+    const selection = view === this.controller.view ? this.controller.selection : this.scenePaneContext(scene.sceneId, view).selection;
+    center.dataset.sceneView = view;
+    center.setAttribute('aria-label', this.t(view));
+    center.addEventListener('focusin', () => {
+      if (this.controller.scene?.documentId !== scene.documentId || this.controller.view === view) return;
+      this.activateSceneView(view);
+      queueMicrotask(() => this.render());
+    });
+    if (split) center.append(el('h2', 'authoring-pane-title', this.t(view)));
+    {
+      const current = this.controller.parsed(view);
+      if (current?.readOnly) {
+        const locale = this.controller.preferences.locale, revision = current.lastValidRevision;
+        const notice = el('div', 'authoring-notice');
+        notice.dataset.sceneBaseline = revision === null ? 'missing' : String(revision);
+        notice.setAttribute('role', 'status');
+        notice.append(el('p', '', revision === null
+          ? tr(locale, '源码有错误，当前没有可核验的有效版本。', 'The source has errors and has no verified valid revision.', 'ソースにエラーがあり、確認済みの有効版がありません。')
+          : tr(locale, '只读 · 显示有效修订 ' + revision + ' · 已存修订 ' + scene.savedRevision, 'Read only · Showing valid revision ' + revision + ' · Saved revision ' + scene.savedRevision, '読み取り専用 · 有効なリビジョン ' + revision + ' · 保存済み ' + scene.savedRevision)));
+        notice.append(button(this.t('script'), () => this.changeSceneView('script')));
+        center.append(notice);
+      }
+      if (view === 'script') {
+        const input = el('div', 'authoring-script-editor'); input.setAttribute('aria-label', this.t('script')); center.append(input);
+      } else if (current && (!current.readOnly || current.lastValidRevision !== null)) {
+        const list = el('div', view === 'writing' ? 'authoring-writing-list' : 'authoring-card-list');
+        const gap = (beforeId: Id | null) => { const node = el('div', 'authoring-drop-gap');
+          const insert = button('', () => this.commandDialog(beforeId), 'authoring-insert-icon'); insert.append(actionIcon('plus')); insert.setAttribute('aria-label', this.t('addCommand')); insert.title=beforeId ? tr(this.controller.preferences.locale, '在此行前添加指令', 'Insert before this line', 'この行の前に挿入') : tr(this.controller.preferences.locale, '在末尾添加指令', 'Insert at the end', '末尾に挿入'); insert.ariaLabel=insert.title;
+          insert.append(el('span', 'authoring-insert-label', beforeId ? tr(this.controller.preferences.locale, '在此行前插入', 'Insert before this line', 'この行の前に挿入') : tr(this.controller.preferences.locale, '在末尾添加指令', 'Add at the end', '末尾に追加')));
+          insert.disabled = current.readOnly; node.dataset.position = beforeId ? 'before' : 'end'; node.append(insert);
+          node.addEventListener('dragover', event => event.preventDefault()); node.addEventListener('drop', event => { event.preventDefault();
+            const asset = this.assetCache.get(event.dataTransfer?.getData('text/x-galcraft-asset') as Id); if (asset) void this.dropAsset(asset, 'gap', beforeId, null);
+          }); return node; };
+        const registry = createCommandRegistry(source.project.engineVersion, this.studioPlugins?.commandSpecs() ?? []);
+        for (const node of current.parsed.cst) {
+          if (!node.id) continue;
+          if (!current.readOnly) list.append(gap(node.id));
+          const args = node.object?.value as Record<string, unknown> | undefined;
+          const card = el('article', 'authoring-card'); card.dataset.view = view; card.dataset.statementId = node.id; card.dataset.command = node.command; card.tabIndex = 0;
+          if (selection?.statementIds.includes(node.id)) card.classList.add('selected');
+          const handle = button('', () => {}); handle.className = 'authoring-grip'; handle.append(actionIcon('grip'));
+          handle.setAttribute('aria-label', tr(this.controller.preferences.locale, '拖动排序；Alt 加方向键调整顺序', 'Drag to reorder; Alt+arrow keys to move', 'ドラッグで並べ替え。Alt＋矢印でも移動')); handle.title=handle.ariaLabel ?? '';
+          handle.disabled = current.readOnly;
+          handle.addEventListener('keydown', event => {
+            if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+            event.preventDefault(); event.stopPropagation();
+            const ids = current.parsed.cst.filter(item => item.id).map(item => item.id!);
+            const at = ids.indexOf(node.id!);
+            const before = event.key === 'ArrowUp' ? ids[at - 1] : ids[at + 2] ?? null;
+            if (at < 0 || event.key === 'ArrowUp' && at === 0 || event.key === 'ArrowDown' && at === ids.length - 1) return;
+            void this.moveCards([node.id!], before, node.id!);
+          });
+          const commandSpec=registry.get(node.command);
+          const typeName = node.command === 'changeFigure' ? (this.assetCache.get(String(args?.assetId))?.kind === 'live2d' ? tr(this.controller.preferences.locale,'Live2D 立绘','Live2D character','Live2D 立ち絵') : tr(this.controller.preferences.locale,'图片立绘','Image character art','画像の立ち絵')) : commandSpec ? commandName(commandSpec,this.controller.preferences.locale) : node.command;
+          const voiced = node.command === 'say' && Boolean(args?.voice || args?.voiceByLocale &&
+            Object.keys(args.voiceByLocale as Record<string, unknown>).length);
+          card.append(handle);
+          if(view==='cards' && typeof args?.assetId==='string') {
+            const asset=this.assetCache.get(args.assetId);
+            if(asset?.kind==='image'){const image=el('img','authoring-direction-thumbnail');image.alt=asset.name;image.draggable=false;image.dataset.assetId=asset.id;image.dataset.variantId=asset.activeVariantId;
+              const preview=button('',()=>this.previewAsset(asset.id,asset.activeVariantId),'authoring-direction-preview');preview.ariaLabel=tr(this.controller.preferences.locale,`预览 ${asset.name}`,`Preview ${asset.name}`,`${asset.name} をプレビュー`);
+              const overlay=el('span','direction-preview-overlay');overlay.append(actionIcon('search'));preview.append(image,overlay);preview.addEventListener('click',event=>event.stopPropagation());card.append(preview);}
+          }
+          if (view !== 'writing' || node.command !== 'say') card.append(commandIcon(node.command, voiced, voiced ? '配音对白' : typeName), el('strong', '', typeName));
+          if (view === 'writing' && node.command === 'say') {
+            const speakerSelect = el('select', 'authoring-speaker-select');
+            speakerSelect.ariaLabel = tr(this.controller.preferences.locale, '说话者', 'Speaker', '話者');
+            const narrator = el('option', '', '旁白'); narrator.value = ''; speakerSelect.append(narrator);
+            for (const character of source.characters) { const option = el('option', '', character.name); option.value = character.id; speakerSelect.append(option); }
+            const speakerValue = args?.speaker as { kind?: string; id?: string } | undefined;
+            speakerSelect.value = speakerValue?.kind === 'character' ? speakerValue.id ?? '' : '';
+            speakerSelect.disabled = current.readOnly;
+            speakerSelect.addEventListener('click', event => event.stopPropagation());
+            speakerSelect.addEventListener('change', () => { void (async () => { if (!await this.flushWriting()) return; this.controller.select([node.id!]);
+              const speaker: Json = speakerSelect.value ? { kind: 'character', id: speakerSelect.value } : { kind: 'narrator' };
+              const result = await this.controller.editFields([{ field: 'speaker', op: 'set', value: speaker }]); if (this.notice(result)) this.render(); })();
+            }); card.append(speakerSelect);
+            const writing = el('textarea', 'authoring-writing-input'); writing.value = this.writingDrafts.get(node.id) ?? dialoguePlainText(DialogueContentSchema.safeParse(args?.text).data ?? ''); writing.disabled = current.readOnly; writing.ariaLabel = tr(this.controller.preferences.locale, '对白正文', 'Dialogue text', '台詞本文'); writing.placeholder = tr(this.controller.preferences.locale, '输入对白，Ctrl+Enter 继续写下一句', 'Write dialogue; Ctrl+Enter starts the next line', '台詞を入力。Ctrl+Enter で次の行へ');
+            writing.addEventListener('click', event => event.stopPropagation());
+            writing.addEventListener('compositionstart', () => this.setSceneComposition(writing, true));
+            writing.addEventListener('compositionend', () => this.setSceneComposition(writing, false));
+            const currentArgs = () => this.controller.parsed('writing')?.parsed.cst.find(item => item.id === node.id)?.object?.value as Record<string, unknown> | undefined;
+            writing.addEventListener('input', () => {
+              this.recordWritingDraft(scene, node.id!, writing.value, dialoguePlainText(DialogueContentSchema.safeParse(currentArgs()?.text).data ?? ''));
+              void this.reportAuthoringDrafts(); this.refreshWritingStatus();
+            });
+            writing.addEventListener('change', () => { void this.flushWriting().then(ok => { if (ok) this.render(); }); });
+            writing.addEventListener('keydown', event => { if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey) || event.isComposing || this.composingSceneInputs.has(writing) || event.altKey || event.shiftKey) return;
+              event.stopPropagation();
+              event.preventDefault(); void (async () => {
+                this.controller.select([node.id!]);
+                this.recordWritingDraft(scene, node.id!, writing.value, dialoguePlainText(DialogueContentSchema.safeParse(currentArgs()?.text).data ?? ''));
+                if (!await this.flushWriting()) return;
+                const speaker = currentArgs()?.speaker as { kind: 'character'; id: Id } | { kind: 'narrator' } | undefined;
+                const inserted = await this.controller.insertDialogue([{ speaker: speaker ?? { kind: 'narrator' }, text: '' }], this.controller.nextStatementId(node.id!), true);
+                if (this.notice(inserted)) { this.render();
+                  this.root.querySelector<HTMLTextAreaElement>(`[data-statement-id="${this.controller.selection?.primaryId}"] textarea`)?.focus(); }
+              })();
+            });
+            writing.rows = 1;
+            const grow = () => { writing.style.height = 'auto'; writing.style.height = `${Math.max(36, writing.scrollHeight + 2)}px`; };
+            writing.addEventListener('input', grow);
+            requestAnimationFrame(grow);
+            card.append(writing);
+          } else {
+            card.append(el('span', 'authoring-card-summary', node.command === 'say' ? dialoguePlainText(DialogueContentSchema.safeParse(args?.text).data ?? '') : ['setComplexAnimation','stopAnimation'].includes(node.command) ? this.animationSummary(args??{},node.command==='stopAnimation') : node.command === 'end' ?
+              `${tr(this.controller.preferences.locale, '结束后前往', 'Destination after ending', '終了後の移動先')}: ${this.endingDestination(args?.target)}` :
+              Object.entries(args ?? {}).filter(([key]) => !['text', 'speaker', 'objectId', 'soundId', 'effectId', 'labelId'].includes(key)).slice(0, 2)
+                .map(([key, value]) => `${fieldNames[key]?.[this.controller.preferences.locale==='en'?1:this.controller.preferences.locale==='ja'?2:0]??key}: ${key==='op'?enumLabel(String(value),this.controller.preferences.locale):this.displayParameter(value)}`).join(' · ')));
+            if (node.command === 'say') {
+              const speaker=args?.speaker as {id?:string}|undefined;
+              const name=source.characters.find(item=>item.id===speaker?.id)?.name ?? tr(this.controller.preferences.locale,'旁白','Narrator','ナレーター');
+              const tag=el('span','authoring-speaker-name',name);card.querySelector('strong')?.replaceWith(tag);
+              if(voiced)card.append(el('span','authoring-voice-state',tr(this.controller.preferences.locale,'已配音','Voiced','音声あり')));
+            }
+          }
+          if (node.command === 'say' && Array.isArray(args?.events)) {
+            const markers = el('div', 'authoring-dialogue-markers');
+            const locale = this.controller.preferences.locale;
+            const events = args.events.flatMap(raw => {
+              const event = DialogueEventSchema.safeParse(raw);
+              return event.success ? [event.data] : [];
+            }).sort((a, b) => a.offset - b.offset);
+            for (const event of events) {
+              const label = event.kind === 'wait' ? event.durationMs === null
+                ? tr(locale, '点击等待', 'Click wait', 'クリック待ち')
+                : tr(locale, '定时等待', 'Timed wait', '時間待ち')
+                : event.kind === 'sound' ? tr(locale, '音效', 'Sound effect', '効果音')
+                  : event.kind === 'live2dExpression' ? `Live2D · ${event.expressionName}` : tr(locale, '表情', 'Expression', '表情');
+              const marker = button(`${label} · ${event.offset}`, () => {
+                this.focusedDialogueEvent = { sceneId: scene.sceneId, statementId: node.id!, eventId: event.id };
+                this.controller.select([node.id!]); this.render();
+              }, 'authoring-dialogue-marker');
+              marker.dataset.eventId = event.id;
+              marker.ariaPressed = String(this.focusedDialogueEvent?.sceneId === scene.sceneId && this.focusedDialogueEvent.eventId === event.id);
+              marker.addEventListener('click', input => input.stopPropagation());
+              markers.append(marker);
+            }
+            if (markers.childElementCount) card.append(markers);
+          }
+          card.addEventListener('click', event => { const selected = this.controller.selection?.statementIds ?? []; let ids: Id[];
+            const visible=current.parsed.cst.flatMap(item=>item.id?[item.id]:[]),anchor=this.cardRangeAnchor?.sceneId===scene.sceneId?visible.indexOf(this.cardRangeAnchor.id):-1;
+            if(event.shiftKey&&anchor>=0){const at=visible.indexOf(node.id!);ids=[...new Set([...(event.ctrlKey||event.metaKey?selected:[]),...visible.slice(Math.min(anchor,at),Math.max(anchor,at)+1)])];}
+            else {ids=event.ctrlKey||event.metaKey?selected.includes(node.id!)?selected.filter(id=>id!==node.id):[...selected,node.id!]:[node.id!];this.cardRangeAnchor={sceneId:scene.sceneId,id:node.id!};}
+            this.focusedDialogueEvent = null;
+            this.controller.select(ids, ids.includes(node.id!) ? node.id : ids.at(-1)); this.render();
+            this.root.querySelector<HTMLElement>(`[data-scene-view="${view}"] [data-statement-id="${node.id}"]`)?.focus(); });
+          const openMenu = (origin: HTMLElement, point?: MouseEvent) => {
+            const locale = this.controller.preferences.locale;
+            const writing = card.querySelector<HTMLTextAreaElement>('textarea.authoring-writing-input');
+            const offset = writing?.selectionStart ?? 0;
+            const following = current.parsed.cst[current.parsed.cst.indexOf(node) + 1];
+            const at = (action: Parameters<AuthoringWorkspace['editDialogueAt']>[3]) => () => this.editDialogueAt(scene.sceneId, node.id!, offset, action);
+            if(!this.controller.selection?.statementIds.includes(node.id!))this.cardRangeAnchor={sceneId:scene.sceneId,id:node.id!};
+            const ids = objectMenuSelection(this.controller.selection?.statementIds ?? [], node.id!); this.controller.select(ids, node.id); this.render();
+            const anchor = this.root.querySelector<HTMLElement>(`[data-scene-view="${view}"] [data-statement-id="${node.id}"]${origin === card ? '' : ' .authoring-object-more'}`) ?? card;
+            showObjectMenu({ element: anchor, kind: origin === card ? 'context' : 'dropdown', ...(point ? { x: point.clientX, y: point.clientY } : {}) }, [
+              { label: typeName, actions: [{ label: tr(locale,'从此句试玩','Play from here','ここからテスト'), run: () => { void this.runPlaytest('statement'); } }] },
+              ...(writing && !current.readOnly ? [{ label: tr(locale, '对白正文', 'Dialogue text', '台詞本文'), actions: [
+                { label: tr(locale, '插入句内等待', 'Insert inline wait', '台詞内に待機を追加'), run: at('wait') },
+                { label: tr(locale, '插入句内音效', 'Insert inline sound effect', '台詞内に効果音を追加'), run: at('sound') },
+                { label: tr(locale, '插入句内表情', 'Insert inline expression', '台詞内に表情を追加'), run: at('expression') },
+                { label: tr(locale, '在光标处拆句', 'Split at caret', 'カーソル位置で分割'), run: at('split') },
+                ...(following?.command === 'say' ? [{ label: tr(locale, '与下一句合并', 'Merge with next line', '次の台詞と結合'), run: at('merge') }] : []),
+              ] }] : []),
+              { label: tr(locale,`所选 ${ids.length} 条语句`,`${ids.length} selected statements`,`${ids.length} 件の選択`), actions: [
+                { label: this.t('copy'), disabled: current.readOnly ? '原文有错误' : undefined, run: () => { void this.controller.copyStatements(ids).then(result => { this.notice(result); this.render(); }); } },
+                { label: this.t('moveScene'), disabled: current.readOnly ? '原文有错误' : undefined, run: () => { void this.showMoveInstructions(); } },
+              ] },
+              { label: '', actions: [{ label: tr(locale,'删除所选','Delete selected','選択項目を削除'), danger: true, disabled: current.readOnly ? '原文有错误' : undefined, run: () => { void this.deleteStatements(ids); } }] },
+              ...(!current.readOnly && this.studioPlugins?.tools('context.menu').length ? [{ label: '插件', actions: [{ label: '插件对象操作', run: () => { this.studioPlugins?.publishScope(); this.studioPlugins?.openTools('context.menu'); } }] }] : []),
+            ]);
+          };
+          card.addEventListener('contextmenu', event => { if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"],.monaco-editor')) return; event.preventDefault(); event.stopPropagation(); openMenu(card, event); });
+          card.addEventListener('keydown', event => { if (event.isComposing || !isObjectMenuKey(event) || event.target !== card) return; event.preventDefault(); event.stopPropagation(); openMenu(card); });
+          const more = button('', () => openMenu(more), 'authoring-object-more'); more.append(actionIcon('more')); more.ariaLabel = tr(this.controller.preferences.locale,'更多指令操作','More command actions','その他の操作'); more.addEventListener('click', event => event.stopPropagation()); card.append(more);
+          card.addEventListener('keydown', event => { if (event.key !== 'Delete' || event.isComposing || current.readOnly || event.target !== card) return;
+            event.preventDefault(); const ids = this.controller.selection?.statementIds.includes(node.id!) ? this.controller.selection.statementIds : [node.id!];
+            void this.deleteStatements(ids);
+          });
+          attachCardReorder(card, list, node.id, beforeId => {
+            const selected = this.controller.selection?.statementIds.includes(node.id!) ?
+              this.controller.selection.statementIds : [node.id!];
+            void this.moveCards(selected, beforeId);
+          }, current.readOnly);
+          if (!current.readOnly) {
+            card.addEventListener('dragover', event => event.preventDefault());
+            card.addEventListener('drop', event => { event.preventDefault();
+              const assetId = event.dataTransfer?.getData('text/x-galcraft-asset') as Id; const asset = this.assetCache.get(assetId);
+              if (asset) void this.dropAsset(asset, 'card', node.id!, node.command);
+            });
+          }
+          list.append(card);
+        }
+        if (!current.readOnly) list.append(gap(null));
+        center.append(list);
+        if (current.readOnly) return center;
+        const actions = el('div', 'authoring-toolbar authoring-selection-tools'); actions.append(button(this.t('addDialogue'), () => this.dialogueDialog()));
+        actions.append(button(this.t('addCommand'), () => this.commandDialog()));
+        if (selection?.statementIds.length) {
+          actions.append(el('span', 'authoring-selection-count', tr(this.controller.preferences.locale,
+            `已选 ${selection.statementIds.length} 条`, `${selection.statementIds.length} selected`, `${selection.statementIds.length} 件を選択`)));
+          actions.append(button(this.t('copy'), async () => { const result = await this.controller.copyStatements(this.controller.selection!.statementIds);
+            if (this.notice(result)) this.render(); }));
+          const move = button(this.t('moveScene'), () => this.showMoveInstructions(), 'authoring-move-selected'); move.disabled = current.readOnly; actions.append(move);
+          const remove=button(tr(this.controller.preferences.locale,'删除所选','Delete selected','選択を削除'),()=>this.deleteStatements(this.controller.selection?.statementIds??[]),'authoring-delete-selected');remove.prepend(actionIcon('trash'));remove.disabled=current.readOnly;actions.append(remove);
+        }
+        center.append(actions);
+      }
+    }
+    return center;
+  }
+  private eventProperties(inspected: NonNullable<ReturnType<AuthoringWorkspace['resolveSceneSource']>>): HTMLElement {
+    const { scene, state, node, event } = inspected;
+    const project = this.controller.source!;
+    const locale = this.controller.preferences.locale;
+    const t = (zh: string, en: string, ja: string) => tr(locale, zh, en, ja);
+    const field = el('section', 'authoring-event-properties');
+    const active = event!;
+    const title = active.kind === 'wait' ? t('句内等待', 'Inline wait', '台詞内の待機')
+      : active.kind === 'sound' ? t('句内音效', 'Inline sound', '台詞内の効果音')
+        : active.kind === 'live2dExpression' ? t('句内 Live2D 表情', 'Inline Live2D expression', '台詞内の Live2D 表情')
+          : t('句内表情', 'Inline expression', '台詞内の表情');
+    field.append(el('h3', '', title), el('p', 'authoring-inspector-context', `${scene.name} · ${t('正文位置', 'Text boundary', '本文の位置')} ${active.offset}`));
+    const values = node.object?.value as Record<string, unknown>;
+    const events = (Array.isArray(values.events) ? values.events : []).map(item => DialogueEventSchema.safeParse(item));
+    const target: StatementEditTarget = { projectId: project.project.projectId, sceneId: scene.sceneId, documentId: scene.documentId, revision: scene.revision, statementIds: [node.id!] };
+    const edit = button(t('编辑句内事件', 'Edit inline event', '台詞内のイベントを編集'), async () => {
+      let offset = String(active.offset);
+      let wait: WaitInput = {
+        duration: active.kind === 'wait' && active.durationMs !== null ? String(active.durationMs) : '',
+        automatic: active.kind === 'wait' && active.autoWaitMs !== undefined ? String(active.autoWaitMs) : '',
+      };
+      let volume = active.kind === 'sound' && active.volume !== undefined ? String(active.volume) : '';
+      let differenceId = active.kind === 'expression' ? active.differenceId : '';
+      let expressionName = active.kind === 'live2dExpression' ? active.expressionName : '';
+      const numberField = (label: string, value: string, min: number, update: (value: string) => void, max?: number) => createElement('label', { className: 'authoring-field' }, label,
+        createElement('input', { type: 'number', defaultValue: value, min, max, step: max ? 'any' : 1,
+          onChange: (input: React.ChangeEvent<HTMLInputElement>) => update(input.target.value) }));
+      const choiceField = (label: string, selected: string, choices: { value: string; label: string }[], change: (value: string) => void) => {
+        const options = choices.some(item => item.value === selected) ? choices : [...choices, { value: selected, label: selected }];
+        return createElement('label', { className: 'authoring-field' }, label, createElement('select', {
+          defaultValue: selected, onChange: (input: React.ChangeEvent<HTMLSelectElement>) => change(input.target.value),
+        }, ...options.map(item => createElement('option', { key: item.value, value: item.value }, item.label))));
+      };
+      let details: React.ReactNode;
+      if (active.kind === 'wait') details = createElement(InlineWaitFields, { initial: wait, locale, change: value => { wait = value; } });
+      else if (active.kind === 'sound') details = numberField(t('音量（%）', 'Volume (%)', '音量（%）'), volume, 0, value => { volume = value; }, 100);
+      else if (active.kind === 'expression') {
+        const choices = project.characters.find(character => character.id === active.characterId)?.differences ?? [];
+        details = choiceField(t('共同差分', 'Shared variation', '共通差分'), differenceId,
+          choices.map(item => ({ value: item.id, label: item.name })), value => { differenceId = value; });
+      } else {
+        const cached = this.assetCache.get(active.assetId);
+        const loaded = cached ? undefined : await this.services.getAsset?.(active.assetId);
+        const model = cached ?? (loaded?.ok ? loaded.value : null);
+        const expressions = model?.variants.find(item => item.id === (active.variantId ?? model.activeVariantId))?.groupCapabilities?.expressions ?? [];
+        details = choiceField(t('模型表情', 'Model expression', 'モデル表情'), expressionName,
+          expressions.map(name => ({ value: name, label: name })), value => { expressionName = value; });
+      }
+      await requestDialog({ title, locale, description: scene.name, content: createElement('div', {},
+        numberField(t('正文位置', 'Text boundary', '本文の位置'), offset, 0, value => { offset = value; }), details),
+        confirm: async () => {
+          const nextOffset = offset ? Number(offset) : -1;
+          const next = active.kind === 'wait' ? { id: active.id, kind: active.kind, offset: nextOffset, ...waitEventValues(wait) }
+            : active.kind === 'sound' ? { ...active, offset: nextOffset, volume: volume ? Number(volume) : undefined }
+              : active.kind === 'live2dExpression' ? { ...active, offset: nextOffset, expressionName }
+                : { ...active, offset: nextOffset, differenceId };
+          const candidate = DialogueEventSchema.safeParse(next);
+          if (!candidate.success) throw new Error(t('请输入有效的句内事件参数。', 'Enter valid inline event values.', '有効なイベントの値を入力してください。'));
+          const result = await this.controller.editDialogue({ op: 'dialogue.update', sceneId: target.sceneId, statementId: target.statementIds[0]!,
+            events: events.flatMap(item => item.success ? [item.data.id === active.id ? candidate.data : item.data] : []) }, target, active.id);
+          if (!this.notice(result)) throw new Error(issueText(result.error, locale));
+          this.render();
+        } });
+    });
+    edit.disabled = state.readOnly || events.some(item => !item.success);
+    field.append(edit);
+    return field;
+  }
   private editor(): HTMLElement {
     const source = this.controller.source; const scene = this.controller.scene;
     const main = el('main', 'authoring-editor'); if (!source) { main.append(el('p', '', this.t('open'))); return main; }
@@ -2543,273 +3352,174 @@ export class AuthoringWorkspace {
       } }
     }
     nav.append(sceneTree,createAuthoringSidebar({services:this.services,source,sceneId:scene?.sceneId??null,state:this.sidebarState,locale:this.controller.preferences.locale,
-      cache:asset=>this.assetCache.set(asset.id,asset),locate:source=>{void this.locateHit(source);},
-      returnToOrigin:()=>{const origin=this.searchOrigin;if(!origin)return;this.controller.selectScene(origin.sceneId);this.controller.changeView(origin.view);
-        if(origin.statementId)this.controller.select([origin.statementId]);this.searchOrigin=null;this.sidebarState.located=false;this.render();},
+      cache:asset=>this.assetCache.set(asset.id,asset),locate:source=>this.locateHit(source),
+      returnToOrigin: async () => {
+        const origin = this.searchOrigin;
+        if (!origin || !await this.openSceneTarget(origin.sceneId)) return;
+        this.chooseSceneView(origin.view);
+        this.controller.select(origin.selection?.statementIds ?? [], origin.selection?.primaryId ?? null);
+        this.controller.setScroll(origin.scroll.statementId, origin.scroll.offsetPx, origin.scroll.scrollLeft);
+        if (origin.caret && origin.view === 'script' && this.controller.scene?.revision === origin.revision)
+          this.revealScriptOffset(origin.caret.statementId, origin.caret.documentOffset);
+        this.searchOrigin = null;
+        this.sidebarState.located = false;
+        this.render();
+      },
       applyAsset:asset=>this.dropAsset(asset,'gap',this.controller.selection?.primaryId??null,null),previewAsset:asset=>this.previewAsset(asset.id),
       browseAssets:()=>{void this.navigate('assets');}}));
-    const center = el('section', 'authoring-center'); center.style.fontFamily = this.controller.preferences.editor.fontFamily;
-    center.style.fontSize = `${this.controller.preferences.editor.fontSize}px`;
+    const center = el('div', 'authoring-scene-views');
     if (scene) {
-      const current = this.controller.parsed();
-      if (current?.readOnly) center.append(el('p', 'authoring-notice', this.t('lastValid')));
-      if (this.controller.view === 'script') {
-        const input = el('div', 'authoring-script-editor'); input.setAttribute('aria-label', this.t('script')); center.append(input);
-      } else if (current) {
-        const list = el('div', this.controller.view === 'writing' ? 'authoring-writing-list' : 'authoring-card-list');
-        const gap = (beforeId: Id | null) => { const node = el('div', 'authoring-drop-gap');
-          const insert = button('', () => this.commandDialog(beforeId), 'authoring-insert-icon'); insert.append(actionIcon('plus')); insert.setAttribute('aria-label', this.t('addCommand')); insert.title=beforeId ? tr(this.controller.preferences.locale, '在此行前添加指令', 'Insert before this line', 'この行の前に挿入') : tr(this.controller.preferences.locale, '在末尾添加指令', 'Insert at the end', '末尾に挿入'); insert.ariaLabel=insert.title;
-          insert.append(el('span', 'authoring-insert-label', beforeId ? tr(this.controller.preferences.locale, '在此行前插入', 'Insert before this line', 'この行の前に挿入') : tr(this.controller.preferences.locale, '在末尾添加指令', 'Add at the end', '末尾に追加')));
-          insert.disabled = current.readOnly; node.dataset.position = beforeId ? 'before' : 'end'; node.append(insert);
-          node.addEventListener('dragover', event => event.preventDefault()); node.addEventListener('drop', event => { event.preventDefault();
-            const asset = this.assetCache.get(event.dataTransfer?.getData('text/x-galcraft-asset') as Id); if (asset) void this.dropAsset(asset, 'gap', beforeId, null);
-          }); return node; };
-        const registry = createCommandRegistry(source.project.engineVersion, this.studioPlugins?.commandSpecs() ?? []);
-        for (const node of current.parsed.cst) {
-          if (!node.id) continue;
-          list.append(gap(node.id));
-          const args = node.object?.value as Record<string, unknown> | undefined;
-          const card = el('article', 'authoring-card'); card.dataset.view = this.controller.view; card.dataset.statementId = node.id; card.dataset.command = node.command; card.tabIndex = 0;
-          if (this.controller.selection?.statementIds.includes(node.id)) card.classList.add('selected');
-          const handle = button('', () => {}); handle.className = 'authoring-grip'; handle.append(actionIcon('grip'));
-          handle.setAttribute('aria-label', tr(this.controller.preferences.locale, '拖动排序；Alt 加方向键调整顺序', 'Drag to reorder; Alt+arrow keys to move', 'ドラッグで並べ替え。Alt＋矢印でも移動')); handle.title=handle.ariaLabel ?? '';
-          handle.disabled = current.readOnly;
-          handle.addEventListener('keydown', event => {
-            if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
-            event.preventDefault(); event.stopPropagation();
-            const ids = current.parsed.cst.filter(item => item.id).map(item => item.id!);
-            const at = ids.indexOf(node.id!);
-            const before = event.key === 'ArrowUp' ? ids[at - 1] : ids[at + 2] ?? null;
-            if (at < 0 || event.key === 'ArrowUp' && at === 0 || event.key === 'ArrowDown' && at === ids.length - 1) return;
-            void this.moveCards([node.id!], before, node.id!);
-          });
-          const commandSpec=registry.get(node.command);
-          const typeName = node.command === 'changeFigure' ? (this.assetCache.get(String(args?.assetId))?.kind === 'live2d' ? tr(this.controller.preferences.locale,'Live2D 立绘','Live2D character','Live2D 立ち絵') : tr(this.controller.preferences.locale,'图片立绘','Image character art','画像の立ち絵')) : commandSpec ? commandName(commandSpec,this.controller.preferences.locale) : node.command;
-          const voiced = node.command === 'say' && Boolean(args?.voice || args?.voiceByLocale &&
-            Object.keys(args.voiceByLocale as Record<string, unknown>).length);
-          card.append(handle);
-          if(this.controller.view==='cards' && typeof args?.assetId==='string') {
-            const asset=this.assetCache.get(args.assetId);
-            if(asset?.kind==='image'){const image=el('img','authoring-direction-thumbnail');image.alt=asset.name;image.draggable=false;image.dataset.assetId=asset.id;image.dataset.variantId=asset.activeVariantId;
-              const preview=button('',()=>this.previewAsset(asset.id,asset.activeVariantId),'authoring-direction-preview');preview.ariaLabel=tr(this.controller.preferences.locale,`预览 ${asset.name}`,`Preview ${asset.name}`,`${asset.name} をプレビュー`);
-              const overlay=el('span','direction-preview-overlay');overlay.append(actionIcon('search'));preview.append(image,overlay);preview.addEventListener('click',event=>event.stopPropagation());card.append(preview);}
-          }
-          if (this.controller.view !== 'writing' || node.command !== 'say') card.append(commandIcon(node.command, voiced, voiced ? '配音对白' : typeName), el('strong', '', typeName));
-          if (this.controller.view === 'writing' && node.command === 'say') {
-            const speakerSelect = el('select', 'authoring-speaker-select');
-            speakerSelect.ariaLabel = tr(this.controller.preferences.locale, '说话者', 'Speaker', '話者');
-            const narrator = el('option', '', '旁白'); narrator.value = ''; speakerSelect.append(narrator);
-            for (const character of source.characters) { const option = el('option', '', character.name); option.value = character.id; speakerSelect.append(option); }
-            const speakerValue = args?.speaker as { kind?: string; id?: string } | undefined;
-            speakerSelect.value = speakerValue?.kind === 'character' ? speakerValue.id ?? '' : '';
-            speakerSelect.disabled = current.readOnly;
-            speakerSelect.addEventListener('click', event => event.stopPropagation());
-            speakerSelect.addEventListener('change', () => { void (async () => { if (!await this.flushWriting()) return; this.controller.select([node.id!]);
-              const speaker: Json = speakerSelect.value ? { kind: 'character', id: speakerSelect.value } : { kind: 'narrator' };
-              const result = await this.controller.editFields([{ field: 'speaker', op: 'set', value: speaker }]); if (this.notice(result)) this.render(); })();
-            }); card.append(speakerSelect);
-            const writing = el('textarea', 'authoring-writing-input'); writing.value = this.writingDrafts.get(node.id) ?? dialoguePlainText(DialogueContentSchema.safeParse(args?.text).data ?? ''); writing.disabled = current.readOnly; writing.ariaLabel = tr(this.controller.preferences.locale, '对白正文', 'Dialogue text', '台詞本文'); writing.placeholder = tr(this.controller.preferences.locale, '输入对白，Ctrl+Enter 继续写下一句', 'Write dialogue; Ctrl+Enter starts the next line', '台詞を入力。Ctrl+Enter で次の行へ');
-            writing.addEventListener('click', event => event.stopPropagation());
-            const currentArgs = () => this.controller.parsed()?.parsed.cst.find(item => item.id === node.id)?.object?.value as Record<string, unknown> | undefined;
-            writing.addEventListener('input', () => { if (writing.value === dialoguePlainText(DialogueContentSchema.safeParse(currentArgs()?.text).data ?? '')) this.writingDrafts.delete(node.id!);
-              else this.writingDrafts.set(node.id!, writing.value); void this.reportAuthoringDrafts();this.refreshWritingStatus(); });
-            writing.addEventListener('change', () => { void this.flushWriting().then(ok => { if (ok) this.render(); }); });
-            writing.addEventListener('keydown', event => { if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey) || event.isComposing || event.altKey || event.shiftKey) return;
-              event.stopPropagation();
-              event.preventDefault(); void (async () => {
-                this.controller.select([node.id!]);
-                if (writing.value !== dialoguePlainText(DialogueContentSchema.safeParse(currentArgs()?.text).data ?? '')) this.writingDrafts.set(node.id!, writing.value);
-                if (!await this.flushWriting()) return;
-                const speaker = currentArgs()?.speaker as { kind: 'character'; id: Id } | { kind: 'narrator' } | undefined;
-                const inserted = await this.controller.insertDialogue([{ speaker: speaker ?? { kind: 'narrator' }, text: '' }], this.controller.nextStatementId(node.id!), true);
-                if (this.notice(inserted)) { this.render();
-                  this.root.querySelector<HTMLTextAreaElement>(`[data-statement-id="${this.controller.selection?.primaryId}"] textarea`)?.focus(); }
-              })();
-            });
-            writing.rows=2; const grow=()=>{writing.style.height='auto';writing.style.height=`${Math.max(52,writing.scrollHeight)}px`;}; writing.addEventListener('input',grow); requestAnimationFrame(grow); card.append(writing);
-          } else {
-            card.append(el('span', 'authoring-card-summary', node.command === 'say' ? dialoguePlainText(DialogueContentSchema.safeParse(args?.text).data ?? '') : ['setComplexAnimation','stopAnimation'].includes(node.command) ? this.animationSummary(args??{},node.command==='stopAnimation') : node.command === 'end' ?
-              `${tr(this.controller.preferences.locale, '结束后前往', 'Destination after ending', '終了後の移動先')}: ${this.endingDestination(args?.target)}` :
-              Object.entries(args ?? {}).filter(([key]) => !['text', 'speaker', 'objectId', 'soundId', 'effectId', 'labelId'].includes(key)).slice(0, 2)
-                .map(([key, value]) => `${fieldNames[key]?.[this.controller.preferences.locale==='en'?1:this.controller.preferences.locale==='ja'?2:0]??key}: ${key==='op'?enumLabel(String(value),this.controller.preferences.locale):this.displayParameter(value)}`).join(' · ')));
-            if (node.command === 'say') {
-              const speaker=args?.speaker as {id?:string}|undefined;
-              const name=source.characters.find(item=>item.id===speaker?.id)?.name ?? tr(this.controller.preferences.locale,'旁白','Narrator','ナレーター');
-              const tag=el('span','authoring-speaker-name',name);card.querySelector('strong')?.replaceWith(tag);
-              if(voiced)card.append(el('span','authoring-voice-state',tr(this.controller.preferences.locale,'已配音','Voiced','音声あり')));
-            }
-          }
-          card.addEventListener('click', event => { const selected = this.controller.selection?.statementIds ?? []; let ids: Id[];
-            const visible=current.parsed.cst.flatMap(item=>item.id?[item.id]:[]),anchor=this.cardRangeAnchor?.sceneId===scene.sceneId?visible.indexOf(this.cardRangeAnchor.id):-1;
-            if(event.shiftKey&&anchor>=0){const at=visible.indexOf(node.id!);ids=[...new Set([...(event.ctrlKey||event.metaKey?selected:[]),...visible.slice(Math.min(anchor,at),Math.max(anchor,at)+1)])];}
-            else {ids=event.ctrlKey||event.metaKey?selected.includes(node.id!)?selected.filter(id=>id!==node.id):[...selected,node.id!]:[node.id!];this.cardRangeAnchor={sceneId:scene.sceneId,id:node.id!};}
-            this.controller.select(ids, ids.includes(node.id!) ? node.id : ids.at(-1)); this.render();
-            this.root.querySelector<HTMLElement>(`[data-statement-id="${node.id}"]`)?.focus(); });
-          const openMenu = (origin: HTMLElement, point?: MouseEvent) => {
-            const locale = this.controller.preferences.locale;
-            if(!this.controller.selection?.statementIds.includes(node.id!))this.cardRangeAnchor={sceneId:scene.sceneId,id:node.id!};
-            const ids = objectMenuSelection(this.controller.selection?.statementIds ?? [], node.id!); this.controller.select(ids, node.id); this.render();
-            const anchor = this.root.querySelector<HTMLElement>(`[data-statement-id="${node.id}"]${origin === card ? '' : ' .authoring-object-more'}`) ?? card;
-            showObjectMenu({ element: anchor, kind: origin === card ? 'context' : 'dropdown', ...(point ? { x: point.clientX, y: point.clientY } : {}) }, [
-              { label: typeName, actions: [{ label: tr(locale,'从此句试玩','Play from here','ここからテスト'), run: () => { void this.runPlaytest('statement'); } }] },
-              { label: tr(locale,`所选 ${ids.length} 条语句`,`${ids.length} selected statements`,`${ids.length} 件の選択`), actions: [
-                { label: this.t('copy'), disabled: current.readOnly ? '原文有错误' : undefined, run: () => { void this.controller.copyStatements(ids).then(result => { this.notice(result); this.render(); }); } },
-                { label: this.t('moveScene'), disabled: current.readOnly ? '原文有错误' : undefined, run: () => { void this.showMoveInstructions(); } },
-              ] },
-              { label: '', actions: [{ label: tr(locale,'删除所选','Delete selected','選択項目を削除'), danger: true, disabled: current.readOnly ? '原文有错误' : undefined, run: () => { void this.deleteStatements(ids); } }] },
-              ...(this.studioPlugins?.tools('context.menu').length ? [{ label: '插件', actions: [{ label: '插件对象操作', run: () => { this.studioPlugins?.publishScope(); this.studioPlugins?.openTools('context.menu'); } }] }] : []),
-            ]);
-          };
-          card.addEventListener('contextmenu', event => { if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"],.monaco-editor')) return; event.preventDefault(); event.stopPropagation(); openMenu(card, event); });
-          card.addEventListener('keydown', event => { if (event.isComposing || !isObjectMenuKey(event) || event.target !== card) return; event.preventDefault(); event.stopPropagation(); openMenu(card); });
-          const more = button('', () => openMenu(more), 'authoring-object-more'); more.append(actionIcon('more')); more.ariaLabel = tr(this.controller.preferences.locale,'更多指令操作','More command actions','その他の操作'); more.addEventListener('click', event => event.stopPropagation()); card.append(more);
-          card.addEventListener('keydown', event => { if (event.key !== 'Delete' || event.isComposing || current.readOnly || event.target !== card) return;
-            event.preventDefault(); const ids = this.controller.selection?.statementIds.includes(node.id!) ? this.controller.selection.statementIds : [node.id!];
-            void this.deleteStatements(ids);
-          });
-          attachCardReorder(card, list, node.id, beforeId => {
-            const selected = this.controller.selection?.statementIds.includes(node.id!) ?
-              this.controller.selection.statementIds : [node.id!];
-            void this.moveCards(selected, beforeId);
-          }, current.readOnly);
-          card.addEventListener('dragover', event => event.preventDefault());
-          card.addEventListener('drop', event => { event.preventDefault();
-            const assetId = event.dataTransfer?.getData('text/x-galcraft-asset') as Id; const asset = this.assetCache.get(assetId);
-            if (asset) void this.dropAsset(asset, 'card', node.id!, node.command);
-          }); list.append(card);
-        }
-        list.append(gap(null));
-        center.append(list);
-        const actions = el('div', 'authoring-toolbar authoring-selection-tools'); actions.append(button(this.t('addDialogue'), () => this.dialogueDialog()));
-        actions.append(button(this.t('addCommand'), () => this.commandDialog()));
-        if (this.controller.selection?.statementIds.length) {
-          actions.append(el('span', 'authoring-selection-count', tr(this.controller.preferences.locale,
-            `已选 ${this.controller.selection.statementIds.length} 条`, `${this.controller.selection.statementIds.length} selected`, `${this.controller.selection.statementIds.length} 件を選択`)));
-          actions.append(button(this.t('copy'), async () => { const result = await this.controller.copyStatements(this.controller.selection!.statementIds);
-            if (this.notice(result)) this.render(); }));
-          const move = button(this.t('moveScene'), () => this.showMoveInstructions(), 'authoring-move-selected'); move.disabled = current.readOnly; actions.append(move);
-          const remove=button(tr(this.controller.preferences.locale,'删除所选','Delete selected','選択を削除'),()=>this.deleteStatements(this.controller.selection?.statementIds??[]),'authoring-delete-selected');remove.prepend(actionIcon('trash'));remove.disabled=current.readOnly;actions.append(remove);
-        }
-        center.append(actions);
-      }
+      const views = this.sceneViews(scene.sceneId);
+      center.dataset.sceneDocument = scene.documentId;
+      center.dataset.sceneRevision = String(scene.revision);
+      center.dataset.split = String(views.length > 1);
+      for (const view of views) center.append(this.scenePane(source, scene, view, views.length > 1));
     }
     const inspector = el('aside', 'authoring-inspector');
-    this.miniStage ??= new MiniStage(this.services, snapshot => {
-      const edit = this.effectEditor, preview = this.fieldPreview;
-      for (const change of [edit ? { ...edit, value: edit.draft } : null, preview]) {
-        if (!change || change.sceneId !== this.controller.scene?.sceneId || change.statementId !== this.controller.selection?.primaryId) continue;
-        const instruction = snapshot.scenes.find(scene => scene.scene.id === change.sceneId)?.instructions.find(item => item.statementId === change.statementId);
-        if (!instruction) continue;
-        const args = structuredClone(instruction.args) as Record<string, Json>, parts = change.field.split('.');
-        let target = args;
-        for (const key of parts.slice(0, -1)) { target[key] ??= {}; target = target[key] as Record<string, Json>; }
-        target[parts.at(-1)!] = structuredClone(change.value); instruction.args = args;
-      }
-    }, this.controller.preferences.locale, this.debugRouteIntent); inspector.append(this.miniStage.root, el('h2', '', this.t('inspector')));
-    this.updateMiniStage();
-    if (scene && this.controller.selection?.primaryId) {
-      const node = this.controller.parsed()?.parsed.cst.find(item => item.id === this.controller.selection?.primaryId);
-      const registry = createCommandRegistry(source.project.engineVersion, this.studioPlugins?.commandSpecs() ?? []); const spec = node && registry.get(node.command);
-      inspector.append(el('p', 'authoring-inspector-context', `${scene.name} / ${spec ? commandName(spec, this.controller.preferences.locale) : ''} / ${this.controller.selection.statementIds.length} ${tr(this.controller.preferences.locale,'条选中','selected','件選択')}`));
-      const locate = button(tr(this.controller.preferences.locale,'定位当前指令','Locate selected command','選択した命令へ'), () => this.root.querySelector<HTMLElement>(`[data-statement-id="${CSS.escape(node?.id ?? '')}"]`)?.scrollIntoView({block:'center'}), 'authoring-inspector-locate'); inspector.append(locate);
+    inspector.append(el('h2', '', this.t('inspector')), this.sourceControls('inspector'));
+    const inspectorView = this.fixedInspectorSource ? 'cards' : this.controller.view;
+    const inspected = this.resolveSceneSource(this.fixedInspectorSource ?? this.selectedSceneSource(), inspectorView);
+    if (inspected?.event) inspector.append(this.eventProperties(inspected));
+    else if (inspected) {
+      const { scene, node } = inspected;
+      const locale = this.controller.preferences.locale;
+      const statementIds = this.fixedInspectorSource ? [node.id!] : this.controller.selection?.statementIds ?? [node.id!];
+      const editTarget: StatementEditTarget = { projectId: source.project.projectId, sceneId: scene.sceneId, documentId: scene.documentId, revision: scene.revision, statementIds };
+      const write = (changes: Parameters<AuthoringController['editFields']>[0], ids = statementIds) => this.controller.editFields(changes, ids, { ...editTarget, statementIds: ids });
+      const registry = createCommandRegistry(source.project.engineVersion, this.studioPlugins?.commandSpecs() ?? []); const spec = registry.get(node.command);
+      inspector.append(el('p', 'authoring-inspector-context', `${scene.name} / ${spec ? commandName(spec, locale) : ''} / ${statementIds.length} ${tr(locale,'条选中','selected','件選択')}`));
+      const locate = button(tr(locale,'定位当前指令','Locate selected command','選択した命令へ'), async () => {
+        if (this.controller.scene?.documentId !== scene.documentId) await this.openDocument({ kind: 'scene', objectId: scene.sceneId });
+        if (this.controller.scene?.documentId !== scene.documentId) return;
+        this.controller.select([node.id!]); this.render();
+        this.root.querySelector<HTMLElement>(`[data-scene-view="${this.controller.view}"] [data-statement-id="${CSS.escape(node.id!)}"]`)?.scrollIntoView({ block: 'center' });
+      }, 'authoring-inspector-locate'); inspector.append(locate);
+      const fields = el('fieldset', 'authoring-inspector-fields');
+      fields.disabled = !!this.controller.parsed('cards', scene)?.readOnly;
+      inspector.append(fields);
       const args = node?.object?.value as Record<string, unknown> | undefined;
+      const context = this.fieldContext(args ?? {});
+      const sourceContext = this.fixedInspectorSource ? { ...context, sceneId: scene.sceneId, animationEditor: undefined, audioEditor: undefined, assetEditor: undefined, publicEditor: undefined,
+        targetAvailability: (id: string) => this.miniStage?.objectAvailability(id, { sceneId: scene.sceneId, statementId: node.id! }) ?? 'unknown',
+      } : context;
       if (node?.command === 'pixi') {
-        const mount=el('div'), root=createRoot(mount);this.inspectorRoots.push(root);inspector.append(mount);
-        root.render(createElement(WeatherPresetPicker,{locale:this.controller.preferences.locale,disabled:!!this.controller.parsed()?.readOnly||!this.services.weatherTexture,
+        const mount=el('div'), root=createRoot(mount);this.inspectorRoots.push(root);fields.append(mount);
+        root.render(createElement(WeatherPresetPicker,{locale:this.controller.preferences.locale,disabled:fields.disabled||!this.services.weatherTexture,
           apply:async key=>{
             const imported=await this.services.weatherTexture!(key);if(!imported.ok)throw new Error(issueText(imported.error,this.controller.preferences.locale));
-            if(this.controller.scene?.sceneId!==scene.sceneId)throw new Error(tr(this.controller.preferences.locale,'当前场景已变化，请返回来源指令。','The scene changed. Return to the original command.','シーンが変更されました。元の命令へ戻ってください。'));
             this.assetCache.set(imported.value.id,imported.value);await this.controller.refresh();
             const preset=StageWeatherPresets[key];
             const fields={type:key,effectId:args?.effectId??createId(this.controller.source),resourceId:imported.value.id,target:args?.target??{kind:'stage'},enabled:true,density:preset.density,speed:preset.speed,directionDeg:preset.directionDeg,parameters:preset.parameters};
-            const edited=await this.controller.editFields(Object.entries(fields).map(([field,value])=>({field,op:'set' as const,value:asJson(value)})),[node.id!]);if(!edited.ok)throw new Error(issueText(edited.error,this.controller.preferences.locale));this.render();
+            const edited=await write(Object.entries(fields).map(([field,value])=>({field,op:'set' as const,value:asJson(value)})),[node.id!]);if(!edited.ok)throw new Error(issueText(edited.error,this.controller.preferences.locale));this.render();
           }}));
       }
-      if(node&&['changeBg','bgm','video','unlockCg','unlockBgm','unlockVideo'].includes(node.command))inspector.append(button(tr(this.controller.preferences.locale,'加入鉴赏 / 管理条目','Add to gallery / Manage items','鑑賞に追加・項目管理'),()=>{void this.navigate('pages').then(()=>this.designer?.openPage('gallery-content'));}));
+      if(node&&['changeBg','bgm','video','unlockCg','unlockBgm','unlockVideo'].includes(node.command))fields.append(button(tr(this.controller.preferences.locale,'加入鉴赏 / 管理条目','Add to gallery / Manage items','鑑賞に追加・項目管理'),()=>{void this.navigate('pages').then(()=>this.designer?.openPage('gallery-content'));}));
       if (node?.command === 'changeFigure') {
         const modes=el('div','portrait-kind-switch'); modes.setAttribute('aria-label',tr(this.controller.preferences.locale,'立绘类型','Character art type','立ち絵の種類'));
         const current=this.assetCache.get(String(args?.assetId));
         for (const kind of ['image','live2d'] as const) { const select=button(kind==='image'?tr(this.controller.preferences.locale,'图片立绘','Image','画像'):'Live2D',async()=>{
-          await openAssetPicker({ ...this.fieldContext(args??{}), allowedKinds:[kind], locale:this.controller.preferences.locale,currentAssetId:current?.kind===kind?current.id:null,
+          await openAssetPicker({ ...sourceContext, allowedKinds:[kind], locale:this.controller.preferences.locale,currentAssetId:current?.kind===kind?current.id:null,
             purpose:kind==='image'?tr(this.controller.preferences.locale,'选择图片立绘','Choose character art','立ち絵を選択'):'Live2D',mode:'compact',returnFocus:select,
-            onApply:async choice=>{this.assetCache.set(choice.asset.id,choice.asset);const result=await this.controller.editFields([{field:'assetId',op:'set',value:choice.assetId}]);if(this.notice(result))this.render();return result;} });
-        },current?.kind===kind?'selected':'');select.setAttribute('aria-pressed',String(current?.kind===kind));modes.append(select); } inspector.append(modes);
+            onApply:async choice=>{this.assetCache.set(choice.asset.id,choice.asset);const result=await write([{field:'assetId',op:'set',value:choice.assetId}]);if(this.notice(result))this.render();return result;} });
+        },current?.kind===kind?'selected':'');select.setAttribute('aria-pressed',String(current?.kind===kind));modes.append(select); } fields.append(modes);
       }
       const more = el('details', 'command-more'); more.open = this.inspectorMoreOpen;
       more.append(el('summary', '', tr(this.controller.preferences.locale, '更多属性', 'More properties', '詳細プロパティ')));
       more.addEventListener('toggle', () => { this.inspectorMoreOpen = more.open; });
-      if(this.controller.view==='script'&&spec){
-        inspector.append(el('h3','',commandName(spec,this.controller.preferences.locale)));
+      if(inspectorView==='script'&&spec){
+        fields.append(el('h3','',commandName(spec,this.controller.preferences.locale)));
         const summary=el('dl','source-command-summary');
         for(const field of spec.fields.filter(field=>field.path!=='text'&&!ownsIdentity(spec.key,field.path,args??{})&&args?.[field.path]!=null).slice(0,5)){summary.append(el('dt','',fieldLabel(field,this.controller.preferences.locale,spec.key)),el('dd','',this.displayParameter(args?.[field.path])));}
-        inspector.append(summary);
+        fields.append(summary);
       }
       for (const field of spec ? commandFields(spec.key, spec.fields, args ?? {}) : []) {
         if(this.effectEditor?.sceneId===scene.sceneId&&this.effectEditor.statementId===node?.id&&field.path!=='effects')continue;
-        if(this.controller.view==='script'&&field.path!=='effects')continue;
-        if(this.controller.view==='writing'&&node?.command==='say'&&['speaker','text'].includes(field.path))continue;
+        if(inspectorView==='script'&&field.path!=='effects')continue;
+        if(inspectorView==='writing'&&node?.command==='say'&&['speaker','text'].includes(field.path))continue;
+        if (field.path === 'ruleImage' && node.command === 'changeBg' && args?.op === 'clear' && args?.ruleImage == null) continue;
         const row = el(field.type === 'object' || field.type === 'ref' || field.path === 'loopStartSec' || spec!.key==='say'&&field.path==='text' ? 'div' : 'label', 'authoring-field'); row.dataset.field = field.path; row.append(el('span', '', fieldLabel(field, this.controller.preferences.locale, spec!.key) + (field.required && !ownsIdentity(spec!.key,field.path,args ?? {}) ? tr(this.controller.preferences.locale, ' · 必填', ' · Required', ' · 必須') : '')));
         if(field.path==='effects'){
           if (this.effectEditor?.sceneId === scene.sceneId && this.effectEditor.statementId === node?.id) row.append(this.effectEditor.node);
           else {
-            if (node?.command === 'changeBg' && this.controller.view !== 'script') {
+            if (node?.command === 'changeBg' && inspectorView !== 'script') {
               const mount = el('div'), root = createRoot(mount); this.inspectorRoots.push(root); row.append(mount);
               const target = { sceneId: scene.sceneId, statementId: node.id! };
               const end = () => { if (this.fieldPreview?.sceneId === target.sceneId && this.fieldPreview.statementId === target.statementId) { this.fieldPreview = null; this.updateMiniStage(); } };
-              root.render(createElement(SceneVisualFields, { value: (args?.effects ?? {}) as Record<string, Json>, fields: field.children ?? [], disabled: !!this.controller.parsed()?.readOnly, locale: this.controller.preferences.locale,
+              root.render(createElement(SceneVisualFields, { value: (args?.effects ?? {}) as Record<string, Json>, fields: field.children ?? [], disabled: fields.disabled, locale: this.controller.preferences.locale,
                 preview: (field, value) => { this.fieldPreview = { ...target, field, value }; this.updateMiniStage(); }, end,
                 commit: async (field, value) => {
-                  if (this.controller.scene?.sceneId !== target.sceneId) throw new Error('当前场景已变化，请返回来源指令。');
-                  const result = await this.controller.editFields([{ field, op: 'set', value }], [target.statementId]);
+                  const result = await write([{ field, op: 'set', value }], [target.statementId]);
                   if (!result.ok) throw new Error(result.error.message);
                   end(); this.render();
                 } }));
             }
-            row.append(button(tr(this.controller.preferences.locale,'编辑视觉效果','Edit visual effects','表示効果を編集'),()=>this.effectsDialog(field,fieldValue(args??{},field.path))));
+            row.append(button(tr(this.controller.preferences.locale,'编辑视觉效果','Edit visual effects','表示効果を編集'),()=>this.effectsDialog(field,fieldValue(args??{},field.path),{ ...editTarget, statementIds: [node.id!] })));
           }
-          inspector.append(row);continue;
+          fields.append(row);continue;
+        }
+        if (field.path === 'ruleImage') {
+          row.append(ruleImageField(args?.ruleImage, async value => {
+            const result = await write([{ field: 'ruleImage', op: value === null ? 'inherit' : 'set', value }]);
+            if (result.ok) { this.notice(result); this.render(); }
+            return result;
+          }, [...this.assetCache.values()], locale, sourceContext));
+          fields.append(row); continue;
         }
         if(node?.command==='changeBg'&&field.path==='transition') {
           const mount=el('div','background-transition-mount'),root=createRoot(mount);this.inspectorRoots.push(root);
-          root.render(createElement(BackgroundTransition,{key:`${scene.documentId}/${scene.revision}`,value:fieldValue(args??{},field.path),locale:this.controller.preferences.locale,readOnly:this.controller.parsed()?.readOnly,
-            onCommit:async changes=>{const result=await this.controller.editFields(changes);if(!result.ok)throw new Error(result.error.message);this.render();}}));row.append(mount);
+          root.render(createElement(BackgroundTransition,{key:`${scene.documentId}/${scene.revision}`,value:fieldValue(args??{},field.path),locale:this.controller.preferences.locale,readOnly:fields.disabled,
+            onCommit:async changes=>{const result=await write(changes);if(!result.ok)throw new Error(result.error.message);this.render();}}));row.append(mount);
           const advanced=el('details','background-transition-advanced');advanced.append(el('summary','',tr(this.controller.preferences.locale,'高级转场参数','Advanced transition settings','トランジションの詳細設定')),
-            inputFor(field,fieldValue(args??{},field.path),value=>this.controller.editFields([{field:field.path,op:'set',value}]).then(result=>{if(this.notice(result))this.render();return result;}),[...this.assetCache.values()],this.references(),this.controller.preferences.locale,false,undefined,{...this.fieldContext(args??{}),command:spec!.key}));
-          row.append(advanced);inspector.append(row);continue;
+            inputFor(field,fieldValue(args??{},field.path),value=>write([{field:field.path,op:'set',value}]).then(result=>{if(this.notice(result))this.render();return result;}),[...this.assetCache.values()],this.references(),this.controller.preferences.locale,false,undefined,{...sourceContext,command:spec!.key}));
+          row.append(advanced);fields.append(row);continue;
         }
         if (node?.command === 'changeBg' && field.path === 'assetId') {
           const mount = el('div'), root = createRoot(mount); this.inspectorRoots.push(root); row.append(mount);
           root.render(createElement(BackgroundObjectField, { services: this.services, projectId: source.project.projectId, sceneId: scene.sceneId,
             asset: this.assetCache.get(String(args?.assetId)) ?? null, currentAssetId: typeof args?.assetId === 'string' ? args.assetId : null, variantId: null,
-            locale: this.controller.preferences.locale, disabled: !!this.controller.parsed()?.readOnly,
+            locale: this.controller.preferences.locale, disabled: fields.disabled,
             commit: async asset => {
               if (asset.id === args?.assetId) return;
-              if (this.controller.scene?.sceneId !== scene.sceneId) throw new Error('当前场景已变化，请返回来源指令。');
-              const result = await this.controller.editFields([{ field: 'assetId', op: 'set', value: asset.id }], [node.id!]);
+              const result = await write([{ field: 'assetId', op: 'set', value: asset.id }], [node.id!]);
               if (!result.ok) throw new Error(result.error.message);
               this.assetCache.set(asset.id, asset); this.render();
-            } })); inspector.append(row); continue;
+            } })); fields.append(row); continue;
         }
         if (node?.command === 'playEffect' && field.path === 'soundId' && args?.op === 'stop') {
           const mount=el('div'), root=createRoot(mount); this.inspectorRoots.push(root);
           root.render(createElement(SoundInstancePicker, { value:String(args.soundId??''), locale:this.controller.preferences.locale,
             items:soundInstances(source.scenes,scene.sceneId,node.id??undefined,[...this.assetCache.values()]), disabled:args.all===true,
-            choose:async id=>{const result=await this.controller.editFields([{field:'soundId',op:'set',value:id}],[node.id!]);if(!result.ok)throw new Error(issueText(result.error,this.controller.preferences.locale));this.render();} }));
-          row.append(mount); inspector.append(row); continue;
+            choose:async id=>{const result=await write([{field:'soundId',op:'set',value:id}],[node.id!]);if(!result.ok)throw new Error(issueText(result.error,this.controller.preferences.locale));this.render();} }));
+          row.append(mount); fields.append(row); continue;
         }
         row.append(inputFor(field, fieldValue(args ?? {}, field.path), value => {
           row.querySelectorAll('.field-error').forEach(element => element.remove());
           const errors = validateFields([field], { [field.path]: value }, field => fieldLabel(field, this.controller.preferences.locale, spec!.key), this.controller.preferences.locale);
           const control = row.querySelector<HTMLElement>('input,select,textarea');
-          if (errors.length) { const feedback = el('small', 'field-error', errors.map(error => error.message).join('；')); feedback.id = `inspector-error-${field.path}`; row.append(feedback); control?.setAttribute('aria-invalid','true'); control?.setAttribute('aria-describedby',feedback.id);
-            const error={code:'FIELD_REQUIRED',message:feedback.textContent??'',severity:'error' as const,owner:'M01' as const,related:[],actions:['edit' as const]};return {ok:false as const,error,issues:[error]}; }
+          const showError = (message: string) => {
+            const feedback = el('small', 'field-error', message);
+            feedback.id = `inspector-error-${field.path}`;
+            feedback.setAttribute('role', 'alert');
+            row.append(feedback);
+            control?.setAttribute('aria-invalid','true');
+            control?.setAttribute('aria-describedby',feedback.id);
+          };
+          if (errors.length) {
+            const message = errors.map(error => error.message).join('；');
+            showError(message);
+            const error={code:'FIELD_REQUIRED',message,severity:'error' as const,owner:'M01' as const,related:[],actions:['edit' as const]};return {ok:false as const,error,issues:[error]};
+          }
           control?.removeAttribute('aria-invalid'); control?.removeAttribute('aria-describedby');
-          const edited=spec!.key==='setComplexAnimation'&&['animation','segments','resourceId'].includes(field.path)?this.controller.editFields(animationSourceChanges(args??{},field.path,value)):field.type==='boolean'&&typeof value==='boolean'?this.controller.editBooleanField(field,value):this.controller.editFields([{ field: field.path, op: 'set', value }]);
-          return edited.then(result => { if (this.notice(result)) this.render(); return result; }); }, [...this.assetCache.values()], this.references(), this.controller.preferences.locale, ownsIdentity(spec!.key,field.path,args ?? {}),()=>this.framingSize(args??{}),{...this.fieldContext(args??{}),command:spec!.key}));
+          const edited=spec!.key==='setComplexAnimation'&&['animation','segments','resourceId'].includes(field.path)?write(animationSourceChanges(args??{},field.path,value)):field.type==='boolean'&&typeof value==='boolean'?this.controller.editBooleanField(field,value,statementIds,editTarget):write([{ field: field.path, op: 'set', value }]);
+          return edited.then(result => {
+            if (result.ok) { this.notice(result); this.render(); }
+            else showError(issueText(result.error, locale));
+            return result;
+          }); }, [...this.assetCache.values()], this.references(), this.controller.preferences.locale, ownsIdentity(spec!.key,field.path,args ?? {}),()=>this.framingSize(args??{}),{...sourceContext,command:spec!.key}));
         if(spec!.key==='return' && field.path==='value')row.append(el('p','field-help',fieldHint(field,fieldLabel(field,this.controller.preferences.locale,spec!.key),this.controller.preferences.locale,spec!.key)));
-        (spec!.key==='setComplexAnimation'&&['animation','resourceId'].includes(field.path) || field.required || ['voice', 'assetId', 'op', 'durationMs', 'framing','station','model'].includes(field.path) || spec!.key === 'playEffect' && ['loop','all','volume'].includes(field.path) || spec!.key === 'end' && field.path === 'target' || spec!.key === 'return' && field.path === 'value' ? inspector : more).append(row);
+        (spec!.key==='setComplexAnimation'&&['animation','resourceId'].includes(field.path) || field.required || ['voice', 'assetId', 'op', 'durationMs', 'framing','station','model'].includes(field.path) || spec!.key === 'playEffect' && ['loop','all','volume'].includes(field.path) || spec!.key === 'end' && field.path === 'target' || spec!.key === 'return' && field.path === 'value' ? fields : more).append(row);
       }
-      if (more.children.length > 1) inspector.append(more);
+      if (more.children.length > 1) fields.append(more);
     }
     const settings = el('details', 'authoring-settings'); settings.append(el('summary', '', this.t('settings')));
     const autosave = el('label', 'authoring-field', this.t('autosave')); const toggle = el('input'); toggle.type = 'checkbox'; toggle.checked = source.project.player.autosave;
@@ -2850,29 +3560,22 @@ export class AuthoringWorkspace {
     main.addEventListener('keydown',event=>{if(event.key==='Escape'&&this.narrowPanel){const previous=this.narrowPanel;setPanel('');(previous==='left'?leftToggle:rightToggle).focus();event.stopPropagation();}});
     grid.append(nav, this.splitter('left', grid), center, this.splitter('right', grid), inspector, panelShade);
     main.append(grid);
-    const dock = el('section', 'authoring-diagnostic-dock');
-    dock.dataset.empty = String(status.issues.length === 0);
-    const expanded = this.controller.preferences.layout.diagnosticsVisible;
-    dock.classList.toggle('collapsed', !expanded);
-    dock.style.setProperty('--bottom', `${this.controller.preferences.layout.bottom}px`);
-    dock.append(this.splitter('bottom', dock));
     const problemList = el('div', 'authoring-diagnostic-content');
-    const diagnosticToggle = button(`${this.t('problems')} · ${status.issues.length}`, () => this.preference(p => ({ ...p, layout: { ...p.layout, diagnosticsVisible: !expanded } })), 'diagnostic-toggle');
-    diagnosticToggle.setAttribute('aria-expanded', String(expanded));
-    problemList.append(diagnosticToggle);
+    const count = el('h2', 'authoring-problem-count', `${this.t('problems')} · ${status.issues.length}`);
+    count.setAttribute('aria-live', 'polite');
+    problemList.append(count);
     if (status.issues.length) for (const issue of status.issues) problemList.append(issue.source
       ? button(issueText(issue, locale), () => this.locateIssue(issue.source!), 'authoring-diagnostic-link')
       : el('p', '', issueText(issue, locale)));
     else problemList.append(el('p', '', this.t('noProblems')));
-    dock.append(problemList); main.append(dock);
+    main.append(problemList);
     return main;
   }
-  private effectsDialog(spec: FieldSpec, value: unknown) {
+  private effectsDialog(spec: FieldSpec, value: unknown, editTarget: StatementEditTarget) {
     this.effectEditor?.dispose(); this.effectEditor = null;
     const locale=this.controller.preferences.locale, dialog=el('section','effects-inspector-editor');
     let draft=structuredClone(value??{}) as Record<string, Json>;
-    const target=this.controller.scene&&this.controller.selection?.primaryId?{sceneId:this.controller.scene.sceneId,statementId:this.controller.selection.primaryId}:null;
-    if (!target) return;
+    const target = { sceneId: editTarget.sceneId, statementId: editTarget.statementIds[0]! };
     const origin = document.activeElement as HTMLElement | null, roots: Root[] = [];
     const dispose = () => { roots.splice(0).forEach(root => root.unmount()); dialog.remove(); };
     const close = () => { dispose(); this.effectEditor = null; this.updateMiniStage(); this.render();
@@ -2899,9 +3602,8 @@ export class AuthoringWorkspace {
     };draw();dialog.append(fields);
     const errors=el('p','field-error');dialog.append(errors);
     const actions=el('footer','dialog-actions');actions.append(button(tr(locale,'重置本次调整','Reset these changes','今回の変更をリセット'),()=>{draft={};draw();update();}),button(this.t('cancel'),close),button(this.t('apply'),async()=>{
-      if (this.controller.scene?.sceneId !== target.sceneId) { errors.textContent = '当前场景已变化，请返回来源指令后应用。'; return; }
       const issues=validateFields([spec],{[spec.path]:draft},f=>fieldLabel(f,locale),locale);if(issues.length){errors.textContent=issues.map(i=>i.message).join('；');return;}
-      const result=await this.controller.editFields([{field:spec.path,op:'set',value:draft}], [target.statementId]);if(this.notice(result)){close();this.render();} else errors.textContent = result.error.message;
+      const result=await this.controller.editFields([{field:spec.path,op:'set',value:draft}], [target.statementId], editTarget);if(this.notice(result)){close();this.render();} else errors.textContent = result.error.message;
     }, 'authoring-primary'));dialog.append(actions); this.effectEditor = { ...target, field: spec.path, draft, node: dialog, dispose };
     this.render(); update();
     dialog.addEventListener('keydown', event => { if (event.key === 'Escape' && !event.isComposing) { event.preventDefault(); event.stopPropagation(); close(); } });
@@ -3205,17 +3907,20 @@ export class AuthoringWorkspace {
       const more = el('details', 'command-more'); more.append(el('summary', '', tr(this.controller.preferences.locale, '高级数据', 'Advanced data', '詳細データ')));
       for (const original of commandFields(spec.key, spec.fields, args)) {
         const field = spec.key === 'changeFigure' && original.path === 'assetId' ? { ...original, assetKinds: [picker.assetKind] } : original;
+        if (field.path === 'ruleImage' && spec.key === 'changeBg' && args.op === 'clear' && args.ruleImage == null) continue;
         const row = el(field.type === 'object' || field.type === 'ref' || field.path === 'loopStartSec' || spec!.key==='say'&&field.path==='text' ? 'div' : 'label', 'authoring-field'); row.dataset.field = field.path; row.append(el('span', '', fieldLabel(field, this.controller.preferences.locale, spec.key) + (field.required && !ownsIdentity(spec!.key,field.path,args ?? {}) ? tr(this.controller.preferences.locale, ' · 必填', ' · Required', ' · 必須') : '')));
         const dimensions=field.path==='framing'?this.framingSize(args):null;
         const value = args[field.path] ?? (dimensions?portraitFraming('upper',dimensions.sourceHeight,dimensions.canvasHeight):field.path === 'speaker' ? { kind: 'narrator' } : ownsIdentity(spec.key,field.path,args) ? createId(this.controller.source) : field.default);
         if (value !== null && value !== undefined) args[field.path] = value;
-        row.append(inputFor(field, value, next => { if(spec.key==='setComplexAnimation'&&['animation','segments','resourceId'].includes(field.path)){for(const key of ['animation','segments','resourceId'])if(key!==field.path)delete args[key];}
+        row.append(inputFor(field, value, next => {
+          if (field.path === 'ruleImage') { if (next === null) delete args.ruleImage; else args.ruleImage = next; updateFields(false); return; }
+          if(spec.key==='setComplexAnimation'&&['animation','segments','resourceId'].includes(field.path)){for(const key of ['animation','segments','resourceId'])if(key!==field.path)delete args[key];}
           args[field.path] = next; if(field.path==='op'||field.path==='assetId'){updateFields(false);return;} row.querySelectorAll('.field-error').forEach(node => node.remove()); row.querySelectorAll('[aria-invalid]').forEach(node => { node.removeAttribute('aria-invalid'); node.removeAttribute('aria-describedby'); });
           for (const updated of commandFields(spec.key, spec.fields, args)) { const target = [...fields.querySelectorAll<HTMLElement>('[data-field]')].find(item => item.dataset.field === updated.path);
             const title = target?.querySelector(':scope > span'); if (title) title.textContent = fieldLabel(updated, this.controller.preferences.locale, spec.key) + (updated.required ? tr(this.controller.preferences.locale,' · 必填',' · Required',' · 必須') : '');
             target?.querySelector('input,textarea,select')?.setAttribute('aria-required',String(updated.required)); } }, [...this.assetCache.values()], this.references(), this.controller.preferences.locale, ownsIdentity(spec!.key,field.path,args ?? {}),()=>this.framingSize(args),{...this.fieldContext(args,modal,true,picker.assetKind,(command,next)=>{picker.select(command);args=next;updateFields(false);placeholder.querySelector('strong')!.textContent=commandName(registry.get(command)!,locale);this.render();}),command:spec.key}));
         if(spec.key==='return' && field.path==='value')row.append(el('p','field-help',fieldHint(field,fieldLabel(field,this.controller.preferences.locale,spec.key),this.controller.preferences.locale,spec.key)));
-        const essential=field.required||['text','speaker','voice','assetId','op','durationMs','framing','station','model'].includes(field.path)||spec.key==='end'&&field.path==='target'||spec.key==='return'&&field.path==='value';
+        const essential=field.required||['text','speaker','voice','assetId','op','durationMs','framing','station','model','ruleImage'].includes(field.path)||spec.key==='end'&&field.path==='target'||spec.key==='return'&&field.path==='value';
         (spec.key==='setComplexAnimation'&&['animation','resourceId','target'].includes(field.path)?basic:ownsIdentity(spec.key,field.path,args)?more:field.group==='effect'||field.group==='animation'?performance:essential?basic:more).append(row);
       }
       if(performance.children.length>1)fields.append(performance);

@@ -28,6 +28,7 @@ export const names: Record<string, [string, string, string]> = {
   op: ['操作', 'Operation', '操作'], assetId: ['素材', 'Asset', '素材'], fit: ['适配方式', 'Fit', '表示方法'],
   positionX: ['水平位置', 'Horizontal position', '水平位置'], positionY: ['垂直位置', 'Vertical position', '垂直位置'],
   transition: ['转场', 'Transition', 'トランジション'], volume: ['音量', 'Volume', '音量'], loop: ['循环', 'Loop', 'ループ'],
+  ruleImage: ['规则图过渡', 'Rule image transition', 'ルール画像トランジション'],
   durationMs: ['时长（毫秒）', 'Duration (ms)', '時間（ミリ秒）'], sceneId: ['场景', 'Scene', 'シーン'],
   labelId: ['标签', 'Label', 'ラベル'], when: ['执行条件', 'Condition', '実行条件'], note: ['备注', 'Note', 'メモ'],
   continue: ['继续执行', 'Continue', '続行'], skippable: ['允许跳过', 'Skippable', 'スキップ可能'],

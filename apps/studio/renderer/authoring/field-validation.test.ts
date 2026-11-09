@@ -21,14 +21,10 @@ describe('authoring field feedback', () => {
     expect(validateFields(fields, { target: { kind: 'scene' } }, label).map(error => error.path)).toEqual(['target.sceneId']);
     expect(validateFields(fields, { target: { kind: 'scene', sceneId: 'SceneA', labelId: null } }, label)).toEqual([]);
   });
-  it('only requires image animation frames when enabled and restricts all frames to images', () => {
+  it('keeps model controls for Live2D and retires legacy image animation fields', () => {
     const model = registry.get('changeFigure')!.fields.find(field => field.path === 'model')!;
-    expect(validateFields([model], { model: { imageMouth: { enabled: false }, imageBlink: { enabled: false } } }, label)).toEqual([]);
-    const errors = validateFields([model], { model: { imageMouth: { enabled: true }, imageBlink: { enabled: true } } }, label);
-    expect(errors.map(error => error.path)).toEqual(['model.imageMouth.closed', 'model.imageMouth.open', 'model.imageBlink.open', 'model.imageBlink.closed']);
-    for (const group of model.children!.filter(field => field.path.startsWith('image'))) {
-      for (const frame of group.children!.filter(field => field.refKind === 'asset')) expect(frame.assetKinds).toEqual(['image']);
-    }
+    expect(model.children?.map(field => field.path)).toContain('motion');
+    expect(model.children?.some(field => ['imageMouth', 'imageBlink', 'imageFaceCombinations'].includes(field.path))).toBe(false);
   });
 });
 

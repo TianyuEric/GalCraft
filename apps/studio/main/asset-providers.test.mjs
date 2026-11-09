@@ -5,6 +5,7 @@ import { afterEach, expect, it } from 'vitest';
 import { AssetTypeRegistry, createAssetIndex, assetFilePath } from '@galcraft/assets';
 import { fixtureId, FixtureAsset, FixtureVoiceAssets } from '@galcraft/contracts/fixtures';
 import { ProjectSession } from '@galcraft/documents';
+import { applyTextEdits, parse } from '@galcraft/dsl';
 import { backgroundReferences, selectedReferencePatches, StudioAssets } from './asset-providers.mjs';
 
 const requireAssets = createRequire(new URL('../../../packages/assets/package.json', import.meta.url));
@@ -26,6 +27,48 @@ const sourceVariantId = fixtureId(0xb07);
 const sourcePath = join(root, ...assetFilePath(assetId, sourceVariantId, 'source.png').split('/'));
 const envelope = (documentId, data) => JSON.stringify({ schemaVersion: 1, documentId, revision: 1, data }, null, 2) + '\n';
 let session;
+it('locates and replaces the exact sound asset binding of an inline dialogue event', () => {
+  const audio = FixtureVoiceAssets[0], replacement = FixtureVoiceAssets[1];
+  const event = { id: 'EventA', offset: 1, kind: 'sound', assetId: audio.id, variantId: audio.activeVariantId };
+  const text = `say ${JSON.stringify({ speaker: { kind: 'narrator' }, text: '甲乙', events: [event] })} @${statementId};`;
+  const documents = new Map([[sceneDocumentId, { documentId: sceneDocumentId, revision: 1, format: 'dsl', files: { [`scenes/${sceneId}/script.gal`]: text } }]]);
+  const [reference] = backgroundReferences({ documents }, audio.id);
+  expect(reference).toMatchObject({ assetId: audio.id, variantId: audio.activeVariantId,
+    source: { documentId: sceneDocumentId, statementId, eventId: event.id, field: 'events.0.assetId' } });
+  const result = selectedReferencePatches({ documents }, [reference], [{ after: { assetId: replacement.id, variantId: replacement.activeVariantId } }]);
+  expect(result.ok).toBe(true);
+  const updated = applyTextEdits(text, result.value[0].edits.map(({ start, end, before: oldText, after: text }) => ({ start, end, oldText, text })));
+  const parsed = parse({ documentId: sceneDocumentId, revision: 2, text: updated });
+  expect(parsed.issues).toEqual([]);
+  expect(parsed.statements[0].args.events).toEqual([{ ...event, assetId: replacement.id, variantId: replacement.activeVariantId }]);
+});
+
+it('locates decor and both rule-image variants in the owning author documents', () => {
+  const layer = { id: 'Layer1', assetId, variantId: sourceVariantId, cameraFollow: .5 };
+  const ruleImage = { assetId, variantId: sourceVariantId, durationMs: 300 };
+  const jsonPath = `scenes/${sceneId}/scene.json`, scriptPath = `scenes/${sceneId}/script.gal`;
+  const text = `changeBg ${JSON.stringify({ assetId: FixtureAsset.id, ruleImage })} @${statementId};\n` +
+    `changeScene ${JSON.stringify({ sceneId, ruleImage })} @${otherStatementId};`;
+  const documents = new Map([[sceneDocumentId, { documentId: sceneDocumentId, revision: 1, format: 'dsl',
+    files: { [jsonPath]: envelope(sceneDocumentId, { id: sceneId, name: 'Decor', decorLayers: [layer] }), [scriptPath]: text } }]]);
+  const references = backgroundReferences({ documents }, assetId);
+  expect(references.map(reference => [reference.source.statementId, reference.source.field, reference.variantId])).toEqual([
+    [undefined, '/data/decorLayers/0/assetId', sourceVariantId],
+    [statementId, 'ruleImage.assetId', sourceVariantId],
+    [otherStatementId, 'ruleImage.assetId', sourceVariantId],
+  ]);
+  const after = { assetId: 'NewImg', variantId: 'NewVar' };
+  const result = selectedReferencePatches({ documents }, references, references.map(() => ({ after })));
+  expect(result.ok).toBe(true);
+  const source = result.value.find(patch => patch.kind === 'text');
+  const updated = applyTextEdits(text, source.edits.map(({ start, end, before: oldText, after: text }) => ({ start, end, oldText, text })));
+  const parsed = parse({ documentId: sceneDocumentId, revision: 2, text: updated });
+  expect(parsed.statements.map(item => item.args.ruleImage)).toEqual([{ ...ruleImage, ...after }, { ...ruleImage, ...after }]);
+  const scenePatch = result.value.find(patch => patch.kind === 'json');
+  expect(scenePatch.changes).toMatchObject([{ path: '/data/decorLayers/0/assetId', after: after.assetId },
+    { path: '/data/decorLayers/0/variantId', after: after.variantId }]);
+});
+
 it('discards real prepared files when the final scope check rejects an import, and retains files after M02 accepts it',async()=>{
   session=await ProjectSession.createProject(root,projectId,[{documentId:indexDocumentId,revision:1,format:'json',files:{'assets/index.json':JSON.stringify(createAssetIndex(indexDocumentId))}}]);
   const image=join(root,'source.png');await sharp({create:{width:4,height:4,channels:4,background:'#f00'}}).png().toFile(image);

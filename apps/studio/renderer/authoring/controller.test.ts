@@ -41,7 +41,8 @@ async function fresh(options: Parameters<typeof ProjectSession.createProject>[3]
       const scene = JSON.parse(meta).data as { id: string; name: string; chapterId: string };
       const text = Object.entries(document.files).find(([path]) => path.endsWith('/script.gal'))![1];
       return { sceneId: scene.id, documentId: document.documentId, revision: document.revision,
-        savedRevision: document.savedRevision, dirty: document.dirty, name: scene.name, chapterId: scene.chapterId, text };
+        savedRevision: document.savedRevision, dirty: document.dirty, name: scene.name, chapterId: scene.chapterId, text,
+        lastValidSceneSource: session!.readAuthoringDocument(document.documentId)?.lastValidSceneSource };
     });
     const createdCharacters = [...session!.documents.values()].flatMap(document => Object.entries(document.files)
       .filter(([path]) => path.startsWith('characters/') && path.endsWith('.json'))
@@ -74,6 +75,15 @@ async function fresh(options: Parameters<typeof ProjectSession.createProject>[3]
   };
   return { controller: new AuthoringController(services), services, read, getResume: () => resume };
 }
+
+async function freshWithVoiceAssets(initialText = sourceText) {
+  const fixture = await fresh({}, initialText);
+  const documentId = 'Assets';
+  session!.registerDocument({ documentId, revision: 1, format: 'json',
+    files: { 'assets/index.json': envelope(documentId, { assets: FixtureVoiceAssets }) } });
+  return fixture;
+}
+
 afterEach(async () => { if (session) await session.dispose('discard'); session = null; await rm(root, { recursive: true, force: true }); });
 
 describe('M01 authoring over M02/M03', () => {
@@ -275,14 +285,40 @@ describe('M01 authoring over M02/M03', () => {
     expect(controller.status.dirty).toBe(false);
     expect(session!.readDocument(sceneDocumentId, 'saved')!.files[`scenes/${FixtureIds.street}/script.gal`]).toContain('新句');
   });
-  it('keeps invalid raw script editable while cards show the last valid source', async () => {
+  it('reopens invalid raw source and the read-only last valid scene from disk', async () => {
     const { controller } = await fresh(); await controller.open(); controller.parsed();
+    const validRevision = controller.scene!.revision;
     expect((await controller.editScript('say { text:"broken" @' + firstId + ';')).ok).toBe(true);
     expect(controller.parsed()?.readOnly).toBe(true);
     expect(controller.parsed()?.parsed.statements[0]?.args.text).toBe('原句');
     expect((await controller.editFields([{ field: 'text', op: 'set', value: 'blocked' }], [firstId])).ok).toBe(false);
     expect((await controller.save()).ok).toBe(true);
     expect(session!.readRaw(sceneDocumentId, 'saved')!.raw).toContain('broken');
+    controller.close();
+    await session!.dispose('discard');
+    session = await ProjectSession.open(root, FixtureProject.projectId);
+    expect((await controller.open()).ok).toBe(true);
+    expect(controller.parsed('script')).toMatchObject({ readOnly: false, lastValidRevision: null, parsed: { text: expect.stringContaining('broken') } });
+    expect(controller.parsed('writing')).toMatchObject({ readOnly: true, lastValidRevision: validRevision });
+    expect(controller.parsed('cards')?.parsed.statements[0]?.args.text).toBe('原句');
+    expect((await controller.editScript(sourceText)).ok).toBe(true);
+    expect(controller.parsed('writing')).toMatchObject({ readOnly: false, lastValidRevision: null });
+  });
+
+  it('edits a captured statement in its own scene and rejects a stale target', async () => {
+    const { controller } = await fresh();
+    await controller.open();
+    const fixed = controller.scene!;
+    const target = { projectId: FixtureProject.projectId, sceneId: fixed.sceneId, documentId: fixed.documentId,
+      revision: fixed.revision, statementIds: [firstId] };
+    controller.selectScene(FixtureIds.bookshop);
+
+    expect(await controller.editFields([{ field: 'text', op: 'set', value: '固定目标' }], undefined, target)).toMatchObject({ ok: true });
+    expect(controller.scene?.sceneId).toBe(FixtureIds.bookshop);
+    expect(controller.source?.scenes.find(scene => scene.documentId === fixed.documentId)?.text).toContain('固定目标');
+    expect(await controller.editFields([{ field: 'text', op: 'set', value: '过期目标' }], undefined, target)).toMatchObject({
+      ok: false, error: { code: 'EDIT_TARGET_CHANGED' },
+    });
   });
 
   it('reuses the current scene parse while invalidating edited and reopened content', async () => {
@@ -369,8 +405,8 @@ describe('M01 authoring over M02/M03', () => {
     expect(controller.scene!.text).toBe(sourceText);
   });
   it('moves a statement across scenes in one M02 edit group and undoes both documents together', async () => {
-    const { controller } = await fresh(); await controller.open();
-    const moved = await controller.moveToScene([firstId], FixtureIds.bookshop); expect(moved.ok).toBe(true);
+    const { controller } = await freshWithVoiceAssets(); await controller.open();
+    const moved = await controller.moveToScene([firstId], FixtureIds.bookshop); expect(moved.ok, JSON.stringify(moved)).toBe(true);
     expect(controller.scene?.sceneId).toBe(FixtureIds.bookshop);
     expect(controller.scene?.text).toContain(firstId);
     expect(session!.readRaw(sceneDocumentId)?.raw).not.toContain(firstId);
@@ -380,14 +416,14 @@ describe('M01 authoring over M02/M03', () => {
     expect(session!.readRaw(FixtureIds.bookshopDocument)?.raw).toBe('');
   });
   it('moves a non-contiguous selection before a target instruction and restores both scenes with one undo', async () => {
-    const extraId = 'ExtraA', targetId = 'Target', source = sourceText + `say {text:"第三句"} @${extraId};\n`;
-    const { controller } = await fresh({}, source); await controller.open();
+    const extraId = 'ExtraA', targetId = 'Target', source = sourceText + `say {speaker:{kind:"narrator"}, text:"第三句"} @${extraId};\n`;
+    const { controller } = await freshWithVoiceAssets(source); await controller.open();
     controller.selectScene(FixtureIds.bookshop);
-    expect((await controller.editScript(`say {text:"目标原句"} @${targetId};\n`)).ok).toBe(true);
+    expect((await controller.editScript(`say {speaker:{kind:"narrator"}, text:"目标原句"} @${targetId};\n`)).ok).toBe(true);
     const originalTarget = controller.scene!.text;
     controller.selectScene(FixtureIds.street);
     const moved = await controller.moveToScene([extraId, firstId], FixtureIds.bookshop, targetId);
-    expect(moved.ok).toBe(true);
+    expect(moved.ok, JSON.stringify(moved)).toBe(true);
     expect(controller.scene?.sceneId).toBe(FixtureIds.bookshop);
     expect(parse({ documentId: FixtureIds.bookshopDocument, revision: controller.scene!.revision, text: controller.scene!.text }).cst.map(node => node.id)).toEqual([firstId, extraId, targetId]);
     expect(controller.selection?.statementIds).toEqual(expect.arrayContaining([firstId, extraId]));
@@ -418,11 +454,12 @@ describe('M01 authoring over M02/M03', () => {
     if (saved.ok) expect(saved.value.saved.map(item => item.ref.id)).toEqual(expect.arrayContaining([scene.documentId, projectDocumentId]));
   });
   it('inserts and copies a command with new stable statement identity', async () => {
-    const { controller } = await fresh(); await controller.open();
+    const { controller } = await freshWithVoiceAssets(); await controller.open();
     expect((await controller.insertCommand('wait', { durationMs: 0 }, secondId)).ok).toBe(true);
     const before = parse({ documentId: sceneDocumentId, revision: controller.scene!.revision, text: controller.scene!.text });
     expect(before.cst.map(node => node.command)).toEqual(['say', 'wait', 'say']);
-    expect((await controller.copyStatements([firstId])).ok).toBe(true);
+    const copied = await controller.copyStatements([firstId]);
+    expect(copied.ok, JSON.stringify(copied)).toBe(true);
     const after = parse({ documentId: sceneDocumentId, revision: controller.scene!.revision, text: controller.scene!.text });
     expect(after.cst).toHaveLength(4);
     expect(after.cst[3]!.id).not.toBe(firstId);

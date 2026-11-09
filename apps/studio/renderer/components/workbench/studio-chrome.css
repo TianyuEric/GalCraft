@@ -1,0 +1,171 @@
+.gc-studio-chrome {
+  flex: none;
+  min-width: 0;
+  color: var(--foreground);
+  font: 13px/20px var(--font-sans, 'Geist Variable', 'Segoe UI', 'Microsoft YaHei', sans-serif);
+}
+
+.gc-studio-chrome-header,
+.gc-studio-chrome-toolbar {
+  box-sizing: border-box;
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  background: var(--workbench-explorer);
+  border-block-end: 1px solid var(--border);
+}
+
+.gc-studio-chrome-header {
+  height: 44px;
+  gap: 12px;
+  padding-inline: 12px;
+}
+
+.gc-studio-chrome > .gc-studio-chrome-header {
+  padding-inline-start: calc(12px + env(titlebar-area-x, 0px));
+  padding-inline-end: max(12px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 12px));
+  -webkit-app-region: drag;
+}
+
+.gc-studio-chrome-header :is(button, [role='menubar'], .shell-project-viewport, .shell-local-service-slot) {
+  -webkit-app-region: no-drag;
+}
+
+.gc-studio-chrome-search {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 720px;
+  margin-inline: auto;
+  position: relative;
+}
+
+.gc-studio-chrome-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.gc-studio-chrome-toolbar {
+  min-height: 36px;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px 8px;
+}
+
+.gc-studio-chrome-group {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+  padding-inline: 4px;
+  border-inline-start: 1px solid var(--border);
+}
+
+.gc-studio-chrome-spacer { flex: 1 1 8px; min-width: 8px; }
+
+.gc-studio-chrome-group[data-split] {
+  gap: 0;
+  padding: 0;
+  border: 0;
+}
+
+.gc-studio-chrome-group[data-split] > button:first-child {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.gc-studio-chrome-group[data-split] > button[aria-haspopup] {
+  border-inline-start: 0;
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+
+.gc-studio-chrome .gc-button {
+  min-height: 28px;
+  height: 28px;
+  padding-inline: 8px;
+  gap: 4px;
+  font: inherit;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.gc-studio-chrome .gc-button:focus-visible,
+.gc-studio-chrome .studio-menubar button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.gc-studio-chrome .gc-button[aria-current='page'] {
+  color: var(--primary);
+  background: var(--selection);
+  box-shadow: inset 0 -2px var(--primary);
+}
+
+.gc-studio-chrome .gc-studio-chrome-icon {
+  width: 28px;
+  padding: 0;
+}
+
+.gc-studio-chrome .gc-studio-chrome-chevron { width: 12px; height: 12px; }
+.gc-studio-chrome .gc-studio-chrome-brand img { width: 22px; height: 22px; }
+.gc-studio-chrome .gc-studio-chrome-brand strong { font-size: 14px; font-weight: 600; }
+.gc-studio-chrome .gc-studio-chrome-project { flex: 0 1 auto; min-width: 48px; max-width: 240px; }
+.gc-studio-chrome .shell-project-name { max-width: none; margin: 0; }
+
+.gc-studio-chrome .gc-studio-chrome-command {
+  width: 100%;
+  justify-content: flex-start;
+  border-color: var(--control-border);
+}
+
+.gc-studio-chrome .gc-studio-chrome-command span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gc-studio-chrome-command kbd {
+  flex: none;
+  margin-inline-start: auto;
+  padding-inline: 4px;
+  color: var(--foreground-secondary);
+  font: 11px/16px var(--font-sans, sans-serif);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.gc-studio-chrome-locale { width: 92px; }
+.gc-studio-chrome-locale [data-slot='select-trigger'] { min-height: 28px; height: 28px; padding-inline: 6px; }
+.gc-studio-chrome .studio-menubar { height: 28px; flex: none; }
+.gc-studio-chrome .studio-menubar button { min-height: 28px; padding-inline: 4px; }
+
+.gc-studio-chrome-menu {
+  min-width: 176px;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: var(--available-height, 70vh);
+  overflow: auto;
+}
+
+.gc-studio-chrome-menu [role='menuitem'] { min-height: 28px; font-size: 13px; }
+.gc-studio-chrome-menu [aria-current='page'] { color: var(--primary); background: var(--selection); }
+
+@media (max-width: 1150px) {
+  .gc-studio-chrome > .gc-studio-chrome-header { gap: 8px; }
+  .gc-studio-chrome .gc-studio-chrome-project { max-width: 144px; }
+  .gc-studio-chrome .gc-studio-chrome-preferences { width: 28px; padding: 0; }
+  .gc-studio-chrome-preferences span, .gc-studio-chrome-command kbd { display: none; }
+}
+
+@media (max-width: 900px) {
+  .gc-studio-chrome .gc-studio-chrome-project { max-width: 112px; }
+  .gc-studio-chrome-brand strong { display: none; }
+}
+
+@media (max-width: 640px) {
+  .gc-studio-chrome > .gc-studio-chrome-header { height: auto; min-height: 44px; flex-wrap: wrap; padding-block: 4px; }
+  .gc-studio-chrome .gc-studio-chrome-search { flex-basis: 120px; }
+  .gc-studio-chrome .gc-studio-chrome-actions { flex-wrap: wrap; }
+}

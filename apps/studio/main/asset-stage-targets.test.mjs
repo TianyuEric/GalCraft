@@ -17,6 +17,7 @@ const documents = new Map([
   ['project', { files: { 'project.json': JSON.stringify({ data: FixtureProject }) } }],
   ['lock', { files: { 'dependencies.lock.json': JSON.stringify({ data: lock }) } }],
   ['settings', { documentId: fixtureId(0xf01), revision: 7, files: { [`plugins/${pluginId}/settings/${fixtureId(0xf01)}.json`]: JSON.stringify({ pluginDocument: { pluginId, contributionKey: `${pluginId}/settings`, name: 'settings', stateVersion: 1 }, data: { title: 'Actual config' } }) } }],
+  ['draft', { documentId: fixtureId(0xf02), revision: 3, files: { [`plugins/${pluginId}/draft/${fixtureId(0xf02)}.json`]: JSON.stringify({ pluginDocument: { pluginId, contributionKey: `${pluginId}/draft`, name: 'draft', stateVersion: 1 }, data: { title: 'Authoring draft' } }) } }],
 ]);
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -32,15 +33,16 @@ it('resolves the requested engine target while existing preview callers use the 
 
 function services() {
   return { plugins: { resolve: vi.fn(async () => ok({ handleId: 'plugin-lease', packages: [{ manifest, runtimeUrl: 'runtime-exact.js' }] })), release: vi.fn(async () => ok()),
-    acquireDefinitions: vi.fn(async () => ok({ documents: [{ key: `${pluginId}/settings`, configMapping: { purpose: 'runtime', mode: 'multiple', required: true } }], release: vi.fn() })) },
+    acquireDefinitions: vi.fn(async () => ok({ documents: [{ key: `${pluginId}/settings`, configMapping: { purpose: 'runtime', mode: 'multiple', required: true } },
+      { key: `${pluginId}/draft` }], release: vi.fn() })) },
     engines: { resolvePreview: vi.fn(async () => ok({ handleId: 'engine-lease', url: 'engine-exact.js' })), releasePreview: vi.fn() } };
 }
-it('leases exact target runtime and uses M03 configuration mapping with each document identity', async () => {
+it('leases exact target runtime and passes only mapped documents to runtime configuration', async () => {
   const ports = services(), prepared = await prepareStageTarget({ projectId: FixtureProject.projectId, documents }, [asset], 'web', ports);
   expect(ports.engines.resolvePreview).toHaveBeenCalledWith(expect.objectContaining({ lock, project: FixtureProject, assets: expect.any(Array) }), 'web');
   expect(prepared.binding.table.byKey[stageKey].provider).toEqual({ id: pluginId, version: '0.1.0' });
   expect(prepared.binding.assets[0]).toEqual(stageResource(asset, asset.variants[0]));
-  expect(prepared.binding.pluginDocuments[pluginId]).toMatchObject({ schemaVersion: 1, documents: [{ contribution: `${pluginId}/settings`, documentId: fixtureId(0xf01), revision: 7, purpose: 'runtime', data: { title: 'Actual config' } }] });
+  expect(prepared.binding.pluginDocuments[pluginId]).toEqual({ schemaVersion: 1, documents: [{ contribution: `${pluginId}/settings`, documentId: fixtureId(0xf01), revision: 7, purpose: 'runtime', data: { title: 'Actual config' } }] });
   await prepared.release(); expect(ports.plugins.release).toHaveBeenCalledWith('plugin-lease'); expect(ports.engines.releasePreview).toHaveBeenCalledWith('engine-lease');
 });
 it('releases the package lease when a required target or exact version is missing', async () => {

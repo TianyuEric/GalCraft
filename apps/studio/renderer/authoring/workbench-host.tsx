@@ -1,11 +1,15 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { FileText, Folder, Layers, Plus, Settings, UsersRound, Network } from 'lucide-react';
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { CircleAlert, FileText, Folder, Layers, ListTree, MonitorPlay, Plus, Search, Settings, SlidersHorizontal, UsersRound, Network } from 'lucide-react';
 import { TooltipProvider } from '../components/ui/tooltip.js';
 import { Button } from '../components/controls.js';
 import { Input } from '../components/ui/input.js';
 import { SceneExplorerTree } from './scene-explorer-tree.js';
 import { ObjectTree, type WorkbenchTreeNode } from '../components/workbench/ObjectTree.js';
-import { WorkbenchShell, DocumentTabs, type WorkbenchLayout } from '../components/workbench/WorkbenchShell.js';
+import { DockWorkspace, type DockHandle, type LayoutPreset } from '../components/workbench/DockWorkspace.js';
+import { StudioChrome, type StudioChromeMenuItem, type StudioChromeProps } from '../components/workbench/StudioChrome.js';
+import { allGroups, emptyLayout, group, normalize, validLayout, type Zone, type ZonedLayout } from '../components/workbench/zoned-layout.js';
+import type { WorkbenchLayout } from '../components/workbench/WorkbenchShell.js';
+import type { StudioPreferences, WorkspaceResume } from '@galcraft/contracts';
 import { MessageBox } from '../components/workbench/MessageBox.js';
 import type { AuthoringSource } from './controller.js';
 import './workbench-production.css';
@@ -24,43 +28,80 @@ export function DomRegion({ node, className = '' }: { node?: HTMLElement | null;
   return <div ref={ref} className={`gc-wb-dom-region ${className}`}/>;
 }
 export type AuthoringWorkbenchProps = {
-  source: AuthoringSource | null; characterExplorer?: HTMLElement; locale?: string; page: string; header: HTMLElement; activity: HTMLElement;
-  documents: AuthorDocument[]; active: string; content: HTMLElement; toolbar?: HTMLElement | null; explorer?: HTMLElement | null; inspector?: HTMLElement | null; problems?: HTMLElement | null; status: HTMLElement;
-  notice?: ReactNode; layout: WorkbenchLayout; selected: string[]; layoutChange(layout: WorkbenchLayout): void;
+  source: AuthoringSource | null; characterExplorer?: HTMLElement; locale?: string; page: string; chrome: StudioChromeProps;
+  documents: AuthorDocument[]; active: string; content: HTMLElement; toolbar?: HTMLElement | null; explorer?: HTMLElement | null; search?: HTMLElement | null; stage?: HTMLElement | null; inspector?: HTMLElement | null; problems?: HTMLElement | null; status: HTMLElement;
+  activateScenePane?(): void;
+  beside?: { node: HTMLElement; title: string; activate(): void; close(): Promise<boolean> };
+  notice?: ReactNode; layout: WorkbenchLayout; selected: string[];
+  dock: RefObject<DockHandle | null>;
+  dockLayout?: NonNullable<WorkspaceResume['workbench']>['dockLayout'];
+  dockLayoutChange(layout: ZonedLayout): void;
+  namedLayouts?: StudioPreferences['namedDockLayouts'];
+  writeNamedLayouts(layouts: Record<string, ZonedLayout>): Promise<void>;
+  dockNotice(message: string): void;
   inspectorShown?(): void;
   inspectorAvailable?: boolean;
-  select(ids: string[]): void; open(document: AuthorDocument): void; pin(id: string): void; close(id: string): void | Promise<boolean>;
+  select(ids: string[]): void; open(document: AuthorDocument): void | Promise<void>; pin(id: string): void; close(id: string): boolean | Promise<boolean>;
   reorder(ids: string[]): void;
   rename(id: string, name: string): Promise<string | void>; move(ids: string[], parent: string | null, index?: number): Promise<void>;
   create(kind: 'chapter' | 'scene', parent?: string): Promise<void>;
   entryPresentation?(kind: 'chapter' | 'scene', id: string): void;
+  sceneDecor?(id: string): void;
   pageNodes?: WorkbenchTreeNode[]; pageOpen?(id: string, pinned: boolean): void;
   componentNodes?: WorkbenchTreeNode[]; componentSelect?(ids: string[]): void;
   componentMove?(ids:string[],parent:string):void;componentRename?(id:string,name:string):Promise<string|void>;
   confirm?: { title: string; description: ReactNode; cancelLabel?: string; actions: { label: string; tone?: 'primary' | 'danger'; run(): void | Promise<void> }[]; close(): void } | null;
 };
+
+const dockTools = { outline: 'studio-outline', search: 'studio-search', inspector: 'studio-inspector', problems: 'studio-problems', stage: 'studio-stage', empty: 'studio-empty' } as const;
+const sceneCompanionId = (documentId: string) => `studio-beside:${documentId}`;
+const editorZones = ['center'] as const;
+const sidebarZones = ['left', 'right'] as const;
+const problemZones = ['bottom'] as const;
+
+function initialDock(props: AuthoringWorkbenchProps, preset: LayoutPreset): ZonedLayout {
+  const layout = emptyLayout();
+  const ids = props.documents.map(document => document.id);
+  if (!ids.includes(props.active)) ids.push(props.active || dockTools.empty);
+  const document = group('document', ids);
+  document.active = props.active || dockTools.empty;
+  const stage = props.stage && preset === 'stage' ? group('stage', [dockTools.stage]) : null;
+  layout.tree = stage ? { kind: 'split', id: 'stage-beside', axis: 'y', ratio: .52, first: stage, second: document } : document;
+  layout.left = group('left', props.source ? [dockTools.outline, dockTools.search] : [dockTools.outline]);
+  layout.right = group('right', [dockTools.inspector]);
+  layout.bottom = group('bottom', [dockTools.problems]);
+  layout.widths = { left: Math.max(240, props.layout.left), right: Math.max(240, props.layout.right) };
+  layout.bottomHeight = Math.max(160, props.layout.bottom);
+  layout.hidden = { left: false, right: preset === 'writing', bottom: !props.layout.diagnosticsVisible };
+  layout.previews = props.documents.filter(document => document.preview).map(document => document.id);
+  return layout;
+}
+
 export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
   const t = (zh: string, en: string, ja: string) => props.locale === 'en' ? en : props.locale === 'ja' ? ja : zh;
-  const [term, setTerm] = useState(''), [tab, setTab] = useState<'objects' | 'search'>('objects');
+  const [term, setTerm] = useState('');
+  const [namingLayout, setNamingLayout] = useState(false);
+  const [layoutName, setLayoutName] = useState('');
   const source = props.source;
   const characterActive = props.documents.some(document => document.id === props.active && document.kind === 'characters');
   const [browsingScenes, setBrowsingScenes] = useState(false);
   const explorerRef = useRef<HTMLDivElement>(null), explorerScroll = useRef<Record<string,number>>({});
   const explorerKey = characterActive && !browsingScenes ? 'characters' : props.page;
   useLayoutEffect(() => {
-    const scroll = explorerRef.current?.closest('.gc-wb-pane-scroll'); if (!scroll) return;
+    const scroll = explorerRef.current?.closest('.gc-wb-pane-scroll, [data-view]'); if (!scroll) return;
     scroll.scrollTop = explorerScroll.current[explorerKey] ?? 0;
     const remember = () => { explorerScroll.current[explorerKey] = scroll.scrollTop; };
     scroll.addEventListener('scroll', remember); return () => scroll.removeEventListener('scroll', remember);
   }, [explorerKey]);
-  useLayoutEffect(() => { if (characterActive) { setTab('objects'); setBrowsingScenes(false); } }, [characterActive]);
+  useLayoutEffect(() => { if (characterActive) setBrowsingScenes(false); }, [characterActive]);
   const routeTitles:Record<string,string>={projects:t('作品库','Projects','作品一覧'),assets:t('素材','Assets','素材'),production:t('制作','Production','制作'),assistant:t('制作','Production','制作'),collaboration:t('协作','Collaborate','連携'),plugins:t('插件','Plugins','プラグイン'),publish:t('发布','Publish','配布')};
   const documentTitle=(document:AuthorDocument)=>document.kind==='page'?(props.pageNodes?.find(node=>node.id===(document.objectId??document.id.slice(5)))?.name??document.title)
     :document.kind==='characters'?t('角色与路线','Characters & routes','キャラクターとルート'):document.kind==='scene-graph'?t('场景关系图','Scene graph','シーン関係図'):document.kind==='startup'?t('启动与主页','Startup & home','起動とホーム')
     :document.kind==='route'?(document.id.startsWith('route:')?routeTitles[document.objectId??document.id.replace(/^route:/,'')]??document.title:document.title):document.kind==='project'?document.objectId==='preferences'?t('工作台偏好','Workbench preferences','ワークスペース設定'):t('作品设置','Project settings','作品設定'):document.title;
   const nodes: WorkbenchTreeNode[] = source?.project.chapters.map(chapter => ({ id: chapter.id, name: chapter.name, icon: <Folder/>, children: chapter.sceneIds.flatMap(id => {
     const scene = source.scenes.find(item => item.sceneId === id);
-    return scene ? [{ id: scene.sceneId, name: scene.name, icon: <FileText/>, detail: scene.dirty ? '●' : undefined }] : [];
+    return scene ? [{ id: scene.sceneId, name: scene.name, icon: <FileText/>, detail: scene.dirty
+      ? <span className="gc-unsaved-dot" role="img" aria-label={t('未保存','Unsaved','未保存')}/> : undefined }] : [];
   }) })) ?? [];
   const openScene = (id: string, pinned: boolean) => { const scene = source?.scenes.find(item => item.sceneId === id); if (scene) props.open({ id: `scene:${id}`, kind: 'scene', objectId: id, title: scene.name, dirty: scene.dirty, preview: !pinned }); };
   const objectTools = <div className="gc-wb-tree-tools"><div className="gc-wb-tree-action-group"><Button tone="quiet" onClick={() => void props.create('chapter')}><Plus/>{t('章节','Chapter','チャプター')}</Button><Button tone="quiet" disabled={!source?.project.chapters.length} onClick={() => void props.create('scene', props.selected.find(id => source?.project.chapters.some(chapter => chapter.id === id)) ?? source?.scenes.find(scene => props.selected.includes(scene.sceneId))?.chapterId ?? source?.project.chapters[0]?.id)}><Plus/>{t('场景','Scene','シーン')}</Button>
@@ -69,10 +110,10 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     </div><div className="gc-wb-tree-action-group"><select aria-label={t('移动所选对象到章节','Move selected objects to chapter','選択した項目をチャプターへ移動')} value="" disabled={!props.selected.length} onChange={event => { if (event.target.value) void props.move(props.selected, event.target.value); }}><option value="">{t('移动到章节…','Move to chapter…','チャプターへ移動…')}</option>{source?.project.chapters.map(chapter => <option key={chapter.id} value={chapter.id}>{chapter.name}</option>)}</select></div><div className="gc-wb-tree-action-group">
     <Button tone="quiet" aria-pressed={props.active==='characters'} onClick={() => props.open({ id: 'characters', kind: 'characters', title: t('角色与路线','Characters & routes','キャラクターとルート') })}><UsersRound/>{t('角色','Characters','キャラクター')}</Button><Button tone="quiet" onClick={() => props.open({ id: 'scene-graph', kind: 'scene-graph', title: t('场景关系图','Scene graph','シーン関係図') })}><Network/>{t('关系图','Scene graph','関係図')}</Button><Button tone="quiet" aria-pressed={props.active==='project'} onClick={() => props.open({ id: 'project', kind: 'project', title: t('作品设置','Project settings','作品設定') })}><Settings/>{t('作品设置','Project settings','作品設定')}</Button>
   </div></div>;
-  const explorer = props.page === 'editor' ? <><div className="gc-wb-explorer-switch"><Button tone="quiet" aria-pressed={tab === 'objects'} onClick={() => setTab('objects')}>{t('对象','Objects','オブジェクト')}</Button><Button tone="quiet" aria-pressed={tab === 'search'} onClick={() => setTab('search')}>{t('搜索 / 素材速取','Search / quick assets','検索 / 素材')}</Button></div><div hidden={tab !== 'objects'}>{characterActive && <div className="gc-wb-character-navigation"><Button tone="quiet" aria-pressed={!browsingScenes} onClick={() => setBrowsingScenes(false)}>{t('角色','Characters','キャラクター')}</Button><Button tone="quiet" aria-pressed={browsingScenes} onClick={() => setBrowsingScenes(true)}>{t('场景导航','Scenes','シーンへ')}</Button></div>}<div hidden={characterActive && !browsingScenes}><div className="gc-wb-tree-search"><Input aria-label={t('查找场景','Find scene','シーンを検索')} placeholder={t('查找场景','Find scene','シーンを検索')} value={term} onChange={event => setTerm(event.target.value)}/></div><SceneExplorerTree locale={props.locale} query={term} onClearSearch={() => setTerm('')} onMoveAt={props.move} label={t('作品对象','Project objects','作品のオブジェクト')} nodes={nodes} active={props.documents.find(document => document.id === props.active && document.kind === 'scene')?.objectId} selected={props.selected} onSelect={props.select} onOpen={openScene} onRename={props.rename} onMoveMany={(ids, parent) => void props.move(ids, parent)} menuGroups={(node, scope, hidden) => node.children ? [{ label: node.name, actions: [{ label: t('新建场景','New scene','シーンを追加'), run: () => void props.create('scene', node.id) }, { label: t('章节入场演出','Chapter entry presentation','チャプター開始演出'), run: () => props.entryPresentation?.('chapter', node.id) }] }] : [
-    { label: node.name, actions: [{ label: t('打开场景','Open scene','シーンを開く'), run: () => openScene(node.id, true) }, { label: t('场景入场演出','Scene entry presentation','シーン開始演出'), run: () => props.entryPresentation?.('scene', node.id) }] },
+  const explorer = props.page === 'editor' ? <>{characterActive && <div className="gc-wb-character-navigation"><Button tone="quiet" aria-pressed={!browsingScenes} onClick={() => setBrowsingScenes(false)}>{t('角色','Characters','キャラクター')}</Button><Button tone="quiet" aria-pressed={browsingScenes} onClick={() => setBrowsingScenes(true)}>{t('场景导航','Scenes','シーンへ')}</Button></div>}<div hidden={characterActive && !browsingScenes}><div className="gc-wb-tree-search"><Input aria-label={t('查找场景','Find scene','シーンを検索')} placeholder={t('查找场景','Find scene','シーンを検索')} value={term} onChange={event => setTerm(event.target.value)}/></div><SceneExplorerTree locale={props.locale} query={term} onClearSearch={() => setTerm('')} onMoveAt={props.move} label={t('作品对象','Project objects','作品のオブジェクト')} nodes={nodes} active={props.documents.find(document => document.id === props.active && document.kind === 'scene')?.objectId} selected={props.selected} onSelect={props.select} onOpen={openScene} onRename={props.rename} onMoveMany={(ids, parent) => void props.move(ids, parent)} menuGroups={(node, scope, hidden) => node.children ? [{ label: node.name, actions: [{ label: t('新建场景','New scene','シーンを追加'), run: () => void props.create('scene', node.id) }, { label: t('章节入场演出','Chapter entry presentation','チャプター開始演出'), run: () => props.entryPresentation?.('chapter', node.id) }] }] : [
+    { label: node.name, actions: [{ label: t('打开场景','Open scene','シーンを開く'), run: () => openScene(node.id, true) }, { label: t('场景入场演出','Scene entry presentation','シーン開始演出'), run: () => props.entryPresentation?.('scene', node.id) }, ...(props.sceneDecor ? [{ label: t('场景布景', 'Scene decor', 'シーンの背景レイヤー'), run: () => props.sceneDecor?.(node.id) }] : [])] },
     { label: scope.length > 1 ? t(`所选 ${scope.length} 项`,`${scope.length} selected`,`${scope.length} 件を選択`) + (hidden ? t(` · 隐藏 ${hidden} 项`,` · ${hidden} hidden`,`・${hidden} 件非表示`) : '') : '', actions: source?.project.chapters.map(chapter => ({ label: t(`移动到 ${chapter.name}`,`Move to ${chapter.name}`,`${chapter.name} へ移動`), disabled: scope.some(id => !source.scenes.some(scene => scene.sceneId === id)) ? t('选区包含章节，不能作为场景移动','Selection contains a chapter; select scenes to move','選択にチャプターが含まれています。シーンを選択してください') : undefined, run: () => void props.move(scope, chapter.id) })) ?? [] },
-  ]}/>{objectTools}</div><section aria-label={t('角色列表','Characters','キャラクター一覧')} hidden={!characterActive || browsingScenes}><DomRegion node={props.characterExplorer}/></section></div><div hidden={tab !== 'search'}><DomRegion node={props.explorer}/></div></>
+  ]}/>{objectTools}</div><section aria-label={t('角色列表','Characters','キャラクター一覧')} hidden={!characterActive || browsingScenes}><DomRegion node={props.characterExplorer}/></section></>
     : props.page === 'pages' && props.pageNodes ? <>
       <h3 className="gc-wb-tree-section-title">{t('启动与主页','Startup & home','起動とホーム')}</h3>
       <ObjectTree nodes={[{ id: 'startup', name: t('开屏序列与主页媒体','Startup sequence & home media','起動シーケンスとホームメディア'), icon: <Layers/> }]} selected={props.selected} label={t('启动与主页','Startup & home','起動とホーム')} onSelect={props.select} onOpen={(_id,pinned)=>props.open({id:'startup',kind:'startup',title:t('启动与主页','Startup & home','起動とホーム'),preview:!pinned})}/>
@@ -86,10 +127,101 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
       <ObjectTree nodes={props.pageNodes.filter(node=>node.id==='@templates'||node.id==='gallery-content')} selected={props.selected} label={t('鉴赏内容与模板','Gallery & templates','鑑賞コンテンツとテンプレート')} onSelect={props.select} onOpen={(id,pinned)=>props.pageOpen?.(id,pinned)}/>
     </>
     : <DomRegion node={props.explorer}/>;
-  return <TooltipProvider><WorkbenchShell title={source?.project.name ?? 'GalCraft Studio'} inspectorAvailable={props.inspectorAvailable} onInspectorShown={props.inspectorShown} header={<DomRegion node={props.header} className="gc-wb-production-header"/>} activity={<DomRegion node={props.activity}/>}
-    explorerTitle={characterActive ? t('角色','Characters','キャラクター') : ({ projects:t('作品库','Projects','作品一覧'), editor:t('作品','Project','作品'), assets:t('素材库','Assets','素材'), production:t('制作','Production','制作'), assistant:t('制作','Production','制作'), pages:t('Player 页面','Player pages','Player ページ'), collaboration:t('协作','Collaborate','連携'),plugins:t('插件','Plugins','プラグイン'), publish:t('发布','Publish','配布') } as Record<string,string>)[props.page] ?? t('工作区','Workspace','ワークスペース')} explorer={<div ref={explorerRef}>{explorer}</div>} inspectorTitle={t('属性','Inspector','プロパティ')} inspector={<DomRegion node={props.inspector}/>}
-    documents={<DocumentTabs panelId="gc-workbench-editor" documents={props.documents.map(document => ({ ...document, title:documentTitle(document), icon: document.kind === 'page' ? <Layers/> : <FileText/> }))} active={props.active} onReorder={props.reorder} onSelect={id => { const document = props.documents.find(item => item.id === id); if (document) props.open(document); }} onPin={props.pin} onClose={props.close}/>}
-    toolbar={<DomRegion node={props.toolbar}/>} notice={props.notice} panels={props.problems ? [{ id: 'problems', title: t('问题','Problems','問題'), content: <DomRegion node={props.problems}/> }] : []} status={<DomRegion node={props.status}/>} layout={props.layout} onLayoutChange={props.layoutChange}>
-    <DomRegion node={props.content} className="gc-wb-document-content"/>
-  </WorkbenchShell>{props.confirm && <MessageBox title={props.confirm.title} description={props.confirm.description} cancelLabel={props.confirm.cancelLabel} actions={props.confirm.actions} onClose={props.confirm.close}/>}</TooltipProvider>;
+  const explorerTitle = characterActive ? t('角色','Characters','キャラクター') : (routeTitles[props.page] ?? (props.page === 'editor' ? t('剧情目录','Plot outline','プロット一覧') : t('工作区','Workspace','ワークスペース')));
+  const tools = {
+    [dockTools.outline]: { title: explorerTitle, icon: <ListTree/>, zone: 'left', allowedZones: sidebarZones, content: <div ref={explorerRef}>{explorer}</div> },
+    [dockTools.search]: { title: t('语义查找','Semantic search','セマンティック検索'), icon: <Search/>, zone: 'left', allowedZones: sidebarZones, content: props.search ? <DomRegion node={props.search} className="gc-studio-dock-search"/> : <p className="gc-dock-missing-view">{t('打开场景工作区以查找正文或引用。','Open the scene workspace to find dialogue or references.','シーンの作業スペースで本文や参照を検索できます。')}</p> },
+    [dockTools.inspector]: { title: t('属性','Inspector','プロパティ'), icon: <SlidersHorizontal/>, zone: 'right', allowedZones: sidebarZones, content: <DomRegion node={props.inspectorAvailable === false ? null : props.inspector}/> },
+    [dockTools.problems]: { title: t('问题','Problems','問題'), icon: <CircleAlert/>, zone: 'bottom', allowedZones: problemZones, content: <DomRegion node={props.problems}/> },
+    [dockTools.stage]: { title: t('舞台','Stage','ステージ'), icon: <MonitorPlay/>, zone: 'center', allowedZones: editorZones, content: <DomRegion node={props.stage}/> },
+  } satisfies Record<string, { title: string; icon: ReactNode; zone: Zone; allowedZones: readonly Zone[]; content: ReactNode }>;
+  const tool = (id: string) => tools[id as keyof typeof tools];
+  const active = props.active || dockTools.empty;
+  const besideId = props.beside ? sceneCompanionId(active) : undefined;
+  const retainStowedView = (id: string) => props.documents.some(doc => doc.kind === 'scene' && doc.id !== active && sceneCompanionId(doc.id) === id);
+  const documentViews = props.documents.some(doc => doc.id === active) ? props.documents : [...props.documents, { id: active }];
+  const viewIds = [...documentViews.map(doc => doc.id), ...Object.keys(tools).filter(id => id !== dockTools.search || source), ...(besideId ? [besideId] : [])];
+  const otherDocuments = documentViews.filter(doc => doc.id !== active).map(doc => doc.id);
+  const toPresetView = (id: string, restoring: boolean) => {
+    if (tool(id) || !id) return id;
+    if (restoring) {
+      if (id === '$document') return active;
+      if (id === '$companion') return besideId ?? '';
+      return otherDocuments[Number(/^\$document-(\d+)$/.exec(id)?.[1]) - 1] ?? '';
+    }
+    if (id === active) return '$document';
+    if (id === besideId) return '$companion';
+    const index = otherDocuments.indexOf(id);
+    return index === -1 ? '' : `$document-${index + 1}`;
+  };
+  const knownViews = new Set(viewIds);
+  const prune = (layout: ZonedLayout) => {
+    const next = structuredClone(layout);
+    const stowed = new Set(next.collapsed.filter(pane => pane.tabs.length === 1).map(pane => pane.id));
+    for (const pane of allGroups(next)) pane.tabs = pane.tabs.filter(id => knownViews.has(id) || stowed.has(pane.id) && retainStowedView(id));
+    return normalize(next);
+  };
+  const namedLayouts = Object.fromEntries(Object.entries(props.namedLayouts ?? {}).filter((item): item is [string, ZonedLayout & typeof item[1]] => validLayout(item[1])));
+  const presets: StudioChromeMenuItem[] = [
+    { id: 'balanced', label: t('平衡布局','Balanced layout','標準レイアウト'), run: () => props.dock.current?.preset('balanced') },
+    { id: 'writing', label: t('专注写作','Focus on writing','執筆に集中'), run: () => props.dock.current?.preset('writing') },
+    { id: 'stage', label: t('文稿与舞台','Writing and stage','原稿とステージ'), disabled: !props.stage, run: () => props.dock.current?.preset('stage') },
+    { id: 'show-search', label: t('显示语义查找','Show semantic search','セマンティック検索を表示'), disabled: !props.search, run: () => props.dock.current?.open(dockTools.search), separatorBefore: true },
+    { id: 'show-inspector', label: t('显示属性','Show inspector','プロパティを表示'), disabled: props.inspectorAvailable === false, run: () => props.dock.current?.open(dockTools.inspector) },
+    { id: 'show-problems', label: t('显示问题','Show problems','問題を表示'), disabled: !props.problems, run: () => props.dock.current?.open(dockTools.problems) },
+    { id: 'save-layout', label: t('保存命名布局…','Save named layout…','レイアウトに名前を付けて保存…'), disabled: !source, separatorBefore: true, run: () => { setLayoutName(''); setNamingLayout(true); } },
+    ...Object.keys(namedLayouts).map(name => ({ id: `layout:${name}`, label: name, disabled: !source, run: () => props.dock.current?.restorePreset(name) })),
+  ];
+  return <TooltipProvider>
+    <div className="gc-workbench gc-studio-workbench" data-workbench="zoned">
+      <StudioChrome {...props.chrome} layout={presets}/>
+      {props.notice && <div className="gc-studio-workbench-notice">{props.notice}</div>}
+      <DockWorkspace key={source?.project.projectId ?? 'library'} ref={props.dock} locale={props.locale}
+        activeView={active} documentViews={documentViews} viewIds={viewIds}
+        companion={besideId ? { id: besideId, document: active } : undefined}
+        retainStowedView={retainStowedView}
+        createDefaultLayout={preset => initialDock(props, preset)}
+        initialLayout={validLayout(props.dockLayout) ? prune(props.dockLayout) : undefined}
+        onLayoutChange={props.dockLayoutChange}
+        readPresets={() => namedLayouts} writePresets={props.writeNamedLayouts}
+        mapPresetView={toPresetView}
+        title={id => {
+          const document = props.documents.find(item => item.id === id);
+          return tool(id)?.title ?? (id === besideId ? props.beside?.title : undefined) ?? (document ? documentTitle(document) : t('文档','Document','文書'));
+        }}
+        icon={id => tool(id)?.icon ?? (props.documents.find(document => document.id === id)?.kind === 'page' ? <Layers/> : <FileText/>)}
+        zone={id => tool(id)?.zone ?? 'center'}
+        allowedZones={id => tool(id)?.allowedZones ?? editorZones}
+        canCloseView={id => id === besideId || id === dockTools.stage || props.documents.some(document => document.id === id)}
+        canSplitView={id => id === besideId || id === dockTools.stage}
+        status={id => ({ dirty: props.documents.find(document => document.id === id)?.dirty })}
+        onActivate={(id, reason) => {
+          if (id === dockTools.inspector) props.inspectorShown?.();
+          if (id === besideId) props.beside?.activate();
+          if (id === active && reason === 'tab') props.activateScenePane?.();
+          const document = props.documents.find(item => item.id === id);
+          if (document && id !== active) void Promise.resolve(props.open(document)).catch(error => props.dockNotice(String(error)));
+        }}
+        onClose={id => id === besideId && props.beside ? props.beside.close() : id === dockTools.stage ? true : props.close(id)}
+        onKeep={props.pin}
+        onViewsChange={ids => {
+          const order = ids.filter(id => props.documents.some(document => document.id === id));
+          if (order.length === props.documents.length && order.some((id, index) => id !== props.documents[index]?.id)) props.reorder(order);
+        }}
+        notice={props.dockNotice}
+        renderView={id => tool(id)?.content ?? (id === besideId ? <DomRegion node={props.beside?.node} className="gc-studio-dock-beside"/> : id === active ? <div className="gc-studio-dock-document">
+          {props.toolbar && <DomRegion node={props.toolbar}/>}
+          <DomRegion node={props.content} className="gc-wb-document-content"/>
+        </div> : null)}
+      />
+      <DomRegion node={props.status}/>
+    </div>
+    {namingLayout && <MessageBox title={t('保存命名布局','Save named layout','レイアウトを保存')} description={
+      <Input autoFocus aria-label={t('布局名称','Layout name','レイアウト名')} value={layoutName} maxLength={80} onChange={event => setLayoutName(event.target.value)}/>
+    } actions={[{ label: t('保存','Save','保存'), tone: 'primary', run: () => {
+      const name = layoutName.trim();
+      if (name) { props.dock.current?.savePreset(name); setNamingLayout(false); }
+    } }]} onClose={() => setNamingLayout(false)}/>}
+    {props.confirm && <MessageBox title={props.confirm.title} description={props.confirm.description} cancelLabel={props.confirm.cancelLabel} actions={props.confirm.actions} onClose={props.confirm.close}/>}
+  </TooltipProvider>;
 }

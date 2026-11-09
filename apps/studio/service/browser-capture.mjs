@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { CollaborationError } from '@galcraft/collaboration';
 import { parseAnimationResource } from '@galcraft/contracts';
 import { compileCollaborationProject } from '../main/collaboration-compile.mjs';
+import { resolvePreviewEventSource } from '../main/collaboration-preview-target.mjs';
 import { exercisePluginStage } from '../main/asset-stage-targets.mjs';
 
 /** One service-owned Chromium; every inspection gets an isolated Player profile. */
@@ -40,6 +41,7 @@ export function createBrowserCapture({ origin, host: getHost, executablePath = p
     const compiled = await compileCollaborationProject({ production, plugins: host.plugins }, context.project);
     if (!compiled.snapshot) return { reached: false, issues: compiled.issues, snapshotId: null };
     const snapshot = compiled.snapshot;
+    const eventSource = resolvePreviewEventSource(snapshot, input);
     return withPage(snapshot.project.canvas, async page => {
       const pending = new Set();
       await page.exposeBinding('__galcraftNodeCall', (_source, group, method, args) => {
@@ -57,6 +59,7 @@ export function createBrowserCapture({ origin, host: getHost, executablePath = p
           new Promise((_, reject) => { timeout = setTimeout(() => reject(new CollaborationError('PREVIEW_TIMEOUT', 'Player capture timed out. Query the original callId before capturing again.')), 45000); }),
         ]).finally(() => clearTimeout(timeout));
         if (!observation.reached) return { ...observation, issues: [...compiled.issues, ...observation.issues ?? []] };
+        if (eventSource) observation.eventSource = eventSource;
         if(input.observation)return {...observation,issues:[...compiled.issues,...observation.issues??[]]};
         const pixels = await page.screenshot({ type: 'png', animations: 'disabled' });
         return { ...observation, pixels, mime: 'image/png', ...snapshot.project.canvas, issues: [...compiled.issues, ...observation.issues ?? []] };

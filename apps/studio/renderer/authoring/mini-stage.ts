@@ -1,5 +1,5 @@
 import { createId } from '@galcraft/contracts';
-import type { DebugScenario, NativeAnimation, Position, PresentationState, Snapshot, StageObject } from '@galcraft/contracts';
+import type { DebugScenario, Id, NativeAnimation, Position, PresentationState, Snapshot, StageObject } from '@galcraft/contracts';
 import { StageCameraId, sampleObjectAnimation } from '@galcraft/stage';
 import type { AuthoringServices } from './controller.js';
 import { openPlayerPreview, type StudioPlayer } from './player-preview.js';
@@ -16,6 +16,7 @@ export type MiniStageWorkbenchState = {
   route: { id: string; label: string; run(): void }[];
   input: { label: string; placeholder: string; submit(text: string): void } | null;
 };
+type StageTarget = Position & { documentId?: Id; revision?: number; eventId?: Id };
 
 /** The exact Player in an isolated preview domain, with explicit inspection and playback modes. */
 export class MiniStage {
@@ -38,7 +39,7 @@ export class MiniStage {
   private routeInput: MiniStageWorkbenchState['input'] = null;
   private mode: 'inspection' | 'current' | 'playtest' = 'inspection';
   private muted = true;
-  private target: Position | null = null;
+  private target: StageTarget | null = null;
   private generation = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private key = '';
@@ -108,7 +109,7 @@ export class MiniStage {
     action(this.t('暂停／继续','Pause / resume','一時停止／再開'),()=>this.pauseOrResume());
     action(this.t('停止','Stop','停止'),()=>this.stop());
     this.sound=action(this.t('声音：关','Sound: off','音声：オフ'),()=>this.setMuted(!this.muted));this.sound.ariaPressed='false';
-    this.status.setAttribute('role', 'status'); this.root.append(title, this.entryControl, this.controls, this.surface, this.status, this.provenance, this.route);
+    this.status.setAttribute('role', 'status'); this.root.append(title, this.entryControl, this.controls, this.provenance, this.surface, this.status, this.route);
     this.resize = new ResizeObserver(() => { const bounds = this.surface.getBoundingClientRect();
       this.player?.stage.setViewport({ x: 0, y: 0, width: bounds.width, height: bounds.height }); });
     this.resize.observe(this.surface);
@@ -137,8 +138,8 @@ export class MiniStage {
     this.publishWorkbench();
   }
   selectEntry(value: string) { if (value !== this.entryState?.value && this.entryState?.options.some(option => option.value === value)) this.selectEntryAction?.(value); }
-  update(key: string, target: Position | null, message?: string) {
-    if(this.target?.sceneId!==target?.sceneId||this.target?.statementId!==target?.statementId)this.mode='inspection';
+  update(key: string, target: StageTarget | null, message?: string) {
+    if(this.target?.sceneId!==target?.sceneId||this.target?.statementId!==target?.statementId||this.target?.eventId!==target?.eventId)this.mode='inspection';
     this.target=target;
     if (this.animationStatement !== target?.statementId) { this.animationPreview = null; this.animationStatement = target?.statementId ?? null; }
     if (key === this.key) return; this.key = key; const generation = ++this.generation;
@@ -152,22 +153,38 @@ export class MiniStage {
   }
   private clearPending() { if (this.pending) { this.pending.player.dispose(); this.pending.surface.remove(); this.pending = null; } }
   dispose() { this.workbenchListener=null;this.selectEntryAction=null;this.routeActions=[];this.routeInput=null;this.target=null;this.entryRoot.unmount(); this.clearPending(); this.generation++; if (this.timer) clearTimeout(this.timer); this.player?.dispose(); this.player = null; this.resize.disconnect(); }
-  private async prepare(target: Position, generation: number) {
+  private async prepare(request: StageTarget, generation: number) {
+    const { sceneId, statementId, documentId, revision, eventId } = request;
+    const target: Position = { sceneId, statementId };
     const current = () => generation === this.generation;
     try {
-      let compiled = await this.services.compilePreview?.(); if (!current()) return;
-      // Another preview can supersede a compile request without a document error.
-      if (compiled?.ok && !compiled.value.current && !compiled.value.issues.length) { compiled = await this.services.compilePreview?.(); if (!current()) return; }
+      let compiled = await this.services.compilePreview?.(false, undefined, { publish: false }); if (!current()) return;
+      const documents = await this.services.bridge.documents.list(); if (!current()) return;
+      if (!documents.ok) throw new Error(documents.error.message);
+      let recovered = false;
+      if (this.mode === 'inspection' && compiled?.ok && !compiled.value.snapshot && documents.value.some(doc => doc.lastValidSceneSource)) {
+        const baseline = documents.value.map(doc => {
+          const source = doc.lastValidSceneSource, path = Object.keys(doc.files).find(key => key.endsWith('/script.gal'));
+          return source && path ? { ...doc, revision: source.revision, files: { ...doc.files, [path]: source.text } } : doc;
+        });
+        const inspected = await this.services.compilePreview?.(false, baseline, { publish: false }); if (!current()) return;
+        if (inspected?.ok && inspected.value.snapshot) { compiled = inspected; recovered = true; }
+      }
       if (!compiled?.ok || !compiled.value.snapshot || !compiled.value.current) {
         this.status.textContent = this.t('当前内容存在问题，修复下方问题后更新预览。','Fix the listed issues to update the preview.','表示された問題を修正するとプレビューを更新できます。') + (this.player ? this.t(' 保留上次有效画面。',' Showing the last valid stage.','前回の有効な舞台を表示。') : ''); return;
       }
-      const snapshot = structuredClone(compiled.value.snapshot); this.preview?.(snapshot);
+      const snapshot = structuredClone(compiled.value.snapshot);
+      const compiledScene = snapshot.scenes.find(scene => scene.scene.id === sceneId);
+      const instruction = compiledScene?.instructions.find(item => item.statementId === statementId);
+      const eventSource = eventId ? snapshot.sourceMap.find(item => item.statementId === statementId && item.source.eventId === eventId)?.source : undefined;
+      const compiledSource = instruction?.source;
+      if (!instruction || documentId && compiledSource?.documentId !== documentId || !recovered && revision !== undefined && compiledSource?.revision !== revision || eventId && !eventSource)
+        throw new Error(this.t('编译结果中的舞台来源已变化，请重新选择语句或事件。', 'The compiled stage source changed. Select the statement or event again.', 'コンパイル済みの舞台ソースが変わりました。文またはイベントを選択し直してください。'));
+      this.preview?.(snapshot);
       this.design = snapshot.project.canvas;
       snapshot.project.display.titleMusic = null; snapshot.project.display.titleVideo = null;
-      const documents = await this.services.bridge.documents.list(); if (!current()) return;
-      if (!documents.ok) throw new Error(documents.error.message);
       const styles = Object.assign({}, ...documents.value.map(doc => doc.files));
-      const surface = document.createElement('div'); surface.className = 'studio-mini-player'; surface.inert = this.mode !== 'playtest';
+      const surface = document.createElement('div'); surface.className = 'studio-mini-player'; surface.inert = this.mode === 'inspection';
       surface.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none';
       surface.style.width = `${this.surface.getBoundingClientRect().width}px`;
       surface.style.aspectRatio = `${snapshot.project.canvas.width}/${snapshot.project.canvas.height}`; this.root.append(surface);
@@ -177,7 +194,7 @@ export class MiniStage {
       player.setPreviewMuted(this.mode==='inspection'||this.muted);
       const selected = resolvePreviewEntry(snapshot, target, this.intent.previewEntryId, this.intent.previewEntrySceneId === target.sceneId), entry = selected.entry;
       this.entryState = { value: selected.key, options: previewEntries(snapshot).map(item => ({ value: item.key, label: item.title })) };
-      this.selectEntryAction = value => { if(!current())return;this.intent.previewEntryId = value; this.intent.previewEntrySceneId = target.sceneId; this.update(`${this.key}:${value}`, target); };
+      this.selectEntryAction = value => { if(!current())return;this.intent.previewEntryId = value; this.intent.previewEntrySceneId = target.sceneId; this.update(`${this.key}:${value}`, request); };
       if(!this.workbench)this.entryRoot.render(createElement(Choice, { label: this.t('预览入口', 'Preview entry', 'プレビュー入口'), ...this.entryState, onChange: value => this.selectEntry(value) }));
       const scenario: DebugScenario = { schemaVersion: 1, id: createId(), name: this.t('当前指令舞台','Current command stage','現在のコマンドの舞台'), projectId: snapshot.projectId,
         engineVersion: snapshot.engineVersion, pluginVersions: [snapshot.lock.engine, ...snapshot.lock.plugins, snapshot.lock.template],
@@ -231,7 +248,7 @@ export class MiniStage {
           if (!current()) return;
           if (!baseline.value.reached) throw new Error(this.t('动画起点路线尚未确定','Choose the animation baseline route','アニメーション開始ルートを選択してください'));
         }
-        const activated = await player.activatePreview(prepared.value, this.mode);
+        const activated = await player.activatePreview(prepared.value, this.mode, this.mode === 'inspection' && eventId ? { eventId } : undefined);
         if(!activated.ok)throw new Error(activated.error.message);
         if(!current())return;
         preparedId=null;
@@ -240,8 +257,14 @@ export class MiniStage {
         surface.style.position = ''; surface.style.visibility = ''; surface.style.width = ''; surface.style.pointerEvents = ''; this.root.dataset.stale = 'false';
         const scene = snapshot.scenes.find(scene => scene.scene.id === target.sceneId);
         const line = (scene?.instructions.findIndex(instruction => instruction.statementId === target.statementId) ?? -1) + 1;
-        this.provenance.textContent = `${selected.title} / ${scene?.scene.name ?? ''} · ${this.t(`第 ${line} 条`, `Line ${line}`, `${line} 行目`)}`;
+        const eventLabel = eventId && this.mode === 'inspection' ? ` · ${this.t('事件', 'Event', 'イベント')} ${eventId}` : '';
+        const revisionLabel = compiledSource ? ` · ${recovered ? this.t('有效修订', 'Valid revision', '有効なリビジョン') : this.t('修订', 'Revision', 'リビジョン')} ${compiledSource.revision}` : '';
+        this.provenance.textContent = `${selected.title} / ${scene?.scene.name ?? ''} · ${this.t(`第 ${line} 条`, `Line ${line}`, `${line} 行目`)}${eventLabel}${revisionLabel}`;
         this.root.dataset.sceneId = target.sceneId;
+        this.root.dataset.documentId = compiledSource?.documentId ?? '';
+        this.root.dataset.sourceRevision = String(compiledSource?.revision ?? '');
+        this.root.dataset.eventId = this.mode === 'inspection' ? eventId ?? '' : '';
+        this.root.dataset.sourceKind = recovered ? 'last-valid' : 'current';
         this.root.dataset.previewMode=this.mode;
         this.status.textContent = (this.mode==='inspection'?this.t('当前指令 · 静音定格','Current command · paused and muted','現在のコマンド・静止／消音'):this.mode==='current'?this.t('当前演出 · 可暂停与重播','Current performance · pause or replay','現在の演出・一時停止／再生'):this.t('连续试玩 · 独立预览资料','Continuous playtest · isolated profile','連続試遊・独立データ')) + (source === 'selected' ? this.t(' · 已选择路线',' · route selected','・ルート選択済み') : this.t(' · 自动路线',' · automatic route','・自動ルート')) + (routeLabel(snapshot, scenario) ? ` · ${routeLabel(snapshot, scenario)}` : '');
         if (scenario.route.length || scenario.playerInputs.length) button(this.t('重新选择预览路线','Change preview route','プレビュールートを変更'), () => { this.intent.clear(); source = 'automatic'; scenario.route = []; scenario.playerInputs = []; retry(); });

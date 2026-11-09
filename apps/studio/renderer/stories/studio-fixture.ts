@@ -1,10 +1,10 @@
 import { createId } from '@galcraft/contracts';
-import { BuiltinAssetKindSchema, CharacterSchema, DefaultStudioPreferences, VariableSchema } from '@galcraft/contracts';
+import { BuiltinAssetKindSchema, CharacterSchema, DefaultStudioPreferences, SceneSchema, VariableSchema } from '@galcraft/contracts';
 import type { DocumentView, EditInput, EditReceipt, Result, StudioBridge, StudioPreferences } from '@galcraft/contracts';
 import { FixtureIds, fixtureId } from '@galcraft/contracts/fixtures';
 import { createTemplateDocuments, readTemplateDocuments } from '@galcraft/templates';
 import { preparePageEdit } from '@galcraft/templates/editor';
-import { compile } from '@galcraft/dsl';
+import { compile, locate, parse } from '@galcraft/dsl';
 import type { AuthoringSource } from '../authoring/controller.js';
 import type { Overview, ProductionBridge, WorkbenchBridge } from '../pages/Production/bridge.js';
 import { productAssets, productMedia, productSnapshot } from './product-fixture.js';
@@ -119,11 +119,20 @@ export function studioFixture(state:ProductState,locale:StudioPreferences['local
       return query.limit===100?ok(page):delayed(page);},
     readPreferences:async()=>ok(preferences),writePreferences:async value=>{preferences=value;return ok(undefined);},
     chooseDirectory:async()=>ok(null),openProject:async()=>ok({projectId:snapshot.projectId,sessionId:FixtureIds.session}),closeProject:async()=>ok(undefined),pickAssetFiles:async()=>ok([]),revealEntity:async()=>ok(undefined),
+    locate: async requested => {
+      const scene = source().scenes.find(item => item.documentId === requested.documentId);
+      return ok(scene ? locate(parse({ documentId: scene.documentId, revision: scene.revision, text: scene.text }), requested) : null);
+    },
     getAsset:async id=>ok(assets.find(a=>a.id===id)??null),thumbnails:async requests=>ok(requests.filter(r=>assets.find(a=>a.id===r.assetId)?.kind==='image').map(r=>({assetId:r.assetId,variantId:assets.find(a=>a.id===r.assetId)!.activeVariantId,uri:productMedia[r.assetId]!}))),
     previewAsset:async assetId=>{const asset=assets.find(asset=>asset.id===assetId);return asset?ok({uri:productMedia[assetId]!,mime:asset.variants[0]!.files[0]!.mime,playback:{loopStartSec:null,loopEndSec:null}}):unavailable();},stopAssetPreview:async()=>ok(undefined),
     runtimeAssets:{resolveRuntime:async(assetId,variantId)=>{const variant=assets.find(asset=>asset.id===assetId)?.variants.find(variant=>variant.id===variantId);return variant?ok({leaseId:createId(),uri:productMedia[assetId]!,mime:variant.files[0]!.mime,bytes:variant.files[0]!.bytes}):unavailable();},releaseRuntime:async()=>ok(undefined)} satisfies NonNullable<Parameters<typeof mountAuthoring>[1]['runtimeAssets']>,
     compilePreview:async()=>{
-      const current=source();const result=compile({project:current.project,projectId:snapshot.projectId,engineVersion:snapshot.engineVersion,lock:snapshot.lock,scenes:snapshot.scenes.map(s=>s.scene),characters:current.characters,variables:variables(),assets:productAssets(),gallery:snapshot.gallery,flows:snapshot.flows,template:readTemplateDocuments(documents),pluginDocuments:{},documents:current.scenes.map(scene=>({documentId:scene.documentId,revision:scene.revision,kind:'scene',sceneId:scene.sceneId,text:scene.text})),cancelOperationId:createId()});
+      const current = source();
+      const scenes = current.scenes.map(scene => {
+        const document = documents.find(item => item.documentId === scene.documentId)!;
+        return SceneSchema.parse(JSON.parse(document.files[`scenes/${scene.sceneId}/scene.json`]!).data);
+      });
+      const result=compile({project:current.project,projectId:snapshot.projectId,engineVersion:snapshot.engineVersion,lock:snapshot.lock,scenes,characters:current.characters,variables:variables(),assets:productAssets(),gallery:snapshot.gallery,flows:snapshot.flows,template:readTemplateDocuments(documents),pluginDocuments:{},documents:current.scenes.map(scene=>({documentId:scene.documentId,revision:scene.revision,kind:'scene',sceneId:scene.sceneId,text:scene.text})),cancelOperationId:createId()});
       return ok({snapshot:result.snapshot,lastValid:null,current:true,issues:result.issues});
     },
   } satisfies Parameters<typeof mountAuthoring>[1];

@@ -39,7 +39,7 @@ vi.mock('@galcraft/runtime', async importOriginal => ({ ...await importOriginal<
       token: current.token, status: current.status, pendingLongTerm: current.pendingLongTerm, waitKind: current.state.wait?.kind ?? null }; }
     dispatch = mocks.dispatch; confirmPresentationEntered = mocks.confirmPresentation; confirmMediaStarted = mocks.confirmMedia;
     activate(){return {ok:true,value:mocks.inspection,warnings:[]};} setPreviewPaused(){}
-    async updateTextProgress(){const current=mocks.inspection!;await mocks.ports!.onCommitted!({sessionId:current.sessionId,token:current.token!,state:current.state,sequence:2,delta:null});return {ok:true,value:undefined,warnings:[]};}
+    async prepareDialogueInspection(){return {ok:true,value:mocks.inspection!.state,warnings:[]};}
   },
 }));
 vi.mock('@galcraft/stage', async importOriginal => ({ ...await importOriginal<typeof import('@galcraft/stage')>(),
@@ -127,8 +127,8 @@ describe('mounted Player stage diagnostic ownership', () => {
     const binding={token,resolution:{id:'Resol1',source:{documentId:'Doc001'},requestedLocale:'zh-CN',defaultLocale:'zh-CN',attempts:[],selected:{assetId:'Voice01',variantId:'Vari01',locale:'zh-CN',via:'requestedLocale'}}};
     player.setPreviewMuted(true);
     expect((await player.activatePreview({id:'Prep01',sessionId,state,voiceBinding:binding} as never,'inspection')).ok).toBe(true);
-    expect(mocks.prepare).toHaveBeenCalledTimes(2);
-    for(const call of mocks.prepare.mock.calls)expect(call[3]).toEqual(binding);
+    expect(mocks.prepare).toHaveBeenCalledOnce();
+    expect(mocks.prepare.mock.calls[0]![3]).toEqual(binding);
     expect(mocks.outputMuted).toHaveBeenCalledWith(true);expect(mocks.replayVoice).not.toHaveBeenCalled();
     expect(mocks.stageError.mock.calls.every(([error])=>error===null)).toBe(true);
   });

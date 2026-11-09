@@ -1,4 +1,4 @@
-import { assetFieldReferences, assetReferenceTarget, createId, readPluginDocumentInstances } from '@galcraft/contracts';
+import { assetFieldReferences, assetReferenceTarget, createId, normalizeCharacterAuthoringData, normalizeProjectAuthoringData, readPluginDocumentInstances } from '@galcraft/contracts';
 import { AssetSchema, CharacterSchema, FlowSchema, GalleryEntrySchema, IdSchema, LockSchema, PerformancePresetSchema, ProjectSchema, SceneSchema, VariableSchema } from '@galcraft/contracts';
 import type { AssetQuery as CatalogQuery, AssetReference, DocumentView, Issue, Ref, Result, Source, StudioBridge } from '@galcraft/contracts';
 import type { CompileInput } from '@galcraft/dsl';
@@ -60,7 +60,11 @@ function sourceFrom(documents: DocumentView[]): Result<AuthoringSource> {
   const projectRaw = projectDocument.files['project.json'];
   if (!projectRaw) return fail('PROJECT_INVALID', '作品配置不存在');
   let project: AuthoringSource['project'];
-  try { project = ProjectSchema.parse(JSON.parse(projectRaw).data); }
+  try {
+    const data: unknown = JSON.parse(projectRaw).data, current = ProjectSchema.safeParse(data);
+    // The host defers normalization writes while a recovery draft awaits a decision.
+    project = current.success ? current.data : ProjectSchema.parse(normalizeProjectAuthoringData(data));
+  }
   catch { return fail('PROJECT_INVALID', '作品配置不符合当前规格'); }
   const scenes: SceneSource[] = [];
   const characters: AuthoringSource['characters'] = [];
@@ -69,7 +73,10 @@ function sourceFrom(documents: DocumentView[]): Result<AuthoringSource> {
   for (const document of documents.filter(item => item.format === 'json')) {
     const characterFile = Object.entries(document.files).find(([path]) => path.startsWith('characters/') && path.endsWith('.json'));
     if (!characterFile) continue;
-    try { characters.push(CharacterSchema.parse(JSON.parse(characterFile[1]).data)); }
+    try {
+      const data: unknown = JSON.parse(characterFile[1]).data, current = CharacterSchema.safeParse(data);
+      characters.push(current.success ? current.data : CharacterSchema.parse(normalizeCharacterAuthoringData(data)));
+    }
     catch { return fail('CHARACTER_INVALID', `角色 ${document.documentId} 的配置无效`); }
   }
   for (const document of documents.filter(item => item.format === 'dsl')) {
@@ -81,7 +88,7 @@ function sourceFrom(documents: DocumentView[]): Result<AuthoringSource> {
       variables.push(...scene.locals.map(variable => ({ ...variable, declaringSceneId: scene.id })));
       scenes.push({ sceneId: scene.id, documentId: document.documentId, revision: document.revision,
         savedRevision: document.savedRevision, dirty: document.dirty, chapterId: scene.chapterId,
-        name: scene.name, text: scriptFile[1] });
+        name: scene.name, text: scriptFile[1], lastValidSceneSource: document.lastValidSceneSource });
       for (const node of parse({ documentId: document.documentId, revision: document.revision, text: scriptFile[1] }).cst) {
         if (!node.valid || !node.id) continue;
         references.push({ kind: 'statement', id: node.id, name: `${scene.name} · ${node.command}` });
@@ -254,12 +261,12 @@ export function createAuthoringServices(bridge: StudioBridge): AuthoringServices
     discardBackground: id => bridge.assets.discardBackground(id),
     readPreferences: () => bridge.authoringPreferences.readPreferences(),
     writePreferences: value => bridge.authoringPreferences.writePreferences(value),
-    compilePreview: async (saved = false, provided) => { const documents = provided ? { ok: true as const, value: provided } : await bridge.documents.list();
+    compilePreview: async (saved = false, provided, options) => { const documents = provided ? { ok: true as const, value: provided } : await bridge.documents.list();
       if (!documents.ok) return documents;
       const prepared = await inputWithPlugins(bridge, saved ? documents.value.filter(doc => Object.keys(doc.savedFiles).length).map(doc =>
         ({ ...doc, files: doc.savedFiles, revision: doc.savedRevision, dirty: false })) : documents.value);
       if (!prepared.ok) return prepared;
-      try { return await bridge.language.compile(prepared.value.input); }
+      try { return await (options ? bridge.language.compile(prepared.value.input, options) : bridge.language.compile(prepared.value.input)); }
       finally { await prepared.value.dispose(); } },
     searchSemantic: async (filter, offset, sceneIds = []) => {
       const documents = await bridge.documents.list(); if (!documents.ok) return documents;

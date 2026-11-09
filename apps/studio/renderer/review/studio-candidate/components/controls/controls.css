@@ -222,31 +222,6 @@
 .gc-candidate .gc-candidate-tab-list { display: flex; align-items: stretch; overflow-x: auto; min-inline-size: 0; border-block-end: 1px solid var(--border); }
 .gc-candidate .gc-candidate-section-tab { border-radius: 0; }
 .gc-candidate .gc-candidate-section-tab[aria-selected=true] { color: var(--foreground); box-shadow: inset 0 -2px var(--primary); }
-.gc-candidate .gc-candidate-dock-header > .gc-candidate-icon-button { flex: none; color: var(--muted-foreground); }
-
-.gc-candidate .gc-candidate-action-menu {
-  position: fixed;
-  inset: auto;
-  inline-size: max-content;
-  min-inline-size: min(192px, calc(100vw - 16px));
-  max-inline-size: min(360px, calc(100vw - 16px));
-  max-block-size: calc(100vh - 16px);
-  overflow: auto;
-  margin: 0;
-  padding: 4px 0;
-  border: 1px solid var(--border);
-  border-radius: var(--candidate-control-radius);
-  background: var(--popover);
-  color: var(--popover-foreground);
-  box-shadow: var(--shadow-md);
-}
-.gc-candidate .gc-candidate-action-menu .gc-candidate-button[role='menuitem'] { inline-size: 100%; justify-content: space-between; padding: 6px 12px; border-radius: 0; font: var(--candidate-type-body); }
-.gc-candidate .gc-candidate-action-menu .gc-candidate-button[role='menuitem']:focus-visible { background: var(--surface-hover); }
-.gc-candidate .gc-candidate-action-menu .gc-candidate-button[role='menuitem']:focus-visible { outline-offset: -2px; }
-.gc-candidate .gc-candidate-action-menu .gc-candidate-button[data-danger='true']:not([aria-disabled='true']) { color: var(--danger-foreground); }
-.gc-candidate .gc-candidate-menu-shortcut { flex: none; color: var(--muted-foreground); font: var(--candidate-type-meta); }
-.gc-candidate .gc-candidate-menu-separator { margin: 4px 0; border-block-start: 1px solid var(--border); }
-
 .gc-candidate .gc-candidate-review-dialog {
   position: fixed;
   inset: 0;

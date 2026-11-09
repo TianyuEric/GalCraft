@@ -1,11 +1,11 @@
-import { assetReferenceTarget, createId, round5AssetBindings, StageWeatherPresets, fieldSpecsInputSchema } from '@galcraft/contracts';
+import { assetReferenceTarget, createId, round5AssetBindings, StageWeatherPresets, fieldSpecsInputSchema, stageCommandAssetBindings } from '@galcraft/contracts';
 import { join } from 'node:path';
 import { readFile, writeFile, mkdir, rename, stat } from 'node:fs/promises';
 import { retainsAssetExtension } from '@galcraft/assets/naming';
 
 import { AssetCatalog, AssetTypeRegistry, ImportCoordinator, assetFilePath, indexEdit, decodeSVG } from '@galcraft/assets';
 import { ImageVariantProcessor, PluginResourceProcessor, audioPlaybackForVariant, commitPreparedAsset } from '@galcraft/assets/processing';
-import { CoreCommandSpecs, fieldAt, parse, patchFields } from '@galcraft/dsl';
+import { CoreCommandSpecs, dialogueEventSource, fieldAt, parse, patchFields } from '@galcraft/dsl';
 import { IdSchema } from '@galcraft/contracts';
 import { fail, ok } from './result.mjs';
 import { prepareStageTarget, stageResource } from './asset-stage-targets.mjs';
@@ -34,7 +34,12 @@ function walkCommandAssets(command, args, matches, add, parts = []) {
       value.forEach((item, index) => visit(field.item, item, [...path, String(index)], value));
     }
   };
-  for (const field of fields) visit(field, args[field.path], [...parts, field.path], args);
+  for (const field of fields) {
+    if (command === 'say' && field.path === 'events' || ['changeBg', 'changeScene'].includes(command) && field.path === 'ruleImage') continue;
+    visit(field, args[field.path], [...parts, field.path], args);
+  }
+  for (const binding of stageCommandAssetBindings(command, args))
+    if (matches(binding.assetId)) add([...parts, ...binding.path], binding.variantId, binding.assetId);
   return true;
 }
 
@@ -49,15 +54,17 @@ export function backgroundReferences(session, assetId = null) {
       const scene = sceneRaw ? JSON.parse(sceneRaw).data : null;
       for (const binding of scene ? round5AssetBindings({ scene }) : []) if (matches(binding.assetId)) references.push({ assetId: binding.assetId, variantId: binding.variantId,
         owner: { kind: 'document', id: document.documentId }, source: { documentId: document.documentId, revision: document.revision, field: binding.field },
-        usage: 'scene presentation', required: true, label: `${scene.name} · ${binding.field}` });
+        usage: binding.field.startsWith('/data/decorLayers/') ? 'scene decor' : 'scene presentation',
+        required: true, label: `${scene.name} · ${binding.field}` });
       const parsed = parse({ documentId: document.documentId, revision: document.revision, text: script[1] });
       for (const node of parsed.cst) {
         if (!node.valid || !node.id || !record(node.object?.value)) continue;
         const add = (parts, variantId, referencedId) => {
           const field = parts.join('.');
           const fieldNode = fieldAt(node.object, parts);
+          const event = node.command === 'say' && parts[0] === 'events' ? dialogueEventSource(parsed, node, Number(parts[1]), parts[2]) : null;
           references.push({ assetId: referencedId, owner: { kind: 'statement', id: node.id },
-            source: { documentId: document.documentId, revision: document.revision, statementId: node.id,
+            source: event ?? { documentId: document.documentId, revision: document.revision, statementId: node.id,
               field, ...(fieldNode ? { range: { start: fieldNode.valueNode.start, end: fieldNode.valueNode.end } } : {}) },
             usage: node.command, required: true, variantId,
             label: `${scene?.name ?? scene?.id ?? document.documentId} · ${node.command} · ${field}` });

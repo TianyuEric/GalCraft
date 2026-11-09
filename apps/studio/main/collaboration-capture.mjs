@@ -1,5 +1,6 @@
 import { CollaborationError } from '@galcraft/collaboration';
 import { compileCollaborationProject } from './collaboration-compile.mjs';
+import { resolvePreviewEventSource } from './collaboration-preview-target.mjs';
 
 /** Captures the exact installed Player in an isolated preview window and profile. */
 export function createCollaborationCapture({ createWindow, production, plugins }) {
@@ -9,6 +10,7 @@ export function createCollaborationCapture({ createWindow, production, plugins }
     if (!compiled.ok) throw new CollaborationError(compiled.error.code, compiled.error.message);
     if (!compiled.value.snapshot) return { reached: false, issues: compiled.value.issues, snapshotId: null };
     const snapshot = compiled.value.snapshot;
+    const eventSource = resolvePreviewEventSource(snapshot, input);
     let window, timeout;
     const keepPainting=()=>{};
     try {
@@ -24,6 +26,7 @@ export function createCollaborationCapture({ createWindow, production, plugins }
       const work = window.webContents.executeJavaScript(`window.__galcraftCollaborationCapture.capture(${JSON.stringify({ snapshot, input })})`);
       const observation = await Promise.race([work, new Promise((_, reject) => { timeout = setTimeout(async () => { const phase = await window.webContents.executeJavaScript('document.querySelector("#app")?.dataset.capturePhase').catch(() => 'windowClosed'); reject(new CollaborationError('PREVIEW_TIMEOUT', `Player capture timed out (${phase}). Query the original callId; a new capture uses a new callId.`)); }, 45000); })]);
       if (!observation.reached) return { ...observation, issues: [...compiled.value.issues, ...observation.issues ?? []] };
+      if (eventSource) observation.eventSource = eventSource;
       if(input.observation)return {...observation,issues:[...compiled.value.issues,...observation.issues??[]]};
       clearTimeout(timeout);
       await new Promise((resolve,reject)=>{

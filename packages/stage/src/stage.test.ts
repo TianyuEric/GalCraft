@@ -30,6 +30,19 @@ function object(): StageObject {
 const segment = (effects: Segment['effects'], durationMs: number): Segment => ({ effects, durationMs, easing: linear });
 
 describe('M06 geometry and animation', () => {
+  it('targets a named expression on the exact visible official model instance', async () => {
+    const model = object(), state = structuredClone(FixtureRuntimeState);
+    model.providerState = { provider: 'org.galcraft.live2d/resource', version: '0.1.0', state: { motionElapsedMs: 70 } };
+    state.presentation.objects = [model, { ...object(), id: id(0x1002) }];
+    const service = new StageCommandService({ asset: () => ({ ok: true, warnings: [],
+      value: { kind: 'live2d', provider: 'org.galcraft.live2d/resource', providerVersion: '0.1.0', variantId: model.variantId } }) });
+    const args = { objectId: model.id, assetId: model.assetId, variantId: model.variantId, expressionName: 'exp_01' };
+    const result = unwrap(await service.prepare({ state, token, opcode: '$dialogueLive2DExpression', args }));
+    expect(result.delta?.providerCommands).toEqual([{ objectId: model.id, command: { expression: 'exp_01' } }]);
+    expect(result.state.presentation.objects).toEqual(state.presentation.objects);
+    const wrongVariant = await service.prepare({ state, token, opcode: '$dialogueLive2DExpression', args: { ...args, variantId: id(0x1042) } });
+    expect(wrongVariant).toMatchObject({ ok: false, error: { code: 'DIALOGUE_EXPRESSION_TARGET' } });
+  });
   it('finishes looping and queued visual animations once while preserving final defaults',()=>{
     const state=structuredClone(FixtureRuntimeState.presentation),item=object();state.objects=[item];
     unwrap(scheduleAnimation(item,{owner:token,segments:[segment({x:100},100),segment({opacity:.2},100)],loop:true}));

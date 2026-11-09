@@ -42,7 +42,7 @@ export function Publish({
   locale,
   changed,
   saveAll,
-  explorerContainer, inspectorContainer, documentActive = true, revealInspector, onUnappliedChange,guiDraft,onGuiDraftChange,onHistoryReady,
+  explorerContainer, inspectorContainer, documentActive = true, revealInspector, locateSource, onUnappliedChange,guiDraft,onGuiDraftChange,onHistoryReady,
 }: {
   services: AuthoringServices;
   source: AuthoringSource;
@@ -53,6 +53,7 @@ export function Publish({
   inspectorContainer?: HTMLElement | null;
   documentActive?: boolean;
   revealInspector?(): void;
+  locateSource?(source: import('@galcraft/contracts').Source): void;
   onUnappliedChange?(dirty: boolean): void;
   guiDraft?:PublishGuiDraft|null;
   onGuiDraftChange?(draft:PublishGuiDraft):void;
@@ -69,12 +70,13 @@ export function Publish({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const [mobile, setMobile] = useState<MobileDrafts>(guiDraft?.mobile ?? {});
+  const [savedIssues, setSavedIssues] = useState<import('@galcraft/contracts').Issue[]>([]);
   const targetLabel = (value: import('@galcraft/contracts').Target) => ({ web: 'Web', windows: 'Windows', android: 'Android', ios: 'iOS' }[value]);
   const [verificationPending,setVerificationPending]=useState(false),[verificationIssues,setVerificationIssues]=useState<import('@galcraft/contracts').Issue[]>([]);
   const [verificationProgress, setVerificationProgress] = useState<import('@galcraft/contracts').AssetVerificationProgress | null>(null);
   const verificationRequest = useRef<{ operationId: string; projectId: string; target: import('@galcraft/contracts').Target; sessionId?: string; running: boolean } | null>(null);
   useEffect(() => {
-    verificationRequest.current = null; setVerificationProgress(null); setVerificationIssues([]);
+    verificationRequest.current = null; setVerificationProgress(null); setVerificationIssues([]); setSavedIssues([]);
     return bridge.assets.subscribeTargetVerification?.(event => {
       const request = verificationRequest.current;
       if (!request || request.operationId !== event.operationId || request.projectId !== event.projectId || request.target !== event.target || request.sessionId && request.sessionId !== event.sessionId) return;
@@ -269,6 +271,7 @@ export function Publish({
   </div>;
   const unverified=assets.filter(asset=>asset.variants.some(variant=>(variant.id===asset.activeVariantId||variant.role==='compatible')&&(!variant.targets[target]||variant.targets[target]==='unverified')));
   const checkSaved=async()=>{
+                setSavedIssues([]);
                 if (identityDirty) { setPlan(null); throw new Error(t('请先应用发行配置并审阅保存，再检查已保存版本。','Apply the release settings and review the save before checking the saved version.','配布設定を適用し、確認して保存してから保存済みバージョンを確認してください。')); }
                 if (!output.trim()) { setFieldErrors({output: t('请选择或填写输出目录', 'Choose an output directory', '出力ディレクトリを選択してください')}); showConfiguration('output'); return; }
                 if (!VersionSchema.safeParse(version).success) { setFieldErrors({version: t('请填写有效版本，例如 0.1.0', 'Enter a version, such as 0.1.0', '0.1.0 などのバージョンを入力してください')}); showConfiguration('version'); return; }
@@ -296,7 +299,8 @@ export function Publish({
                         ),
                   );
                 const snapshot = compiled.value.snapshot;
-                if (!snapshot)
+                if (!snapshot) {
+                  setSavedIssues(compiled.value.issues);
                   throw new Error(
                     t(
                       "已保存内容编译失败",
@@ -304,6 +308,7 @@ export function Publish({
                       "保存済み内容のコンパイルに失敗しました",
                     ),
                   );
+                }
                 if (target === 'windows' && snapshot.project.release?.windowsSigning === 'certificate' && !certificates.some(item => item.thumbprint === certificate && item.authorUsable !== false))
                   throw new Error(t('请读取并选择本次发行使用的本机证书。', 'Load and select the local certificate for this release.', '今回の配布用ローカル証明書を読み込んで選択してください。'));
                 setPlan(
@@ -517,6 +522,15 @@ export function Publish({
           <section className="publish-checks"><h2>{t('检查与构建', 'Check & build', '確認と構築')}</h2>
             <p role="status">{ready ? t('构建服务已就绪', 'Build service ready', '構築サービス準備完了') : t('构建服务尚未就绪', 'Build service unavailable', '構築サービス未準備')}</p>
             {error && <div className="workbench-error publish-check-error" role="alert" tabIndex={0}><CircleAlert size={16}/><span>{error}</span></div>}
+            {!!savedIssues.length && <div className="publish-issue-list" role="region" aria-label={t('保存版本诊断', 'Saved revision diagnostics', '保存済みリビジョンの診断')} tabIndex={0}>
+              {savedIssues.map((issue, index) => {
+                const target = issue.source;
+                const canLocate = locateSource && target && source.scenes.some(scene => scene.documentId === target.documentId && scene.revision === target.revision);
+                return <IssueNotice key={index} issue={issue} locale={locale} recovery={canLocate ? {
+                  label: t('定位问题', 'Locate issue', '問題へ移動'), run: () => locateSource(target),
+                } : undefined}/>;
+              })}
+            </div>}
             {plan && <div className="publish-check-results">
               <p>{t('已冻结保存版本', 'Frozen saved release', '固定済み保存バージョン')} · {plan.input?.releaseVersion ?? version}</p>
               <Badge tone={canBuild ? 'good' : 'warm'}>{canBuild ? t('检查完成，可以构建', 'Checks complete · ready to build', '確認完了・構築できます') : t('修复阻塞项后重新检查', 'Resolve blockers, then check again', '問題を修正して再確認')}</Badge>

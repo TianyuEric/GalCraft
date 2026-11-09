@@ -47,8 +47,11 @@ export const SaveObjectSchema = z.discriminatedUnion('kind', [
   SaveObjectRefSchema.options[0].extend(saveObjectFields), SaveObjectRefSchema.options[1].extend(saveObjectFields),
 ]);
 export type SaveObject = z.infer<typeof SaveObjectSchema>;
+export const LastValidSceneSourceSchema = z.strictObject({ revision: RevisionSchema, text: z.string() });
+export type LastValidSceneSource = z.infer<typeof LastValidSceneSourceSchema>;
 export const DocumentViewSchema = z.strictObject({ documentId: IdSchema, revision: RevisionSchema, savedRevision: RevisionSchema,
-  format: z.enum(['dsl', 'json']), files: z.record(z.string(), z.string()), savedFiles: z.record(z.string(), z.string()), dirty: z.boolean() });
+  format: z.enum(['dsl', 'json']), files: z.record(z.string(), z.string()), savedFiles: z.record(z.string(), z.string()), dirty: z.boolean(),
+  lastValidSceneSource: LastValidSceneSourceSchema.optional() });
 export type DocumentView = z.infer<typeof DocumentViewSchema>;
 export const SaveScopeSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('current'), documentId: IdSchema }), z.strictObject({ kind: z.literal('all') }),

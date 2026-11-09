@@ -1,6 +1,6 @@
 import { DialogueContentSchema, dialoguePlainText } from '@galcraft/contracts';
 import { countNameCharacters, createId, reserveIds } from '@galcraft/contracts';
-import type { Asset, AssetIdsResult, Character, EditInput, EditReceipt, FieldSpec, Id, Issue, Json, Project, Ref, Result, SavePlan, SaveReceipt, SemanticPage, SemanticQuery, Snapshot, Source, SourceLocation, StudioBridge, StudioPreferences, Variable, VersionRef, WorkspaceResume } from '@galcraft/contracts';
+import type { Asset, AssetIdsResult, Character, EditInput, EditReceipt, FieldSpec, Id, Issue, Json, LastValidSceneSource, Project, Ref, Result, SavePlan, SaveReceipt, SemanticPage, SemanticQuery, Snapshot, Source, SourceLocation, StudioBridge, StudioPreferences, Variable, VersionRef, WorkspaceResume } from '@galcraft/contracts';
 import { DefaultStudioPreferences, IdSchema, ProjectSchema } from '@galcraft/contracts';
 import { applyTextEdits, duplicateStatements, fieldAt, parse, patchFields, presentationArgs, toDocumentPatch } from '@galcraft/dsl';
 import type { ParseResult, ValueNode } from '@galcraft/dsl';
@@ -10,7 +10,8 @@ import { prepareAuthoringEdit, rebaseAuthoringOperation, type AuthorOperation } 
 
 export type AuthoringView = 'cards' | 'writing' | 'script';
 export type StudioLocale = StudioPreferences['locale'];
-export type SceneSource = { sceneId: Id; documentId: Id; revision: number; savedRevision: number; dirty: boolean; name: string; chapterId: Id; text: string };
+export type SceneSource = { sceneId: Id; documentId: Id; revision: number; savedRevision: number; dirty: boolean; name: string; chapterId: Id; text: string;
+  lastValidSceneSource?: LastValidSceneSource };
 export type AuthoringSource = { projectDocumentId: Id; projectRevision: number; projectSavedRevision: number; projectDirty: boolean;
   project: Project; scenes: SceneSource[]; characters: Character[]; variables?: (Variable & { declaringSceneId: Id | null })[];
   references?: (Ref & { name: string })[]; documentVersions?: {documentId:Id;revision:number}[]; anyDirty?: boolean; assetIndexDocumentId?: Id; assetIndexRevision?: number };
@@ -54,11 +55,12 @@ export type AuthoringServices = {
   discardBackground?: StudioBridge['assets']['discardBackground'];
   readPreferences(): Promise<Result<StudioPreferences>>;
   writePreferences(value: StudioPreferences): Promise<Result<void>>;
-  compilePreview?(saved?: boolean, documents?: import('@galcraft/contracts').DocumentView[]): Promise<Result<{ snapshot: Snapshot | null; lastValid: Snapshot | null; current: boolean; issues: Issue[] }>>;
+  compilePreview?(saved?: boolean, documents?: import('@galcraft/contracts').DocumentView[], options?: { publish: boolean }): Promise<Result<{ snapshot: Snapshot | null; lastValid: Snapshot | null; current: boolean; issues: Issue[] }>>;
   searchSemantic?(filter: SemanticQuery['filter'], offset: number, sceneIds?: Id[]): Promise<Result<SemanticPage>>;
   locate?(source: Source): Promise<Result<SourceLocation | null>>;
 };
 export type AuthoringSelection = { documentId: Id; statementIds: Id[]; primaryId: Id | null; textRange: { start: number; end: number } | null };
+export type StatementEditTarget = { projectId: Id; sceneId: Id; documentId: Id; revision: number; statementIds: Id[] };
 export type AuthoringRefresh = { documents: import('@galcraft/contracts').DocumentView[]; compilation?: Awaited<ReturnType<NonNullable<AuthoringServices['compilePreview']>>> };
 export type AuthoringStatus = { dirty: boolean; save: 'idle' | 'saving' | 'failed'; savedRevision: number;
   preview: 'none' | 'synced' | 'updateAvailable' | 'restartRequired' | 'lastValid'; issues: Issue[];
@@ -177,7 +179,7 @@ export function queryDialogueText(source: AuthoringSource, term: string, offset 
 }
 
 export class AuthoringController {
-  private currentParse: { documentId: Id; revision: number; text: string; parsed: ParseResult } | null = null;
+  private currentParses = new Map<Id, ParseResult>();
   source: AuthoringSource | null = null;
   preferences: StudioPreferences = structuredClone(DefaultStudioPreferences);
   scene: SceneSource | null = null;
@@ -205,6 +207,7 @@ export class AuthoringController {
     if (!valid.success) return failed('PROJECT_INVALID', '作品配置不符合当前规格');
     reserveIds(loaded.value);
     this.source = loaded.value;
+    this.currentParses.clear();
     this.lastValid.clear();
     const preferences = await this.services.readPreferences();
     if (preferences.ok) this.preferences = preferences.value;
@@ -226,7 +229,7 @@ export class AuthoringController {
   }
 
   close(): void {
-    this.currentParse = null;
+    this.currentParses.clear();
     if (this.resumeTimer) { clearTimeout(this.resumeTimer); this.resumeTimer = null; }
     this.source = null; this.scene = null; this.selection = null;
     this.booleanOrigins.clear();this.historyLabel='';this.lastOperationDocumentId=null;
@@ -234,15 +237,28 @@ export class AuthoringController {
       compilation: { state: 'none', snapshotId: null, documents: [] } };
   }
 
-  parsed(): { parsed: ParseResult; readOnly: boolean } | null {
-    if (!this.scene) return null;
-    const { documentId, revision, text } = this.scene;
-    if (!this.currentParse || this.currentParse.documentId !== documentId || this.currentParse.revision !== revision || this.currentParse.text !== text)
-      this.currentParse = { documentId, revision, text, parsed: parse({ documentId, revision, text }) };
-    const parsed = this.currentParse.parsed;
-    if (!parsed.issues.some(issue => issue.severity === 'error')) this.lastValid.set(this.scene.documentId, parsed);
-    return { parsed: this.view === 'script' ? parsed : this.lastValid.get(this.scene.documentId) ?? parsed,
-      readOnly: this.view !== 'script' && parsed.issues.some(issue => issue.severity === 'error') };
+  parsed(view: AuthoringView = this.view, scene = this.scene): { parsed: ParseResult; readOnly: boolean; lastValidRevision: number | null } | null {
+    if (!scene) return null;
+    const { documentId, revision, text, lastValidSceneSource } = scene;
+    let parsed = this.currentParses.get(documentId);
+    if (!parsed || parsed.revision !== revision || parsed.text !== text) {
+      parsed = parse({ documentId, revision, text });
+      this.currentParses.set(documentId, parsed);
+    }
+    if (!parsed.issues.some(issue => issue.severity === 'error')) {
+      this.lastValid.set(documentId, parsed);
+      return { parsed, readOnly: false, lastValidRevision: null };
+    }
+    if (view === 'script') return { parsed, readOnly: false, lastValidRevision: null };
+    let baseline = this.lastValid.get(documentId);
+    if (lastValidSceneSource && (!baseline || baseline.revision < lastValidSceneSource.revision)) {
+      const stored = parse({ documentId, ...lastValidSceneSource });
+      if (!stored.issues.some(issue => issue.severity === 'error')) {
+        baseline = stored;
+        this.lastValid.set(documentId, stored);
+      }
+    }
+    return { parsed: baseline ?? parsed, readOnly: true, lastValidRevision: baseline?.revision ?? null };
   }
 
   select(ids: Id[], primaryId: Id | null = ids[0] ?? null): void {
@@ -289,13 +305,25 @@ export class AuthoringController {
     return written;
   }
 
-  async editFields(changes: { field: string; op: 'set' | 'inherit'; value: Json }[], ids = this.selection?.statementIds ?? []): Promise<Result<EditReceipt>> {
-    const current = this.scene; const state = this.parsed();
+  private sceneForEdit(target?: StatementEditTarget): SceneSource | null {
+    if (!target) return this.scene;
+    const source = this.source;
+    if (source?.project.projectId !== target.projectId) return null;
+    return source.scenes.find(scene => scene.sceneId === target.sceneId && scene.documentId === target.documentId && scene.revision === target.revision) ?? null;
+  }
+
+  async editFields(changes: { field: string; op: 'set' | 'inherit'; value: Json }[], ids = this.selection?.statementIds ?? [], target?: StatementEditTarget): Promise<Result<EditReceipt>> {
+    const current = this.sceneForEdit(target), state = this.parsed('cards', current);
+    if (target && !current) return failed('EDIT_TARGET_CHANGED', '指令来源已变化，请重新确认目标');
     if (!current || !state || state.readOnly) return failed('SOURCE_INVALID', '原文存在错误，字段编辑不可用');
+    ids = target?.statementIds ?? ids;
     if (!ids.length) return failed('SELECTION_EMPTY', '请选择语句');
     const source = changes.find(change => change.op === 'set' && ['animation', 'segments', 'resourceId'].includes(change.field));
     const listed = await this.services.bridge.documents.list(); if (!listed.ok) return listed;
+    if (target && !listed.value.some(document => document.documentId === target.documentId && document.revision === target.revision))
+      return failed('EDIT_TARGET_CHANGED', '指令来源已变化，请重新确认目标');
     const commands=await this.services.bridge.plugins?.commandSpecs?.();if(commands&&!commands.ok)return commands;
+    if (target && !this.sceneForEdit(target)) return failed('EDIT_TARGET_CHANGED', '指令来源已变化，请重新确认目标');
     const input: EditInput = { label: `编辑 ${changes.map(item=>item.field).join('、')}`, origin: ids.length>1?'batch':'field', expected: [], patches: [], preparedAssets: [], requiredRefs: [] };
     for (const id of ids) {
       const node = state.parsed.cst.find(item => item.id === id);
@@ -305,16 +333,23 @@ export class AuthoringController {
       if (!planned.ok) return planned;
       for(const patch of planned.value.patches){const previous=input.patches.find(item=>item.kind==='text'&&item.documentId===patch.documentId);if(previous?.kind==='text'&&patch.kind==='text')previous.edits.push(...patch.edits);else input.patches.push(patch);}
       for(const expected of planned.value.expected)if(!input.expected.some(item=>item.ref.id===expected.ref.id))input.expected.push(expected);
+      for (const ref of planned.value.requiredRefs) {
+        if (!input.requiredRefs.some(item => item.kind === ref.kind && item.id === ref.id)) input.requiredRefs.push(ref);
+      }
     }
     return this.commit(input);
   }
 
-  async editBooleanField(spec: FieldSpec, value: boolean, ids = this.selection?.statementIds ?? []): Promise<Result<EditReceipt>> {
-    const current = this.scene, state = this.parsed();
+  async editBooleanField(spec: FieldSpec, value: boolean, ids = this.selection?.statementIds ?? [], target?: StatementEditTarget): Promise<Result<EditReceipt>> {
+    const current = this.sceneForEdit(target), state = this.parsed('cards', current);
+    if (target && !current) return failed('EDIT_TARGET_CHANGED', '指令来源已变化，请重新确认目标');
     if (!current || !state || state.readOnly) return failed('SOURCE_INVALID', '原文存在错误，字段编辑不可用');
+    ids = target?.statementIds ?? ids;
     if (!ids.length) return failed('SELECTION_EMPTY', '请选择语句');
     const listed=await this.services.bridge.documents.list();if(!listed.ok)return listed;
     const contracts=await this.services.bridge.plugins?.commandSpecs?.();if(contracts&&!contracts.ok)return contracts;
+    if (target && (!this.sceneForEdit(target) || !listed.value.some(document => document.documentId === target.documentId && document.revision === target.revision)))
+      return failed('EDIT_TARGET_CHANGED', '指令来源已变化，请重新确认目标');
     const planned=prepareAuthoringEdit(listed.value,{op:'commands.fields',sceneId:current.sceneId,ids,changes:[{field:spec.path,op:'set',value}]},contracts?.value??[]);if(!planned.ok)return planned;
     const edits: { start: number; end: number; text: string; oldText: string }[] = [];
     const origins = new Map(this.booleanOrigins);
@@ -349,9 +384,11 @@ export class AuthoringController {
     return result;
   }
 
-  async editScript(text: string, sceneId: Id | null = this.scene?.sceneId ?? null): Promise<Result<EditReceipt>> {
+  async editScript(text: string, sceneId: Id | null = this.scene?.sceneId ?? null, expectedRevision?: number): Promise<Result<EditReceipt>> {
     const current = this.source?.scenes.find(scene => scene.sceneId === sceneId);
     if (!current) return failed('SCENE_MISSING', '请选择场景');
+    if (expectedRevision !== undefined && current.revision !== expectedRevision)
+      return failed('SOURCE_DRAFT_STALE', '场景已更新，源码草稿已保留');
     if (text === current.text) return failed('NO_CHANGE', '脚本没有变化');
     const result = await this.commit({ label: '编辑脚本', origin: 'script', expected: [version(current.documentId, current.revision)],
       patches: [{ kind: 'text', documentId: current.documentId, edits: [{ start: 0, end: current.text.length, before: current.text, after: text }] }], preparedAssets: [], requiredRefs: [] });
@@ -557,6 +594,24 @@ export class AuthoringController {
     if(baseline&&partial){const rebased=rebaseAuthoringOperation(baseline,listed.value,operation,resolution);if(rebased.conflicts.length&&!resolution)return failed('AUTHOR_CONFLICT',`Fields changed in the workspace: ${rebased.conflicts.join(', ')}. Your input is retained; choose draft or current values.`);operation=rebased.operation;}
     const commands=await this.services.bridge.plugins?.commandSpecs?.();if(commands&&!commands.ok)return commands;
     const planned = prepareAuthoringEdit(baseline&&!partial?baseline:listed.value, operation,commands?.value ?? []); return planned.ok ? this.commit(planned.value) : planned;
+  }
+
+  async editDialogue(operation: Extract<AuthorOperation, { op: 'dialogue.update' | 'dialogue.split' | 'dialogue.merge' }>, target: StatementEditTarget, eventId?: Id): Promise<Result<EditReceipt>> {
+    const changed = (revision = target.revision): Result<EditReceipt> => {
+      const error: Issue = { code: 'EDIT_TARGET_CHANGED', message: '对白来源已变化，输入已保留。请重新确认目标。', severity: 'error', owner: 'M01',
+        source: { documentId: target.documentId, revision, statementId: operation.statementId, ...(eventId ? { eventId } : {}) },
+        related: [{ kind: 'scene', id: target.sceneId }], actions: ['locate', 'retry'] };
+      return { ok: false, error, issues: [error] };
+    };
+    if (operation.sceneId !== target.sceneId || !target.statementIds.includes(operation.statementId) || !this.sceneForEdit(target))
+      return changed(this.source?.scenes.find(scene => scene.documentId === target.documentId)?.revision);
+    const listed = await this.services.bridge.documents.list(); if (!listed.ok) return listed;
+    const document = listed.value.find(document => document.documentId === target.documentId);
+    if (document?.revision !== target.revision || !this.sceneForEdit(target)) return changed(document?.revision);
+    const commands = await this.services.bridge.plugins?.commandSpecs?.(); if (commands && !commands.ok) return commands;
+    if (!this.sceneForEdit(target)) return changed();
+    const planned = prepareAuthoringEdit(listed.value, operation, commands?.value ?? []);
+    return planned.ok ? this.commit(planned.value) : planned;
   }
 
   async saveCharacters(drafts: CharacterDraft[]): Promise<Result<EditReceipt>> {
