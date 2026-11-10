@@ -1,6 +1,6 @@
 import { CollaborationError } from '@galcraft/collaboration';
 import { compileCollaborationProject } from './collaboration-compile.mjs';
-import { resolvePreviewEventSource } from './collaboration-preview-target.mjs';
+import { resolvePreviewEventSource } from './collaboration-preview-target.ts';
 
 /** Captures the exact installed Player in an isolated preview window and profile. */
 export function createCollaborationCapture({ createWindow, production, plugins }) {

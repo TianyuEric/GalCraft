@@ -1,4 +1,4 @@
-import { createId, type Snapshot, type Position, type DebugScenario, type Id, type PageKey } from '@galcraft/contracts';
+import { createId, type BlueprintTrigger, type Snapshot, type Position, type DebugScenario, type Id, type PageKey } from '@galcraft/contracts';
 import { resolvePreviewEntry } from '@galcraft/runtime';
 import type { AuthoringServices } from './controller.js';
 import { openPlayerPreview } from './player-preview.js';
@@ -7,23 +7,37 @@ import { resolvePreviewStyleMatches, type StyleMatchRequest } from '@galcraft/te
 import type { DesktopBridge } from '../../desktop-bridge.js';
 
 type CompositionPreview = Extract<Awaited<ReturnType<DesktopBridge['production']['previewComposition']>>, {ok:true}>['value'];
-type CaptureInput = { entryId?: string; target?: Position; eventId?: Id; route?: DebugScenario['route']; playerInputs?: DebugScenario['playerInputs']; page?: PageKey; compositionPreview?:CompositionPreview; freezeLayout?:string[];observation?:import('@galcraft/player-ui').PlayerObservationRequest };
+type CaptureInput = { entryId?: string; target?: Position; eventId?: Id; route?: DebugScenario['route']; playerInputs?: DebugScenario['playerInputs']; page?: PageKey; compositionPreview?:CompositionPreview; freezeLayout?:string[];observation?:import('@galcraft/player-ui').PlayerObservationRequest; blueprintTrigger?: BlueprintTrigger };
 declare global {
-  interface Window { __galcraftCollaborationCapture: { capture(payload: { snapshot: Snapshot; input: CaptureInput }): Promise<unknown>; dispose(): void } }
+  interface Window { __galcraftCollaborationCapture: { capture(payload: { snapshot: Snapshot; input: CaptureInput }): Promise<unknown>; dispose(): Promise<void> } }
 }
 
 export function mountCollaborationCapture(root: HTMLElement, services: AuthoringServices) {
   let player: Awaited<ReturnType<typeof openPlayerPreview>> | undefined;
+  let opening: ReturnType<typeof openPlayerPreview> | undefined;
+  let generation = 0;
   root.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;overflow:hidden;background:#000';
-  const dispose = () => { player?.dispose(); player = undefined; root.replaceChildren(); };
+  const dispose = async () => {
+    generation++;
+    player?.dispose();
+    player = undefined;
+    await opening?.catch(() => undefined);
+    root.replaceChildren();
+  };
   window.__galcraftCollaborationCapture = {
     dispose,
     async capture({ snapshot, input }) {
-      dispose();
+      await dispose();
+      const run = ++generation;
       const composition=input.compositionPreview;
       if(composition){snapshot=pagePreviewSample(snapshot,composition.template,input.page??'title','normal');snapshot.assets.push(...composition.previewAssets);}
       root.dataset.capturePhase = 'mountPlayer';
-      player = await openPlayerPreview(root, services, snapshot, composition?'candidate':'sample',composition?.styles,composition?.template.styles.map(style=>style.id),composition?.locations);
+      const pending = openPlayerPreview(root, services, snapshot, composition ? 'candidate' : input.blueprintTrigger ? 'playtest' : 'sample',
+        composition?.styles, composition?.template.styles.map(style=>style.id), composition?.locations);
+      opening = pending;
+      const mounted = await pending.finally(() => { if (opening === pending) opening = undefined; });
+      if (run !== generation) { mounted.dispose(); return { reached: false, snapshotId: snapshot.snapshotId }; }
+      player = mounted;
       root.dataset.capturePhase = 'mounted';
       player.setPreviewMuted(true);
       let observation: Record<string, unknown> = { reached: true, snapshotId: snapshot.snapshotId, page: input.page ?? 'title', issues: [] };
@@ -45,6 +59,14 @@ export function mountCollaborationCapture(root: HTMLElement, services: Authoring
         if(input.page)player.view.navigation.replace(input.page);
         observation.state = player.session.inspect()?.state;
       } else if (input.page) player.view.navigation.replace(input.page);
+      if (input.blueprintTrigger) {
+        const current = player;
+        await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        if (player !== current) throw new Error('Blueprint preview was stopped.');
+        const execution = await current.view.triggerBlueprint(input.blueprintTrigger);
+        return { snapshotId: snapshot.snapshotId, page: current.view.navigation.page, reached: execution.status !== 'unavailable',
+          execution, issues: [...current.view.inspectDiagnostics(), ...(execution.issue ? [execution.issue] : [])] };
+      }
       if(composition&&['story','choice','input','history','save','load'].includes(input.page??'')){await player.view.newGame();if(input.page)player.view.navigation.replace(input.page);}
       root.dataset.capturePhase = 'fonts';
       await document.fonts.ready;

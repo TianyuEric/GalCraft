@@ -109,6 +109,10 @@ export const WorkspaceResumeSchema = z.strictObject({
     sceneSplits: z.array(z.strictObject({ sceneId: IdSchema, views: z.tuple([SceneViewSchema, SceneViewSchema])
       .refine(([left, right]) => left !== right) })).optional(),
     sceneContexts: z.array(WorkspaceScenePaneSchema.extend({ sceneId: IdSchema, revision: RevisionSchema, beside: z.array(WorkspaceScenePaneSchema) })).optional(),
+    pageViews: z.array(z.strictObject({ key: z.string().min(1), selected: z.array(IdSchema),
+      mode: z.enum(['layout', 'style', 'behavior', 'preview']), state: z.enum(['normal', 'hover', 'pressed', 'focus', 'disabled', 'selected', 'locked', 'empty']),
+      sample: z.string(), zoom: z.enum(['fit', '100']), locale: z.string().nullable(), scrollTop: finite.nonnegative(), scrollLeft: finite.nonnegative().optional(), split: z.boolean(),
+    })).optional(),
     outline: z.strictObject({ query: z.string(), scrollTop: finite.nonnegative(), selected: z.array(IdSchema) }).optional(),
     characterQuery: z.string().optional(),
     stageSource: WorkspaceStatementSourceSchema.extend({ statementId: IdSchema.nullable() }).optional(),

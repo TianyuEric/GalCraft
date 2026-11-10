@@ -11,18 +11,18 @@ const titles: Record<string, string> = { draft: 'Draft', notes: 'Notes', explore
 const zones: Record<string, Zone> = { explorer: 'left', inspector: 'right', problems: 'bottom' };
 const documents = [{ id: 'draft' }, { id: 'notes', preview: true }];
 
-function Example({ theme = 'light' }: { theme?: 'light' | 'dark' }) {
+function Example({ theme = 'light', preserveSidebars = false }: { theme?: 'light' | 'dark'; preserveSidebars?: boolean }) {
   const [active, setActive] = useState('draft');
   const [draft, setDraft] = useState('The lights come on at the station.');
   const [allow, setAllow] = useState(false);
   const [source, setSource] = useState(false);
-  return <div className="authoring-shell" data-theme={theme} lang="en" style={{ height: '100dvh', display: 'flex', flexDirection: 'column', color: 'var(--foreground)', background: 'var(--workbench-editor)', font: '14px/1.5 var(--font-sans)' }}>
+  return <div className="authoring-shell" data-theme={theme} lang="en" style={{ height: '100dvh', maxWidth: preserveSidebars ? 1200 : undefined, display: 'flex', flexDirection: 'column', color: 'var(--foreground)', background: 'var(--workbench-editor)', font: '14px/1.5 var(--font-sans)' }}>
     <div style={{ display: 'flex', gap: 8, padding: 8 }}>
       <Button onClick={() => setAllow(true)}>Allow document switch</Button>
       <Button onClick={() => setSource(true)}>Open source alongside</Button>
     </div>
     <DockWorkspace locale="en" activeView={active} documentViews={documents} viewIds={Object.keys(titles).filter(id => id !== 'source' || source && active === 'draft')}
-      companion={source && active === 'draft' ? { id: 'source', document: 'draft' } : undefined}
+      companion={source && active === 'draft' ? { id: 'source', document: 'draft', preserveSidebars } : undefined}
       retainStowedView={id => id === 'source' && source && active !== 'draft'}
       onClose={id => { if (id === 'source') setSource(false); return true; }}
       createDefaultLayout={() => {
@@ -31,6 +31,7 @@ function Example({ theme = 'light' }: { theme?: 'light' | 'dark' }) {
         layout.left = group('left', ['explorer']);
         layout.right = group('right', ['inspector']);
         layout.bottom = group('bottom', ['problems']);
+        if (preserveSidebars) layout.widths = { left: 240, right: 240 };
         return layout;
       }}
       title={id => titles[id] ?? id} zone={id => zones[id] ?? 'center'} canCloseView={id => !(id in zones)}
@@ -221,5 +222,17 @@ export const Companion: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Close Draft source' }));
     await waitFor(() => expect(pane).not.toBeInTheDocument());
     await expect(canvas.getByRole('textbox', { name: 'Draft text' })).toBeVisible();
+  },
+};
+
+export const CompanionWithSidebars: Story = {
+  args: { preserveSidebars: true },
+  play: async ({ canvas }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Open source alongside' }));
+    const document = canvas.getByRole('region', { name: 'Draft' });
+    const companion = await canvas.findByRole('region', { name: 'Draft source' });
+    await expect(canvas.getByRole('region', { name: 'Explorer' })).toBeVisible();
+    await expect(canvas.getByRole('region', { name: 'Inspector' })).toBeVisible();
+    await waitFor(() => expect(companion.getBoundingClientRect().top).toBeGreaterThanOrEqual(document.getBoundingClientRect().bottom));
   },
 };

@@ -24,8 +24,8 @@ import { readBundledPlugins, readBundledServicePackages, installBundledPlugins }
 import { SoundBanks } from '../main/soundbanks.mjs';
 import { soundBankBrowserPort } from '../main/soundbank-host.mjs';
 import { StudioCollaboration } from '../main/collaboration-providers.mjs';
-import { authoringPreview } from '../main/collaboration-preview.mjs';
-import { prepareStudioPageEdit } from '../main/page-editing.mjs';
+import { authoringPreview } from '../main/collaboration-preview.ts';
+import { prepareStudioPageEdit } from '../main/page-editing.ts';
 import { productionRuntimeDependencies } from '../main/production-runtimes.mjs';
 import { createNodeSafeStorage } from './credentials.mjs';
 import { NodeUtilityTasks } from './workers.mjs';
@@ -114,7 +114,7 @@ export async function createNodeStudioHost({ userData, origin, publish = () => {
     browser = createBrowserCapture({ origin, host: () => host });
     host.captureReadiness=browser.readiness;
     assets.verifyAssetPlayback = browser.verifyAssetPlayback;
-    host.collaboration = new StudioCollaboration({ userData, projects, assets, production: host.production, plugins, window, dialog, preview: input => authoringPreview(host.production, input, plugins), capture: browser.capture, host });
+    host.collaboration = new StudioCollaboration({ userData, projects, assets, production: host.production, plugins, window, dialog, preview: (input, signal) => authoringPreview(host.production, input, plugins, signal), capture: browser.capture, host });
     host.pageEditing = request => prepareStudioPageEdit({ documents: [...projects.currentSession.documents.values()], request, capture: browser.capture });
     assets.comfyMatting = (request, choice, collaboration, signal) => host.production.prepareComfyMatting(request, choice, collaboration, signal);
     host.inspectConnection = (_entry, selection) => host.production.testConnection(selection);

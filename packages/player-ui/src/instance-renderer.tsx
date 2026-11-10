@@ -11,8 +11,9 @@ export type ComponentInstanceProps = { root: ComponentConfig; context: UIValueCo
   /** Player's named-style layer applies interactive visuals after author CSS. */
   externalVisualStates?:boolean;
   action(action: UIAction, context: UIValueContext): void | Promise<void>;
+  blueprint?(component: ComponentConfig, binding: UIInteraction, context: UIValueContext): Promise<boolean>;
   activate?(component: ComponentConfig, context: UIValueContext): void | Promise<void>;
-  register?(component: ComponentConfig, element: HTMLElement | null, instance: string): void;
+  register?(component: ComponentConfig, element: HTMLElement | null, instance: string, context: UIValueContext, disabled: boolean): void;
   business?(component: ComponentConfig, children: ReactNode, context: UIValueContext): ReactNode | undefined;
   state?(component: ComponentConfig, context: UIValueContext): { disabled?: boolean; locked?:boolean; selected?: boolean; visible?: boolean; text?: string; value?: unknown };
 };
@@ -44,6 +45,7 @@ export function componentInstanceStyle(component: ComponentConfig, parent?: Comp
 }
 function Instance({ component, parent, context, props, root = false }: { component: ComponentConfig; parent?: ComponentConfig; context: UIValueContext; props: ComponentInstanceProps; root?: boolean }) {
   const [draft, setDraft] = useState<unknown>(component.content.value ?? ''), [interactionState, setInteractionState] = useState<'normal' | 'hover' | 'pressed' | 'focus'>('normal'), composing = useRef(false);
+  const inFlight = useRef(new Set<UIInteraction['event']>());
   const showState=(state:typeof interactionState)=>{if(!props.externalVisualStates)setInteractionState(state);};
   const definition=componentDefinition(component.part),kind = definition?.kind ?? 'container', business = props.state?.(component, context) ?? {},activatableContainer=kind==='container'&&!!definition?.action;
   const bound = (key: string, fallback: unknown) => component.bindings?.[key] ? readUIValue(component.bindings[key]!, context) : fallback;
@@ -56,9 +58,21 @@ function Instance({ component, parent, context, props, root = false }: { compone
   const identity = `${context.instance ?? ''}/${component.id}`;
   const run = async (event: UIInteraction['event'], eventValue?: unknown) => {
     if (disabled) return;
+    const bindings = component.interactions?.filter(interaction => interaction.event === event) ?? [];
+    const hasBlueprint = bindings.some(binding => binding.blueprint);
+    if (hasBlueprint && inFlight.current.has(event)) return;
+    if (hasBlueprint) inFlight.current.add(event);
     const current = { ...context, instance: identity, event: { value: eventValue ?? value, checked: Boolean(eventValue ?? value) } };
-    if (event === 'click' && !component.interactions?.some(interaction => interaction.event === 'click')) await props.activate?.(component, current);
-    for (const interaction of component.interactions ?? []) if (interaction.event === event && evaluateUICondition(interaction.condition, current)) for (const action of interaction.actions) await props.action(action, current);
+    try {
+      if (event === 'click' && !bindings.length) await props.activate?.(component, current);
+      for (const binding of bindings) {
+        if (binding.blueprint) {
+          if (await props.blueprint?.(component, binding, current) === false) return;
+        } else if (evaluateUICondition(binding.condition, current)) {
+          for (const action of binding.actions) await props.action(action, current);
+        }
+      }
+    } finally { inFlight.current.delete(event); }
   };
   const change = async (next: unknown, event: 'input' | 'change' = 'change') => {
     setDraft(next); const target = component.bindings?.value;
@@ -76,7 +90,7 @@ function Instance({ component, parent, context, props, root = false }: { compone
       onClick:(event:React.MouseEvent<HTMLElement>)=>{const target=event.target as HTMLElement;if(target!==event.currentTarget&&target.closest('button,input,select,textarea,a,[role="button"]')!==event.currentTarget)return;void run('click');},
       onKeyDown:(event:React.KeyboardEvent<HTMLElement>)=>{if(event.target!==event.currentTarget||!['Enter',' '].includes(event.key))return;event.preventDefault();if(!event.repeat)void run('click');}}:{}),
     ...(root&&props.page?{'data-gc-page':props.page.key,'data-gc-page-id':props.page.id}:{}),
-    className: `gc-instance gc-${component.part.replaceAll('.', '-')}`, style, ref: (element: HTMLElement | null) => props.register?.(component, element, identity),
+    className: `gc-instance gc-${component.part.replaceAll('.', '-')}`, style, ref: (element: HTMLElement | null) => props.register?.(component, element, identity, context, disabled),
     onPointerEnter: () => { if(disabled)return;showState('hover'); void run('pointerEnter'); }, onPointerLeave: () => { if(disabled)return;showState('normal'); void run('pointerLeave'); },
     onPointerDown: () => { if (!disabled) showState('pressed'); }, onPointerUp: () => { if (!disabled) showState('hover'); },
     onFocus: (event:React.FocusEvent<HTMLElement>) => { if(event.target!==event.currentTarget&&kind!=='toggle')return;showState('focus'); void run('focus'); }, onBlur: (event:React.FocusEvent<HTMLElement>) => { if(event.target!==event.currentTarget&&kind!=='toggle')return;showState('normal'); void run('blur'); } };
@@ -91,15 +105,21 @@ function Instance({ component, parent, context, props, root = false }: { compone
   const supplied = props.business?.(component, children, context);
   if (supplied === null) return null;
   if (supplied !== undefined) {
-    if (React.isValidElement<{ style?: CSSProperties; className?: string; children?: ReactNode; ref?: React.Ref<HTMLElement>; onClick?: (event: React.MouseEvent<HTMLElement>)=>void;onChange?:React.ChangeEventHandler<HTMLElement>;onInput?:React.FormEventHandler<HTMLElement>;onKeyDown?:React.KeyboardEventHandler<HTMLElement>;onFocus?:React.FocusEventHandler<HTMLElement>;onBlur?:React.FocusEventHandler<HTMLElement>;onPointerEnter?:React.PointerEventHandler<HTMLElement>;onPointerLeave?:React.PointerEventHandler<HTMLElement> }>(supplied)) {
+    if (React.isValidElement<{ style?: CSSProperties; className?: string; children?: ReactNode; ref?: React.Ref<HTMLElement>; onValueChange?: (value: string) => void | Promise<void>; onClick?: (event: React.MouseEvent<HTMLElement>)=>void;onChange?:React.ChangeEventHandler<HTMLElement>;onInput?:React.FormEventHandler<HTMLElement>;onKeyDown?:React.KeyboardEventHandler<HTMLElement>;onFocus?:React.FocusEventHandler<HTMLElement>;onBlur?:React.FocusEventHandler<HTMLElement>;onPointerEnter?:React.PointerEventHandler<HTMLElement>;onPointerLeave?:React.PointerEventHandler<HTMLElement> }>(supplied)) {
       const ref = supplied.props.ref;
       const listens=(event:UIInteraction['event'])=>component.interactions?.some(interaction=>interaction.event===event);
+      const selectValue = supplied.type === PlayerSelect && (listens('input') || listens('change'));
       const eventValue=(event:React.SyntheticEvent<HTMLElement>)=>{const target=event.target as HTMLInputElement;return target.type==='checkbox'?target.checked:target.type==='number'||target.type==='range'?Number.isFinite(target.valueAsNumber)?target.valueAsNumber:'':target.value;};
       return React.cloneElement(supplied, { ...common, ...supplied.props, className: `${common.className} ${supplied.props.className ?? ''}`, style: { ...style, ...supplied.props.style },
         ...(component.bindings?.text||component.content.text!==undefined||override!==undefined?{children:<>{text}{children}</>}:{}),
         ...(component.interactions?.some(interaction=>interaction.event==='click')?{onClick:activatableContainer?common.onClick:()=>{void run('click');}}:{}),
-        ...(listens('change')?{onChange:(event:React.ChangeEvent<HTMLElement>)=>{supplied.props.onChange?.(event);void run('change',eventValue(event));}}:{}),
-        ...(listens('input')?{onInput:(event:React.FormEvent<HTMLElement>)=>{supplied.props.onInput?.(event);void run('input',eventValue(event));}}:{}),
+        ...(selectValue ? { onValueChange: async (next: string) => {
+          await supplied.props.onValueChange?.(next);
+          await run('input', next);
+          await run('change', next);
+        } } : {}),
+        ...(!selectValue&&listens('change')?{onChange:(event:React.ChangeEvent<HTMLElement>)=>{supplied.props.onChange?.(event);void run('change',eventValue(event));}}:{}),
+        ...(!selectValue&&listens('input')?{onInput:(event:React.FormEvent<HTMLElement>)=>{supplied.props.onInput?.(event);void run('input',eventValue(event));}}:{}),
         ...(listens('submit')?{onKeyDown:(event:React.KeyboardEvent<HTMLElement>)=>{if(event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();event.stopPropagation();void run('submit',eventValue(event));}else supplied.props.onKeyDown?.(event);}}:{}),
         ...(listens('focus')?{onFocus:(event:React.FocusEvent<HTMLElement>)=>{supplied.props.onFocus?.(event);common.onFocus(event);}}:{}),
         ...(listens('blur')?{onBlur:(event:React.FocusEvent<HTMLElement>)=>{supplied.props.onBlur?.(event);common.onBlur(event);}}:{}),

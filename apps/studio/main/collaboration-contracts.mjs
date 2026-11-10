@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { BlueprintPreviewInputSchema, BlueprintPreviewOutputSchema } from './collaboration-blueprints.ts';
+import { DialoguePreviewTargetSchema } from './collaboration-preview-target.ts';
 import {AssetTypeDescriptorSchema} from '@galcraft/plugins/contracts';
 import {ProcessorCandidateSchema} from '@galcraft/assets/processing';
 import {AssetTypeDataSchema,DebugScenarioSchema,FieldSpecSchema,IdSchema,PageKeySchema,VersionSchema} from '@galcraft/contracts';
@@ -79,17 +81,18 @@ const previewFields = {
   preview: PreviewInputSchema.optional(),
 };
 export const PreviewRequestSchema = z.union([
+  BlueprintPreviewInputSchema,
   obj({ ...previewFields, target: PositionSchema.optional() }),
   obj({
     ...previewFields,
-    target: PositionSchema.extend({ statementId: IdSchema }),
-    eventId: IdSchema.describe('Stable dialogue event ID within the selected statement.'),
-    expected: z.array(VersionRefSchema.extend({ ref: obj({ kind: z.literal('document'), id: IdSchema }) })).length(1)
+      ...DialoguePreviewTargetSchema.shape,
+      eventId: DialoguePreviewTargetSchema.shape.eventId.describe('Stable dialogue event ID within the selected statement.'),
+      expected: DialoguePreviewTargetSchema.shape.expected
       .describe('Current revision of the scene document containing the target statement.'),
   }),
 ]);
 const eventSource = SourceSchema.extend({ statementId: IdSchema, eventId: IdSchema }).optional();
-export const PreviewOutputSchema=union([action('observe',{reached:z.boolean(),snapshotId:s.nullable(),observed:PlayerObservationSchema,issues,eventSource}),action('state',{...previewBase,eventSource}),action('capture',{...previewBase,eventSource,page:s.nullable(),engineVersion:s.nullable(),pluginVersions:z.array(DependencySchema),renderedText:s,file:MediaFileSchema.nullable()})]);
+export const PreviewOutputSchema=union([BlueprintPreviewOutputSchema,action('observe',{reached:z.boolean(),snapshotId:s.nullable(),observed:PlayerObservationSchema,issues,eventSource}),action('state',{...previewBase,eventSource}),action('capture',{...previewBase,eventSource,page:s.nullable(),engineVersion:s.nullable(),pluginVersions:z.array(DependencySchema),renderedText:s,file:MediaFileSchema.nullable()})]);
 export const SessionSummarySchema=obj({sessionId:s,projectId:s,writeSessionId:s,projectName:s,goal:s,scopeRevision:count,scope:CollaborationScopeSchema,paused:z.boolean(),bindingValid:z.boolean(),generations:count,remainingGenerations:count.nullable()});
 export const sessionSummary=session=>({sessionId:session.id,projectId:session.projectId,writeSessionId:session.writeSessionId,projectName:session.projectName,goal:session.goal,scopeRevision:session.scopeRevision,scope:session.scope,paused:session.paused,bindingValid:session.bindingValid,generations:session.generations,remainingGenerations:session.scope.maxGenerations===null?null:Math.max(0,session.scope.maxGenerations-session.generations)});
 export const WorkflowSummarySchema=obj({id:s,name:s,revision:count,purpose:s,description:s,provider:provider.nullable(),operationIds:z.array(s),usages:z.array(s),allowed:z.boolean()});

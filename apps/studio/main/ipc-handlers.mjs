@@ -272,11 +272,11 @@ export function createStudioHandlers(host) {
       preparePageEdit: async (...args) => {
         const project=host.projects?.currentSession;if(!project)return fail('PROJECT_SESSION_MISSING','请先打开作品','M08');
         if(host.pageEditing)return ok(await host.pageEditing(args[0]));
-        const {preparePageEdit}=await import('@galcraft/templates/editor');return ok(preparePageEdit({documents:[...project.documents.values()],request:args[0]}));
+        const {prepareDirectPageEdit}=await import('./page-editing.ts');return ok(prepareDirectPageEdit([...project.documents.values()],args[0]));
       },
       preparePageStyleEdit: async (...args) => {
         const project=host.projects?.currentSession;if(!project)return fail('PROJECT_SESSION_MISSING','请先打开作品','M08');
-        const {preparePageStyleEdit}=await import('@galcraft/templates/style-editing');return ok(preparePageStyleEdit({documents:[...project.documents.values()],request:args[0]}));
+        const {prepareStudioPageStyleEdit}=await import('./page-editing.ts');return ok(prepareStudioPageStyleEdit([...project.documents.values()],args[0]));
       },
       compileStyle: async (...args) => {
         if (!host.operations) return fail('TEMPLATE_PROVIDER_UNAVAILABLE', '页面服务尚未就绪', 'M08');

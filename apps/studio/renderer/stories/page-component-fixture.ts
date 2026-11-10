@@ -14,7 +14,7 @@ export function componentSceneRequest(snapshot:Snapshot):PageEditInput {
     component.normal={fontSize:24,color:'#24364b'};
     if(kind==='text')component.content.text='雨站来信 · 标题署名';
     if(kind==='image')component.normal.images={decoration:{assetId:figureId,variantId:figureVariantId,mode:'contain',positionX:.5,positionY:.5,colorMode:'original',tint:null,opacity:1,slices:null,borders:null,fillCenter:false}};
-    if(kind==='button'){component.content.text='打开标题页';component.interactions=[{event:'click',actions:[{kind:'open',page:'title'}]}];component.normal.background={...snapshot.template.defaultVisual.background,color:'#2168a8',colorOpacity:1};component.normal.color='#ffffff';}
+    if(kind==='button'){component.content.text='打开标题页';component.interactions=[{event:'click',condition:{op:'truthy',value:{source:'local',path:'toggle'}},actions:[{kind:'open',page:'title'}]}];component.normal.background={...snapshot.template.defaultVisual.background,color:'#2168a8',colorOpacity:1};component.normal.color='#ffffff';}
     if(kind==='decoration')component.normal.background={...snapshot.template.defaultVisual.background,color:'#e4effb',colorOpacity:1};
     if(['input','slider','toggle','select','tabs'].includes(kind))component.bindings={value:{source:'local',path:kind}};
     if(kind==='toggle')component.content.text='显示署名';

@@ -11,6 +11,7 @@ export * from './weather-presets.js';
 export * from './template.js';
 export * from './runtime.js';
 export * from './ui.js';
+export * from './blueprint-validation.js';
 export * from './ui-authoring.js';
 export * from './diagnostics.js';
 export * from './generation.js';

@@ -1,11 +1,12 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "allowJs": true, "checkJs": false, "types": ["node"], "paths": {} },
+  "compilerOptions": { "allowJs": true, "checkJs": false, "allowImportingTsExtensions": true, "types": ["node"], "paths": {} },
   "include": [
     "desktop-bridge.ts", "desktop-shell.ts", "vite.main.config.ts", "vite.service.config.ts",
     "main/main.mts", "main/ipc-context.ts", "main/host.mjs", "main/ipc-handlers.mjs",
     "main/preload.cjs", "main/service-preload.cjs", "main/ipc-contract.test-d.ts", "main/service-preload-contract.test-d.ts",
-    "main/compiler-tasks.mjs", "main/compiler-utility.mjs",
+    "main/compiler-tasks.mjs", "main/compiler-utility.mjs", "main/style-worker.ts", "main/page-editing.ts",
+    "main/collaboration-blueprints.ts", "main/preview-capture-protocol.ts", "main/collaboration-preview-target.ts", "main/collaboration-preview.ts",
     "service/entry.mjs", "service/bridge-request.mjs", "service/workers.mjs", "service/worker-entry.mjs"
   ]
 }

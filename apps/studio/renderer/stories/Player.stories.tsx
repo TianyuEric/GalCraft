@@ -15,7 +15,7 @@ import '@galcraft/player-ui/player.css';
 const ok = <T,>(value: T) => ({ ok: true as const, value, warnings: [] });
 
 
-function PlayerPage({ leaveFailure=false,galleryCardMode,continuityCards=false,surfaceRefinement=false,opening=false,canvasFourByThree=false,inputBoundary=false,inlineDialogue=false,page, kind='standard', appearance='paper', contract=false, sample='full',portrait=false,clear=false,nameAbove=false,nameMode='unchanged', viewportBackground=false, backgroundFit='cover', nvl=false, rich=false, independentAvatar=false, readingRoundtrip=false }: {leaveFailure?:boolean;galleryCardMode?:'single'|'multipleOneUnlocked';continuityCards?:boolean;surfaceRefinement?:boolean;opening?:boolean;canvasFourByThree?:boolean;inputBoundary?:boolean;inlineDialogue?:boolean;readingRoundtrip?:boolean; nvl?:boolean; rich?:boolean; independentAvatar?:boolean; viewportBackground?:boolean; backgroundFit?:'cover'|'contain'; portrait?:boolean; clear?:boolean; nameAbove?:boolean; contract?:boolean; page: PageKey; kind?:OfficialTemplateKind; appearance?:'paper'|'night';sample?:'empty'|'partialSaves'|'selectionSaves'|'missingSaves'|'full'|'unlocked'|'longText'|'unbound'|'locked'|'partial'|'viewer'|'actual'|'playback:failed';nameMode?:'unchanged'|'fixed'|'custom' }) {
+function PlayerPage({ behaviorBlueprint=false,leaveFailure=false,galleryCardMode,continuityCards=false,surfaceRefinement=false,opening=false,canvasFourByThree=false,inputBoundary=false,inlineDialogue=false,page, kind='standard', appearance='paper', contract=false, sample='full',portrait=false,clear=false,nameAbove=false,nameMode='unchanged', viewportBackground=false, backgroundFit='cover', nvl=false, rich=false, independentAvatar=false, readingRoundtrip=false }: {behaviorBlueprint?:boolean;leaveFailure?:boolean;galleryCardMode?:'single'|'multipleOneUnlocked';continuityCards?:boolean;surfaceRefinement?:boolean;opening?:boolean;canvasFourByThree?:boolean;inputBoundary?:boolean;inlineDialogue?:boolean;readingRoundtrip?:boolean; nvl?:boolean; rich?:boolean; independentAvatar?:boolean; viewportBackground?:boolean; backgroundFit?:'cover'|'contain'; portrait?:boolean; clear?:boolean; nameAbove?:boolean; contract?:boolean; page: PageKey; kind?:OfficialTemplateKind; appearance?:'paper'|'night';sample?:'empty'|'partialSaves'|'selectionSaves'|'missingSaves'|'full'|'unlocked'|'longText'|'unbound'|'locked'|'partial'|'viewer'|'actual'|'playback:failed';nameMode?:'unchanged'|'fixed'|'custom' }) {
   const root = useRef<HTMLDivElement>(null), mounted=useRef<PlayerMount|null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -28,6 +28,43 @@ function PlayerPage({ leaveFailure=false,galleryCardMode,continuityCards=false,s
     let active = true;
     let dispose: (() => void) | undefined;
     const snapshot = productSnapshot(kind,appearance);
+    if (behaviorBlueprint && page === 'title') {
+      const title = snapshot.template.pages.find(page => page.key === 'title')!;
+      const parts = components(title.root), description = parts.find(part => part.part === 'title.description')!;
+      title.localState = { ...title.localState, continueFeedback: snapshot.project.description };
+      description.bindings = { text: { source: 'local', path: 'continueFeedback' } };
+      description.visible = true;
+      parts.find(part => part.part === 'title.menu.continue')!.interactions = [{ id: 'R3Con1', event: 'click', actions: [], blueprint: {
+        revision: 1, entry: 'R3Chk1', nodes: [
+          { id: 'R3Chk1', kind: 'condition', condition: { op: 'truthy', value: { source: 'data', path: 'save.canContinue' } } },
+          { id: 'R3Res1', kind: 'action', action: { kind: 'official', action: { kind: 'continue' } } },
+          { id: 'R3Msg1', kind: 'action', action: { kind: 'setLocal', key: 'continueFeedback', value: { source: 'literal', value: '还没有可继续的进度' } } },
+        ], edges: [
+          { id: 'R3Edg1', from: 'R3Chk1', outcome: 'success', to: 'R3Res1' },
+          { id: 'R3Edg2', from: 'R3Chk1', outcome: 'unmet', to: 'R3Msg1' },
+        ],
+      } }];
+      snapshot.template.animations.push({ id: 'R3Fade', version: 1, name: 'Load button fade', reduced: 'finish', segments: [
+        { durationMs: 0, opacity: 1, easing: { family: 'linear', direction: 'in' } },
+        { durationMs: 250, opacity: .4, easing: { family: 'linear', direction: 'in' } },
+      ] });
+      parts.find(part => part.part === 'title.menu.load')!.interactions = [{ id: 'R3Ani1', event: 'click', actions: [], blueprint: {
+        revision: 1, entry: 'R3Ani2', nodes: [
+          { id: 'R3Ani2', kind: 'animation', animationId: 'R3Fade' },
+          { id: 'R3Nav1', kind: 'action', action: { kind: 'open', page: 'load' } },
+        ], edges: [{ id: 'R3Edg3', from: 'R3Ani2', outcome: 'success', to: 'R3Nav1' }],
+      } }];
+    }
+    if (behaviorBlueprint && page === 'settings') {
+      const settings = snapshot.template.pages.find(page => page.key === 'settings')!, parts = components(settings.root);
+      settings.localState = { ...settings.localState, selectionFeedback: '设置' };
+      parts.find(part => part.part === 'settings.title')!.bindings = { text: { source: 'local', path: 'selectionFeedback' } };
+      parts.find(part => part.part === 'settings.select.trigger')!.interactions = [{ id: 'R3Sel1', event: 'change', actions: [], blueprint: {
+        revision: 1, entry: 'R3Sel2', nodes: [{ id: 'R3Sel2', kind: 'action', action: {
+          kind: 'setLocal', key: 'selectionFeedback', value: { source: 'event', path: 'value' },
+        } }], edges: [],
+      } }];
+    }
     if(surfaceRefinement){
       const panel=components(snapshot.template.pages.find(page=>page.key==='story')!.root).find(item=>item.part==='story.readingPanel')!;
       panel.normal.background={...snapshot.template.defaultVisual.background,color:'#243b61',colorOpacity:.9};panel.normal.color='#ffffff';panel.content.portrait=true;
@@ -94,6 +131,21 @@ function PlayerPage({ leaveFailure=false,galleryCardMode,continuityCards=false,s
     }
 
     if(['cg','music'].includes(page))prepareGallerySample(snapshot,sample);
+    if (behaviorBlueprint && page === 'cg') {
+      const gallery = snapshot.template.pages.find(page => page.key === 'cg')!, parts = components(gallery.root);
+      gallery.localState = { ...gallery.localState, lockFeedback: '图像与影片鉴赏' };
+      parts.find(part => part.part === 'cg.header')!.bindings = { text: { source: 'local', path: 'lockFeedback' } };
+      parts.find(part => part.part === 'cg.grid.item')!.interactions = [{ id: 'R3Gal1', event: 'click', actions: [], blueprint: {
+        revision: 1, entry: 'R3Gal2', nodes: [
+          { id: 'R3Gal2', kind: 'condition', condition: { op: 'truthy', value: { source: 'item', path: 'locked' } } },
+          { id: 'R3Gal3', kind: 'action', action: { kind: 'setLocal', key: 'lockFeedback', value: { source: 'literal', value: '该条目尚未解锁' } } },
+          { id: 'R3Gal4', kind: 'action', action: { kind: 'official', action: { kind: 'openCg', entryId: snapshot.gallery.find(entry => entry.kind === 'cg')!.id }, bindings: { entryId: { source: 'item', path: 'id' } } } },
+        ], edges: [
+          { id: 'R3Gal5', from: 'R3Gal2', outcome: 'success', to: 'R3Gal3' },
+          { id: 'R3Gal6', from: 'R3Gal2', outcome: 'unmet', to: 'R3Gal4' },
+        ],
+      } }];
+    }
     if(galleryCardMode){const entry=snapshot.gallery.find(item=>item.kind==='cg')!;if(galleryCardMode==='single')entry.differences=entry.differences?.slice(0,1);for(const diff of entry.differences??[])diff.assetId=FixtureIds.background;}
     if(continuityCards)for(const [index,character] of snapshot.characters.entries()){character.narrativeRole='main';character.afterstory={id:createId(),title:'雨后重逢',entry:{sceneId:snapshot.scenes[0]!.scene.id,labelId:null},unlockEndingIds:[index===0?'continuity-open':'continuity-locked'],initialProgress:{},lockedView:'locked',presentation:{figure:{assetId:figureId,variantId:figureVariantId},crop:{x:0,y:0,width:1,height:1},order:index}};}
     const contributions=emptyContributions();
@@ -146,7 +198,7 @@ function PlayerPage({ leaveFailure=false,galleryCardMode,continuityCards=false,s
       element.dataset.playerReady = page;if(opening)await result.value.view.previewStartup('startup');
     }).catch(reason => { if (active) setError(String(reason)); });
     return () => { active = false; element.remove(); mounted.current = null; queueMicrotask(() => dispose?.()); };
-  }, [leaveFailure,page,kind,appearance,contract,sample,nameMode,portrait,clear,nameAbove,viewportBackground,backgroundFit,nvl,rich,independentAvatar,readingRoundtrip,canvasFourByThree,inputBoundary,inlineDialogue,surfaceRefinement,opening,galleryCardMode,continuityCards]);
+  }, [behaviorBlueprint,leaveFailure,page,kind,appearance,contract,sample,nameMode,portrait,clear,nameAbove,viewportBackground,backgroundFit,nvl,rich,independentAvatar,readingRoundtrip,canvasFourByThree,inputBoundary,inlineDialogue,surfaceRefinement,opening,galleryCardMode,continuityCards]);
   return <>{surfaceRefinement&&<nav aria-label="阅读与开屏检查"><button onClick={()=>mounted.current?.view.navigation.open('settings')}>阅读设置</button><button onClick={()=>{const player=mounted.current;if(player)void player.view.newGame();}}>正式阅读</button><button onClick={()=>{const player=mounted.current;if(player&&!player.session.inspect())void player.view.previewStartup('startup');}}>预览开屏</button></nav>}{contract&&<nav aria-label="Contract controls"><button onClick={()=>{const player=mounted.current;if(player)void player.data.savePreferences({...player.data.current()!.preferences,fontScale:1.5},player.data.current()!.preferences.revision).then(()=>player.view.render());}}>Font 150%</button><button onClick={()=>mounted.current?.view.navigation.open('org.galcraft.test/relations')}>Plugin</button><button onClick={()=>mounted.current?.view.navigation.open('confirm')}>Confirm</button><button onClick={()=>mounted.current?.view.navigation.open('story')}>Story</button></nav>}{error && <div className="product-story-error" role="alert">{error}</div>}<div ref={root} className="product-story player-story" /></>;
 }
 
@@ -155,6 +207,18 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Title: Story = { args: { page: 'title' } };
+export const TitleBehaviorBlueprint: Story = {
+  args: { page: 'title', behaviorBlueprint: true },
+  play: async ({ canvas, canvasElement }) => {
+    await waitFor(() => expect(canvasElement.querySelector('[data-player-ready="title"]')).not.toBeNull(), { timeout: 10000 });
+    const continueButton = canvasElement.querySelector<HTMLButtonElement>('[data-gc-part="title.menu.continue"]')!;
+    await userEvent.click(continueButton);
+    await waitFor(() => expect(canvas.getByText('还没有可继续的进度')).toBeVisible());
+    const loadButton = canvasElement.querySelector<HTMLButtonElement>('[data-gc-part="title.menu.load"]')!;
+    await userEvent.click(loadButton);
+    await waitFor(() => expect(canvasElement.querySelector('[data-gc-page="load"]')).toBeVisible());
+  },
+};
 export const Reading: Story = { args: { page: 'story' } };
 export const InlineDialogueWait: Story = {
   args: { page: 'story', inlineDialogue: true },
@@ -191,6 +255,29 @@ export const Flow: Story = { args: { page: 'flow',kind:'rich' }, play:async({can
 export const FlowNight: Story = { args: { page:'flow',kind:'rich',appearance:'night' } };
 export const Choice: Story = { args: { page:'choice' } };
 export const Gallery: Story = { args: { page:'cg' } };
+export const GalleryBehaviorBlueprint: Story = {
+  args: { page: 'cg', sample: 'partial', behaviorBlueprint: true },
+  play: async ({ canvasElement }) => {
+    await waitFor(() => expect(canvasElement.querySelector('[data-player-ready="cg"]')).not.toBeNull(), { timeout: 10000 });
+    const locked = canvasElement.querySelector<HTMLButtonElement>('[data-gc-part="cg.grid.item"][data-locked="true"]')!;
+    const unlocked = canvasElement.querySelector<HTMLButtonElement>('[data-gc-part="cg.grid.item"][data-locked="false"]')!;
+    await userEvent.click(locked);
+    await waitFor(() => expect(canvasElement.querySelector('[data-gc-part="cg.header"]')).toHaveTextContent('该条目尚未解锁'));
+    expect(canvasElement.querySelector('.gc-gallery-viewer')).toBeNull();
+    await userEvent.click(unlocked);
+    await waitFor(() => expect(canvasElement.querySelector('.gc-gallery-viewer')).toBeVisible());
+  },
+};
+export const SettingsSelectionBlueprint: Story = {
+  args: { page: 'settings', behaviorBlueprint: true },
+  play: async ({ canvas, canvasElement }) => {
+    await waitFor(() => expect(canvasElement.querySelector('[data-player-ready="settings"]')).not.toBeNull(), { timeout: 10000 });
+    const trigger = canvas.getByRole('combobox');
+    await userEvent.click(trigger);
+    await userEvent.click(canvas.getAllByRole('option')[1]!);
+    await waitFor(() => expect(canvasElement.querySelector('[data-gc-part="settings.title"]')).toHaveTextContent('all'));
+  },
+};
 export const Music: Story = { args: { page:'music' } };
 export const UnlockedMusic:Story={args:{page:'music',sample:'unlocked'}};
 export const Characters: Story = { args: { page:'characters',kind:'rich' } };

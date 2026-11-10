@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { IdSchema, JsonSchema } from './common.js';
-import { BackgroundSchema, ComponentConfigSchema, LayoutSchema, UIAnimationSchema, VisualSchema } from './template.js';
-import { BasicComponentKindSchema, PageKeySchema, UIInteractionSchema, UIRepeatSchema, UIValueBindingSchema } from './ui.js';
+import { BackgroundSchema, ComponentConfigSchema, LayoutSchema, NamedStyleSchema, UIAnimationSchema, VisualSchema } from './template.js';
+import { BasicComponentKindSchema, BlueprintAddressSchema, PageBlueprintSchema, PageKeySchema, UIEventSchema, UIInteractionSchema, UIRepeatSchema, UIValueBindingSchema } from './ui.js';
 const LayoutChangesSchema = z.strictObject(LayoutSchema.shape).partial();
 
 export const ComponentChangesSchema = z.strictObject({
@@ -13,6 +13,10 @@ export const ComponentChangesSchema = z.strictObject({
   options: z.array(z.strictObject({ value: z.string(), label: z.string() })).optional(),
   animations: z.record(z.enum(['enter', 'exit', 'show', 'hide', 'hover', 'focus', 'pressed']), IdSchema).optional(),
 });
+const blueprintCreate = BlueprintAddressSchema.extend({ kind: z.literal('blueprint.create'), event: UIEventSchema, graph: PageBlueprintSchema });
+const blueprintConvert = z.strictObject({ kind: z.literal('blueprint.convert'), pageId: IdSchema, componentId: IdSchema, bindingIndex: z.number().int().nonnegative(), binding: UIInteractionSchema });
+const blueprintApply = BlueprintAddressSchema.extend({ kind: z.literal('blueprint.apply'), graph: PageBlueprintSchema });
+export const BlueprintEditOperationSchema = z.discriminatedUnion('kind', [blueprintCreate, blueprintConvert, blueprintApply]);
 export const PageEditOperationSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('page.create'), id: IdSchema.optional(), key: PageKeySchema, title: z.string(), root: ComponentConfigSchema.optional() }),
   z.strictObject({ kind: z.literal('page.update'), pageId: IdSchema, titleKey: z.string().optional(), background: BackgroundSchema.optional(), layout: LayoutChangesSchema.optional(), localState: z.record(z.string(), JsonSchema).optional() }),
@@ -28,6 +32,7 @@ export const PageEditOperationSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('component.remove'), pageId: IdSchema, componentIds: z.array(IdSchema).min(1) }),
   z.strictObject({ kind: z.literal('component.reparent'), pageId: IdSchema, componentIds: z.array(IdSchema).min(1), parentId: IdSchema, index: z.number().int().nonnegative().optional() }),
   z.strictObject({ kind: z.literal('component.reorder'), pageId: IdSchema, componentId: IdSchema, index: z.number().int().nonnegative() }),
+  blueprintCreate, blueprintConvert, blueprintApply,
   z.strictObject({ kind: z.literal('animation.upsert'), animation: UIAnimationSchema }),
   z.strictObject({ kind: z.literal('animation.remove'), animationId: IdSchema, unbind: z.boolean().optional() }),
   z.strictObject({ kind: z.literal('style.remove'), styleId: IdSchema, unbind: z.boolean().optional() }),
@@ -35,6 +40,10 @@ export const PageEditOperationSchema = z.discriminatedUnion('kind', [
 export type PageEditOperation = z.infer<typeof PageEditOperationSchema>;
 export const PageEditInputSchema = z.strictObject({ label: z.string().min(1), operations: z.array(PageEditOperationSchema).min(1) });
 export type PageEditInput = z.infer<typeof PageEditInputSchema>;
+export const StyleCompileInputSchema = z.strictObject({
+  style: NamedStyleSchema, source: z.string(), instanceId: IdSchema,
+  modules: z.record(z.string(), z.string()).optional(), lastValidCss: z.string().optional(),
+});
 export const StyleEditInputSchema = z.strictObject({
   label: z.string().min(1), styleId: IdSchema.optional(), name: z.string().min(1), pageId: IdSchema, componentId: IdSchema.nullable(),
   language: z.enum(['css', 'scss']), activation: z.enum(['page', 'command']), source: z.string(),

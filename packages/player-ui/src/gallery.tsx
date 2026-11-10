@@ -121,6 +121,11 @@ export function GalleryPage(p: Props) {
         const rendered=projection.render(component,children,context);
         return React.isValidElement<{style?:React.CSSProperties}>(rendered)?React.cloneElement(rendered,{style:{...rendered.props.style,flex:'1 1 0',minHeight:0,minWidth:0}}):rendered;
       }
+      if (component.part === 'cg.grid.item' && component.interactions?.some(binding => binding.event === 'click' && binding.blueprint)) {
+        const rendered = projection.render(component, children, context);
+        return React.isValidElement<{ disabled?: boolean; onDoubleClick?: () => void }>(rendered)
+          ? React.cloneElement(rendered, { disabled: false, onDoubleClick: undefined }) : rendered;
+      }
       if(musicPart==='music.list.item.title'){const rendered=projection.render(component,children,context);return React.isValidElement<{style?:React.CSSProperties;title?:string}>(rendered)?React.cloneElement(rendered,{title:(context.item as {name?:string;locked?:boolean})?.locked?undefined:(context.item as {name?:string})?.name,style:{...rendered.props.style,flex:'1 1 0',minWidth:0,width:'auto',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}):rendered;}
       if(musicPart==='music.player')return <section className="gc-gallery-player"><h3>{selectedMusic?.name??t('选择曲目后播放','Select a track to play','曲を選択して再生')}</h3><p role="status">{staticPlayback?statuses[p.sample!.slice(9) as keyof typeof statuses]:statuses[audio.audition.state]}{audio.audition.error&&` · ${audio.audition.issue?localizeIssue(audio.audition.issue,p.language):audio.audition.error}`}</p>{audio.audition.issue&&<details><summary>{t('诊断详情','Diagnostic details','診断の詳細')}</summary><pre>{issueDetails(audio.audition.issue)}</pre></details>}{children}<label className="gc-gallery-loop"><input type="checkbox" checked={audio.audition.loop} onChange={event=>audio.setAuditionLoop(event.target.checked)}/>{t('循环','Loop','ループ')}</label></section>;
       if(musicPart==='music.player.volume')return <label className="gc-gallery-volume">{t('音乐音量','Music volume','音楽の音量')}<input aria-label={t('音乐音量','Music volume','音楽の音量')} type="range" min="0" max="1" step="0.05" value={audio.audition.volume??1} onChange={event=>audio.setAuditionVolume(Number(event.target.value))}/>{children}</label>;

@@ -75,8 +75,8 @@ function setup(initial: ReturnType<typeof fixture>) {
   const compile = vi.fn(async (_input: Parameters<typeof compileStyle>[0]): Promise<{ ok: boolean; value?: ReturnType<typeof compileStyle>; error?: { message: string }; issues: [] }> =>
     ({ ok: false, error: { message: 'stop before applying' }, issues: [] }));
   let undoDocuments = current;
-  const designer = Object.assign(Object.create(PageDesigner.prototype), { root, locale: 'zh-CN', page: 'title', template: initial.template,
-    documents: current, selected: new Set(), styleDrafts: {}, styleEditors: new Map(), canvas: new Element(), notice: new Element(),
+  const designer = Object.assign(Object.create(PageDesigner.prototype), { root, center, locale: 'zh-CN', page: 'title', template: initial.template,
+    documents: current, selected: new Set(), styleDrafts: {}, styleDraftOptions: {}, styleEditors: new Map(), canvas: new Element(), notice: new Element(),
     lastUndo: initial.style.id, redoPlan: null, changed: async () => {}, drawTree: () => {}, drawInspector: () => {}, preview: async () => {},
     services: { compileStyle: compile, bridge: { documents: {
       list: async () => ({ ok: true, value: current }), planUndo: async () => ({ ok: true, value: { planId: 'style-undo' } }),

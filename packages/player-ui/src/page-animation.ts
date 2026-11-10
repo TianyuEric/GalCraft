@@ -26,15 +26,17 @@ export class PageTransition {
   }
   cancel(){this.generation++;for(const animation of this.animations)animation.cancel();this.animations.clear();if(this.lockedElement)this.lockedElement.inert=false;this.lockedElement=null;this.busy=false;}
   async play(element:HTMLElement,definition:UIAnimation|undefined,reduced:boolean,duration?:number,scale=1,retain=false){
-    if(!definition||!element.animate)return;
+    if(!definition)return true;
     const data=animationFrames(definition,reduced,scale),ms=reduced?data.duration:duration??data.duration;
     const base=element.style.transform;
     if(base&&base!=='none')data.frames=data.frames.map(frame=>frame.transform?{...frame,transform:`${base} ${frame.transform}`}:frame);
     if(this.interrupted&&data.frames.length){data.frames[0]={...data.frames[0],...this.interrupted,offset:0};this.interrupted=null;}
-    if(!ms||!data.frames.length)return;
+    if(!ms||!data.frames.length)return true;
+    if(!element.animate)return false;
     const animation=element.animate(data.frames,{duration:ms,fill:'both'});this.animations.add(animation);
     let completed=false;
     try{await animation.finished;completed=true;}catch{}finally{if(!retain||!completed){animation.cancel();this.animations.delete(animation);}}
+    return completed;
   }
   async navigate(element:HTMLElement,exit:UIAnimation|undefined,change:()=>void,enter:()=>UIAnimation|undefined,reduced:boolean,duration?:number,scale=1){
     if(this.busy)return false;this.busy=true;const generation=++this.generation;this.lockedElement=element;element.inert=true;

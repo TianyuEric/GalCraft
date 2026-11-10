@@ -62,8 +62,10 @@ export type AuthoringWorkbenchProps = {
   create(kind: 'chapter' | 'scene', parent?: string): Promise<void>;
   entryPresentation?(kind: 'chapter' | 'scene', id: string): void;
   sceneDecor?(id: string): void;
-  pageNodes?: WorkbenchTreeNode[]; pageOpen?(id: string, pinned: boolean): void;
+  pageNodes?: WorkbenchTreeNode[]; pageKey?: string; pageOpen?(id: string, pinned: boolean): void;
+  preparePageDirectory?(): void;
   componentNodes?: WorkbenchTreeNode[]; componentSelect?(ids: string[]): void;
+  pageOutline?: { key: string; title: string; selected: string[]; inspector: HTMLElement; tools: HTMLElement };
   componentMove?(ids:string[],parent:string):void;componentRename?(id:string,name:string):Promise<string|void>;
   confirm?: { title: string; description: ReactNode; cancelLabel?: string; actions: { label: string; tone?: 'primary' | 'danger'; run(): void | Promise<void> }[]; close(): void } | null;
 };
@@ -72,6 +74,7 @@ export const authoringDockTools = {
   outline: 'studio-outline', search: 'studio-search', inspector: 'studio-inspector', problems: 'studio-problems',
   stage: 'studio-stage', empty: 'studio-empty', assetDirectory: 'studio-asset-directory',
   assetInspector: 'studio-asset-inspector', assets: 'studio-assets', characters: 'studio-character-directory',
+  pageDirectory: 'studio-page-directory', pageOutline: 'studio-page-outline',
 } as const;
 const dockTools = authoringDockTools;
 const sceneCompanionId = (documentId: string) => `studio-beside:${documentId}`;
@@ -150,19 +153,23 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     { label: scope.length > 1 ? t(`所选 ${scope.length} 项`,`${scope.length} selected`,`${scope.length} 件を選択`) + (hidden ? t(` · 隐藏 ${hidden} 项`,` · ${hidden} hidden`,`・${hidden} 件非表示`) : '') : '', actions: source?.project.chapters.map(chapter => ({ label: t(`移动到 ${chapter.name}`,`Move to ${chapter.name}`,`${chapter.name} へ移動`), disabled: scope.some(id => !source.scenes.some(scene => scene.sceneId === id)) ? t('选区包含章节，不能作为场景移动','Selection contains a chapter; select scenes to move','選択にチャプターが含まれています。シーンを選択してください') : undefined, run: () => void props.move(scope, chapter.id) })) ?? [] },
   ]}/>{objectTools}</div></>
   const localSelected = props.contextSelected ?? [];
-  const contextNavigation = props.page === 'pages' && props.pageNodes ? <>
+  const pageDirectory = props.pageNodes ? <div className="gc-page-directory">
       <h3 className="gc-wb-tree-section-title">{t('启动与主页','Startup & home','起動とホーム')}</h3>
       <ObjectTree nodes={[{ id: 'startup', name: t('开屏序列与主页媒体','Startup sequence & home media','起動シーケンスとホームメディア'), icon: <Layers/> }]} selected={localSelected} label={t('启动与主页','Startup & home','起動とホーム')} onSelect={() => {}} onOpen={(_id,pinned)=>props.open({id:'startup',kind:'startup',title:t('启动与主页','Startup & home','起動とホーム'),preview:!pinned})}/>
       <h3 className="gc-wb-tree-section-title">{t('页面','Pages','ページ')}</h3>
-      <ObjectTree nodes={props.pageNodes.filter(node=>!node.id.startsWith('@')&&node.id!=='gallery-content')} selected={localSelected} label={t('Player 页面','Player pages','Player ページ')} onSelect={() => {}} onOpen={(id,pinned)=>props.pageOpen?.(id,pinned)}/>
-      {props.active !== 'startup' && props.componentNodes && <><h3 className="gc-wb-tree-section-title">{t('当前页组件','Current page components','現在のページの部品')}</h3><ObjectTree nodes={props.componentNodes} selected={localSelected} label={t('页面组件','Page components','ページのコンポーネント')} onSelect={ids => props.componentSelect?.(ids)} onOpen={id => props.componentSelect?.([id])} onMoveMany={props.componentMove} onRename={props.componentRename}/></>}
-      <DomRegion node={props.explorer}/>
+      <ObjectTree nodes={props.pageNodes.filter(node=>!node.id.startsWith('@')&&node.id!=='gallery-content')} selected={props.pageKey ? [props.pageKey] : []} active={props.pageKey} label={t('Player 页面','Player pages','Player ページ')} onSelect={() => {}} onOpen={(id,pinned)=>props.pageOpen?.(id,pinned)}/>
       <h3 className="gc-wb-tree-section-title">{t('共享样式与动画','Shared styles & animations','共有スタイルとアニメーション')}</h3>
       <ObjectTree nodes={props.pageNodes.filter(node=>node.id.startsWith('@style:')||node.id.startsWith('@draft:')||node.id==='@animations')} selected={localSelected} label={t('共享样式与动画','Shared styles & animations','共有スタイルとアニメーション')} onSelect={() => {}} onOpen={(id,pinned)=>props.pageOpen?.(id,pinned)}/>
       <h3 className="gc-wb-tree-section-title">{t('鉴赏内容与模板','Gallery & templates','鑑賞コンテンツとテンプレート')}</h3>
       <ObjectTree nodes={props.pageNodes.filter(node=>node.id==='@templates'||node.id==='gallery-content')} selected={localSelected} label={t('鉴赏内容与模板','Gallery & templates','鑑賞コンテンツとテンプレート')} onSelect={() => {}} onOpen={(id,pinned)=>props.pageOpen?.(id,pinned)}/>
-    </>
-    : props.explorer ? <DomRegion node={props.explorer}/> : null;
+    </div> : <p className="gc-dock-missing-view" role="status">{t('正在读取作品页面…','Reading project pages…','作品のページを読み込んでいます…')}</p>;
+  const pageOutline = props.pageOutline ? <div className="gc-page-outline" data-page-outline={props.pageOutline.key}>
+      <h3 className="gc-wb-tree-section-title" title={props.pageOutline.title}>{props.pageOutline.title}</h3>
+      <ObjectTree key={props.pageOutline.key} nodes={props.componentNodes ?? []} selected={props.pageOutline.selected} label={t('页面组件','Page components','ページのコンポーネント')} onSelect={ids => props.componentSelect?.(ids)} onOpen={id => props.componentSelect?.([id])} onMoveMany={props.componentMove} onRename={props.componentRename}/>
+      <DomRegion node={props.pageOutline.tools}/>
+      <DomRegion node={props.pageOutline.inspector}/>
+    </div> : <p className="gc-dock-missing-view" role="status">{t('打开一个页面以查看组件与属性。','Open a page to see its components and properties.','ページを開くと、部品とプロパティが表示されます。')}</p>;
+  const contextNavigation = props.explorer ? <DomRegion node={props.explorer}/> : null;
   const explorerTitle = t('剧情目录','Plot outline','プロット一覧');
   const waitingForAssets = <p className="gc-dock-missing-view" role="status">{t('正在准备作品素材…','Preparing project assets…','作品素材を準備しています…')}</p>;
   const tools = {
@@ -175,6 +182,8 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     [dockTools.assetInspector]: { title: t('素材属性','Asset properties','素材プロパティ'), icon: <SlidersHorizontal/>, zone: 'right', allowedZones: sidebarZones, content: props.assetInspector ? <DomRegion node={props.assetInspector}/> : waitingForAssets },
     [dockTools.assets]: { title: t('素材库','Asset library','素材ライブラリ'), icon: <Images/>, zone: 'bottom', allowedZones: problemZones, content: props.assetLibrary ? <DomRegion node={props.assetLibrary}/> : waitingForAssets },
     [dockTools.characters]: { title: t('角色目录','Character directory','キャラクター一覧'), icon: <UsersRound/>, zone: 'left', allowedZones: sidebarZones, content: <DomRegion node={props.characterExplorer}/> },
+    [dockTools.pageDirectory]: { title: t('页面目录','Page directory','ページ一覧'), icon: <Layers/>, zone: 'left', allowedZones: sidebarZones, content: pageDirectory },
+    [dockTools.pageOutline]: { title: t('页面大纲','Page outline','ページ構成'), icon: <ListTree/>, zone: 'right', allowedZones: sidebarZones, content: pageOutline },
   } satisfies Record<string, { title: string; icon: ReactNode; zone: Zone; allowedZones: readonly Zone[]; content: ReactNode }>;
   const tool = (id: string) => tools[id as keyof typeof tools];
   const active = centralViewId(props.active);
@@ -182,7 +191,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
   const companionView = (id: string) => id === besideId ? props.beside : props.retainedCompanions?.get(id);
   const retainStowedView = (id: string) => Boolean(companionView(id)) || props.documents.some(doc => doc.kind === 'scene' && doc.id !== active && sceneCompanionId(doc.id) === id);
   const documentViews = props.documents.some(doc => doc.id === active) ? props.documents : [...props.documents, { id: active }];
-  const projectTools: readonly string[] = [dockTools.search, dockTools.assetDirectory, dockTools.assetInspector, dockTools.assets, dockTools.characters];
+  const projectTools: readonly string[] = [dockTools.search, dockTools.assetDirectory, dockTools.assetInspector, dockTools.assets, dockTools.characters, dockTools.pageDirectory, dockTools.pageOutline];
   const viewIds = [...new Set([...documentViews.map(doc => doc.id), ...Object.keys(tools).filter(id => source || !projectTools.includes(id)), ...(props.retainedCompanions?.keys() ?? []), ...(besideId ? [besideId] : [])])];
   const otherDocuments = documentViews.filter(doc => doc.id !== active).map(doc => doc.id);
   const toPresetView = (id: string, restoring: boolean) => {
@@ -221,6 +230,11 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
       props.dock.current?.openCombination(tools, target ? {} : { focusOrder: tools });
       if (target && props.openCharacterDifference) invoke(() => props.openCharacterDifference!(target));
     } },
+    { id: 'build-pages', label: t('页面搭建','Page building','ページ制作'), disabled: !source, run: () => {
+      props.preparePageDirectory?.();
+      const tools = [dockTools.pageDirectory, dockTools.pageOutline];
+      props.dock.current?.openCombination(tools, props.pageOutline ? {} : { focusOrder: tools });
+    } },
   ];
   const presets: StudioChromeMenuItem[] = [
     { id: 'balanced', label: t('平衡布局','Balanced layout','標準レイアウト'), run: () => props.dock.current?.preset('balanced') },
@@ -233,6 +247,8 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     { id: 'show-assets', label: t('显示素材库','Show asset library','素材ライブラリを表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.assets) },
     { id: 'show-asset-inspector', label: t('显示素材属性','Show asset properties','素材プロパティを表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.assetInspector) },
     { id: 'show-characters', label: t('显示角色目录','Show character directory','キャラクター一覧を表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.characters) },
+    { id: 'show-page-directory', label: t('显示页面目录','Show page directory','ページ一覧を表示'), disabled: !source, run: () => { props.preparePageDirectory?.(); props.dock.current?.open(dockTools.pageDirectory); } },
+    { id: 'show-page-outline', label: t('显示页面大纲','Show page outline','ページ構成を表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.pageOutline) },
     { id: 'save-layout', label: t('保存命名布局…','Save named layout…','レイアウトに名前を付けて保存…'), disabled: !source, separatorBefore: true, run: () => { setLayoutName(''); setNamingLayout(true); } },
     ...Object.keys(namedLayouts).flatMap(name => [
       { id: `layout:${name}`, label: name, disabled: !source, run: () => props.dock.current?.restorePreset(name) },
@@ -245,7 +261,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
       {props.notice && <div className="gc-studio-workbench-notice">{props.notice}</div>}
       <DockWorkspace key={source?.project.projectId ?? 'library'} ref={props.dock} locale={props.locale} initial="writing"
         activeView={active} documentViews={documentViews} viewIds={viewIds}
-        companion={besideId ? { id: besideId, document: active } : undefined}
+        companion={besideId ? { id: besideId, document: active, preserveSidebars: active.startsWith('page:') } : undefined}
         retainStowedView={retainStowedView}
         createDefaultLayout={preset => initialDock(props, preset)}
         initialLayout={validLayout(props.dockLayout) ? prune(props.dockLayout) : undefined}
@@ -259,6 +275,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
         icon={id => tool(id)?.icon ?? (props.documents.find(document => document.id === id)?.kind === 'page' ? <Layers/> : <FileText/>)}
         zone={id => tool(id)?.zone ?? 'center'}
         allowedZones={id => tool(id)?.allowedZones ?? editorZones}
+        minSize={id => ({ width: /^(studio-beside:)?page:/.test(id) ? 360 : 480, height: 240 })}
         canCloseView={id => id !== dockTools.empty}
         canSplitView={id => Boolean(companionView(id)) || id === dockTools.stage || props.documents.some(document => document.id === id && ['scene', 'asset', 'character'].includes(document.kind))}
         isPlaceholder={id => id === dockTools.empty}
@@ -266,6 +283,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
         status={id => ({ dirty: props.documents.find(document => document.id === id)?.dirty })}
         onActivate={(id, reason) => {
           if (id === dockTools.inspector) props.inspectorShown?.();
+          if (id === dockTools.pageDirectory && !props.pageNodes) props.preparePageDirectory?.();
           companionView(id)?.activate();
           if (id === active && reason === 'tab') props.activateScenePane?.();
           const document = props.documents.find(item => item.id === id);

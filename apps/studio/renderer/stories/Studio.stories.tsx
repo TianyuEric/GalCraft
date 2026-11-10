@@ -115,8 +115,6 @@ export const PageDesignerDark:Story={args:{page:'pages',theme:'dark'}};
 export const PageComponents:Story={args:{page:'pages',components:true},play:async({canvas,canvasElement})=>{
   const target = () => canvasElement.querySelector<HTMLElement>('[data-view="page:component-workspace"]');
   await waitFor(() => expect(target()).toBeVisible());
-  const document = within(target()!);
-  await userEvent.click(await document.findByText('当前文档工具', { exact: true }));
   const tree=()=>within(canvas.getByRole('tree',{name:'页面组件'}));
   await waitFor(() => expect(tree().getByText('基础组件工作页')).toBeVisible());
   const expand = tree().queryByRole('button', { name: '展开 基础组件工作页' });
@@ -146,7 +144,6 @@ export const PageComponents:Story={args:{page:'pages',components:true},play:asyn
   await userEvent.click(canvas.getByRole('button',{name:'应用交互'}));
   await waitFor(()=>expect(previousAction.isConnected).toBe(false));
   await waitFor(()=>expect(canvasElement.querySelector('[data-action-index="0"] select[aria-label="动作类型"]')).toHaveValue('setLocal'));
-  await userEvent.click(document.getByText('当前文档工具', { exact: true }));
   await userEvent.click(canvas.getByRole('button',{name:'导航预览'}));
   await waitFor(() => {
     const player = canvasElement.querySelector<HTMLElement>('.designer-player[aria-hidden="false"][data-preview-status="ready"]');
@@ -157,6 +154,39 @@ export const PageComponents:Story={args:{page:'pages',components:true},play:asyn
   canvasElement.dataset.bindingAcceptance='passed';
 }};
 export const PageComponentsDark:Story={args:{page:'pages',components:true,theme:'dark'}};
+export const PageBehaviorBlueprint: Story = {
+  args: { page: 'pages', components: true },
+  play: async ({ canvas, canvasElement }) => {
+    const outline = within(await canvas.findByRole('tree', { name: '页面组件' }));
+    await userEvent.click(await outline.findByText('标题页导航', { exact: true }));
+    await userEvent.click(canvas.getByRole('button', { name: '画布与行为并排' }));
+    const graph = within(await canvas.findByRole('region', { name: '页面行为蓝图' }));
+    await userEvent.click(graph.getByRole('button', { name: '转为蓝图 · 点击 1' }));
+    await expect(await graph.findByText('已应用 · r1')).toBeVisible();
+    const edge = (outcome: string) => canvasElement.querySelector<SVGPathElement>(`.gc-blueprint-edge-${outcome} .react-flow__edge-path`);
+    const alternate = graph.getByRole('combobox', { name: '条件不满足' });
+    const target = await within(alternate).findByRole('option', { name: /^动作 · / }) as HTMLOptionElement;
+    await userEvent.selectOptions(alternate, target.value);
+    await waitFor(() => {
+      const success = edge('success');
+      const unmet = edge('unmet');
+      if (!success || !unmet) throw new Error('Both outcomes must render an edge.');
+      const first = success.getPointAtLength(success.getTotalLength() / 2);
+      const second = unmet.getPointAtLength(unmet.getTotalLength() / 2);
+      expect(Math.abs(first.y - second.y)).toBeGreaterThan(10);
+    });
+    await userEvent.click(graph.getByRole('button', { name: '应用蓝图' }));
+    await expect(await graph.findByText('已应用 · r2')).toBeVisible();
+    await userEvent.click(graph.getByRole('button', { name: '断点' }));
+    await userEvent.click(graph.getByRole('button', { name: '调试已应用版本' }));
+    await expect(await graph.findByText('已暂停 · r2')).toBeVisible();
+    await userEvent.click(graph.getByRole('button', { name: '单步' }));
+    await expect(await graph.findByText('已暂停 · r2')).toBeVisible();
+    await userEvent.click(graph.getByRole('button', { name: '继续' }));
+    await expect(await graph.findByText('navigated · r2')).toBeVisible();
+    canvasElement.dataset.blueprintAcceptance = 'passed';
+  },
+};
 export const Production:Story={args:{page:'production'}};
 export const Plugins:Story={args:{page:'plugins'}};
 export const PluginFailure:Story={args:{page:'plugins',state:'failed'}};

@@ -5,8 +5,9 @@ import { CollaborationError } from '@galcraft/collaboration';
 const unwrap=result=>{if(!result.ok)throw new CollaborationError(result.error.code,result.error.message,result.error);return result.value;};
 
 /** Prepare the actual exact plugin definitions without requiring an earlier renderer preview. */
-export async function compileCollaborationProject(owner,project,{publish=false}={}){
+export async function compileCollaborationProject(owner,project,{publish=false,template}={}){
   const input=owner.production.compileInput(project),documents=[...project.documents.values()],releases=[];
+  if(template)input.template=template;
   input.entityVersions=documents.filter(document=>document.format!=='dsl').map(document=>({ref:{kind:'document',id:document.documentId},revision:document.revision}));
   input.pluginCommands=[];input.pluginConditions={};input.pluginMessages=[];input.pluginConfigMappings={};input.pluginConfigDocuments=[];
   try{

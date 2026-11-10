@@ -1,4 +1,5 @@
-import { createId } from '@galcraft/contracts';
+import { blueprintReferenceIssues, blueprintTopologyIssues, createId } from '@galcraft/contracts';
+import type { ComponentConfig } from '@galcraft/contracts';
 import { BuiltinPlayerMenuLocales, ProjectLanguagesSchema, DebugScenarioSchema, DialogueContentSchema, DialogueEventSchema, dialoguePlainText, dialogueSegments, ExprSchema, hasSceneParameterDefault, IdSchema, NativeAnimationSchema, retiredImageModelFields, RuleImageTransitionSchema, sceneEntryPresentations, SnapshotSchema, stageCommandAssetBindings } from '@galcraft/contracts';
 import type { Asset, AssetReference, Character, CommandSpec, CompiledDialogueEvent, CompiledScene, DebugScenario, Expr, FieldSpec, Flow, GalleryEntry, Id, Instruction, Issue, Json, Lock, Project, ResolvedAsset, RuntimeTemplate, Scene, Snapshot, Source, SourceMapEntry, Variable, VersionRef } from '@galcraft/contracts';
 import { createCommandRegistry } from './catalog.js';
@@ -560,6 +561,21 @@ function resolveAsset(asset: Asset, variantId: Id = asset.activeVariantId): Reso
 function* compileSteps(input: CompileInput): Generator<void, CompileResult> {
   const configurations = compilePluginConfigurations(input);
   const issues: Issue[] = [...configurations.issues];
+  for (const page of input.template.pages) {
+    const version = input.entityVersions?.find(version => version.ref.kind === 'document' && version.ref.id === page.id);
+    const visit = (component: ComponentConfig, path: string) => {
+      for (const [index, binding] of (component.interactions ?? []).entries()) {
+        if (!binding.blueprint) continue;
+        for (const issue of [...blueprintTopologyIssues(binding.blueprint), ...blueprintReferenceIssues(binding.blueprint, page, input.template)]) {
+          const source = { documentId: page.id, revision: version?.revision ?? 0, field: `${path}/interactions/${index}/blueprint` };
+          issues.push({ ...problem(issue.code, issue.message, source), owner: 'M08',
+            details: { pageId: page.id, componentId: component.id, bindingId: binding.id!, nodeId: issue.nodeId ?? null, edgeId: issue.edgeId ?? null } });
+        }
+      }
+      component.children.forEach((child, index) => visit(child, `${path}/children/${index}`));
+    };
+    visit(page.root, '/data/root');
+  }
   const languages = ProjectLanguagesSchema.safeParse(input.project.languages);
   if (!languages.success) issues.push(problem('PROJECT_LANGUAGES', languages.error.issues.map(issue => issue.message).join('；')));
   else for (const locale of languages.data.menus) if (!(BuiltinPlayerMenuLocales as readonly string[]).includes(locale))

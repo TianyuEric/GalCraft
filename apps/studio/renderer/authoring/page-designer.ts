@@ -41,6 +41,10 @@ import { CharacterSchema } from '@galcraft/contracts';
 import type { Asset, Character, BasicComponentKind, PageEditInput, PageEditOperation } from '@galcraft/contracts';
 import { BasicComponentCatalog, createBasicComponent } from '@galcraft/templates/editor';
 import { pageDataEditor, pageInteractionEditor, pageLocalStateEditor } from './page-data-fields.js';
+import { PageBlueprintEditor, type BlueprintDraft } from './page-blueprint.js';
+import { blueprintConversionProblem, validatePageBlueprint } from '@galcraft/templates';
+import type { UIInteraction } from '@galcraft/contracts';
+import type { BlueprintRunOptions } from '@galcraft/player-ui';
 
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = '') => {
   const element = document.createElement(tag); if (element instanceof HTMLDialogElement) prepareNativeDialog(element); element.textContent = text; element.className = className; return element;
@@ -49,6 +53,9 @@ const action = domButton;
 
 type PageFieldInputDrafts = Record<string,{baseline:string;value:string;number?:import('../components/editor-fields/StudioNumberField.js').NumberInputDraft;color?:import('../components/editor-fields/StudioColorField.js').ColorInputDraft}>;
 type State = 'normal' | 'hover' | 'pressed' | 'focus' | 'disabled' | 'selected' | 'locked' | 'empty';
+type PageMode = 'layout' | 'style' | 'behavior' | 'preview';
+export type PageViewContext = { key: PageKey; selected: Id[]; mode: PageMode; state: State; sample: string; zoom: 'fit' | '100'; locale: string | null; scrollTop: number; scrollLeft?: number; split: boolean };
+type StoredPageView = Pick<PageViewContext, 'selected' | 'state' | 'sample' | 'zoom' | 'scrollTop'> & Partial<Pick<PageViewContext, 'mode' | 'locale' | 'scrollLeft' | 'split'>>;
 export type WorkbenchPreviewSettings = {
   mode: 'design' | 'preview'; state: State; sample: string; locale: string | null; zoom: 'fit' | '100';
 };
@@ -80,6 +87,7 @@ export class PageDesigner {
   private page: PageKey = 'title';
   private selected = new Set<Id>();
   private navigating = false;
+  private mode: PageMode = 'layout';
   private state: State = 'normal';
   private sample = 'normal';
   private zoom: 'fit' | '100' = 'fit';
@@ -114,15 +122,218 @@ export class PageDesigner {
   private inspectorGroups = new Set<string>();
   private templateWorkspace: { node: HTMLElement; root: Root } | null = null;
   private styleEditors = new Map<string, { node: HTMLElement; synchronize(): void; dispose(): void }>();
-  private pageContexts = new Map<PageKey, { selected: Id[]; state: State; sample: string; zoom: 'fit' | '100'; scrollTop: number }>();
+  private pageContexts = new Map<PageKey, Omit<PageViewContext, 'key'>>();
+  private pageModes = this.node('div', '', 'designer-mode-switch designer-page-modes');
+  private splitButton?: HTMLButtonElement;
+  private updatePreviewControls?: () => void;
+  private workbench?: { showOutline(): void; showDirectory(): void; changed(): void; remember(): void };
+  private scrollFrame = 0;
+  private behaviorDrafts: Record<Id, BlueprintDraft> = {};
+  private behaviorViews = new Map<PageKey, { node: HTMLElement; root: Root }>();
+  private selectedBindings = new Map<Id, Id>();
+  private activeBehaviorAbort: AbortController | null = null;
   private auxiliaryDocument: string | null = null;
   private stylePinned = false;
   private started:Promise<void>|null=null;
-  constructor(private services: AuthoringServices, private changed: (receipt?: EditReceipt, refresh?: import('./controller.js').AuthoringRefresh) => Promise<void>, private locale = 'zh-CN', resume: {page:PageKey;selected:Id[];state:State;sample:string;styleDrafts:Record<string,string>;styleDraftOptions?:Record<string,NamedStyle>;pageContexts?:[PageKey,{ selected: Id[]; state: State; sample: string; zoom: 'fit' | '100'; scrollTop: number }][];auxiliaryDocument?:string|null;animation?:UIAnimationManagerState|null;zoom?:'fit'|'100'}|null = null,
-    private assistant?: (scope:{pageIds:Id[];componentIds:Id[]}, intent:'assist'|'ui-assets')=>void, private pluginComponents: ComponentContribution[] = [], private pageChanged?: (key: PageKey, name: string) => void, private saveDocument?: () => Promise<void>, private locateSource?: (source:import('@galcraft/contracts').Source)=>void, private galleryOrigin?:()=>import('@galcraft/contracts').Source|null, private selectionChanged?:()=>void,private draftChanged?:()=>void) {
-    if(resume){this.previewLocale=(resume as typeof resume & {previewLocale?:string|null}).previewLocale??null;this.page=resume.page;this.selected=new Set(resume.selected);this.state=resume.state;this.sample=resume.sample;this.zoom=resume.zoom??'fit';this.styleDrafts=resume.styleDrafts;this.styleDraftOptions=resume.styleDraftOptions??{};this.pageContexts=new Map(resume.pageContexts??[]);this.auxiliaryDocument=resume.auxiliaryDocument??null;this.animationResume=resume.animation??null;this.fieldInputDrafts=(resume as typeof resume & {fieldInputs?:PageFieldInputDrafts}).fieldInputs??{};}
+  constructor(private services: AuthoringServices, private changed: (receipt?: EditReceipt, refresh?: import('./controller.js').AuthoringRefresh) => Promise<void>, private locale = 'zh-CN', resume: {page:PageKey;selected:Id[];state:State;sample:string;styleDrafts:Record<string,string>;styleDraftOptions?:Record<string,NamedStyle>;pageContexts?:[PageKey,StoredPageView][];auxiliaryDocument?:string|null;animation?:UIAnimationManagerState|null;zoom?:'fit'|'100';behaviorDrafts?:Record<Id,BlueprintDraft>}|null = null,
+    private openUiAssets?: (scope: { pageIds: Id[]; componentIds: Id[] }) => void, private pluginComponents: ComponentContribution[] = [], private pageChanged?: (key: PageKey, name: string) => void, private saveDocument?: () => Promise<void>, private locateSource?: (source:import('@galcraft/contracts').Source)=>void, private galleryOrigin?:()=>import('@galcraft/contracts').Source|null, private selectionChanged?:()=>void,private draftChanged?:()=>void) {
+    if(resume){this.previewLocale=(resume as typeof resume & {previewLocale?:string|null}).previewLocale??null;this.page=resume.page;this.selected=new Set(resume.selected);this.state=resume.state;this.sample=resume.sample;this.zoom=resume.zoom??'fit';this.styleDrafts=resume.styleDrafts;this.styleDraftOptions=resume.styleDraftOptions??{};this.pageContexts=new Map((resume.pageContexts??[]).map(([key, value]) => [key, { mode: 'layout', locale: null, split: false, ...value }]));this.auxiliaryDocument=resume.auxiliaryDocument??null;this.animationResume=resume.animation??null;this.fieldInputDrafts=(resume as typeof resume & {fieldInputs?:PageFieldInputDrafts}).fieldInputs??{};}
+    this.behaviorDrafts = resume?.behaviorDrafts ?? {};
   }
-  capture() { return {previewLocale:this.previewLocale,page:this.page,selected:[...this.selected],state:this.state,sample:this.sample,zoom:this.zoom,styleDrafts:this.styleDrafts,styleDraftOptions:this.styleDraftOptions,pageContexts:[...this.pageContexts],auxiliaryDocument:this.auxiliaryDocument,animation:this.animationManager?.current?.capture()??this.animationResume,fieldInputs:this.fieldInputDrafts}; }
+  configureWorkbench(options: NonNullable<PageDesigner['workbench']>) { this.workbench = options; }
+  capture() { this.rememberPageView(); return {previewLocale:this.previewLocale,page:this.page,selected:[...this.selected],state:this.state,sample:this.sample,zoom:this.zoom,styleDrafts:this.styleDrafts,styleDraftOptions:this.styleDraftOptions,pageContexts:[...this.pageContexts],auxiliaryDocument:this.auxiliaryDocument,animation:this.animationManager?.current?.capture()??this.animationResume,fieldInputs:this.fieldInputDrafts,behaviorDrafts:this.behaviorDrafts}; }
+  hasBehaviorDrafts() { return Object.keys(this.behaviorDrafts).length > 0; }
+  private rememberPageView() {
+    if (this.auxiliaryDocument || this.galleryEditor) return;
+    const split = this.pageContexts.get(this.page)?.split ?? false;
+    this.pageContexts.set(this.page, { selected: [...this.selected], mode: this.mode, state: this.state,
+      sample: this.sample, zoom: this.zoom, locale: this.previewLocale, scrollTop: this.center.scrollTop, scrollLeft: this.center.scrollLeft, split });
+  }
+  workbenchViews(): PageViewContext[] {
+    this.rememberPageView();
+    return [...this.pageContexts].map(([key, context]) => ({ ...context, key }));
+  }
+  restoreWorkbenchViews(views: readonly PageViewContext[]) {
+    if (!views.length) return;
+    this.pageContexts = new Map(views.map(({ key, ...context }) => [key, context]));
+    this.restorePageView(this.page);
+  }
+  private restorePageView(key: PageKey) {
+    const context = this.pageContexts.get(key);
+    this.selected = new Set(context?.selected ?? []);
+    this.state = context?.state ?? 'normal';
+    this.sample = context?.sample ?? 'normal';
+    this.zoom = context?.zoom ?? 'fit';
+    this.previewLocale = context?.locale ?? null;
+    this.mode = context?.mode ?? 'layout';
+    this.navigating = this.mode === 'preview';
+  }
+  workbenchIsPage(key: string) { return this.template?.pages.some(page => page.key === key) ?? false; }
+  private setPageMode(mode: PageMode) {
+    if (!this.workbenchIsPage(this.workbenchPage())) return;
+    this.cancelDrag?.();
+    this.stopBehaviorPreview();
+    this.mode = mode;
+    this.updatePageMode();
+    if (mode === 'layout' || mode === 'preview') this.player?.view.navigation.replace(this.page);
+    this.drawTree(); this.drawInspector(); this.selectionBounds(); this.scheduleFit();
+    this.workbench?.changed();
+  }
+  private updatePageMode() {
+    this.navigating = this.mode === 'preview';
+    this.root.dataset.pageMode = this.mode;
+    this.canvas.dataset.mode = this.navigating ? 'preview' : 'design';
+    this.surface.ariaHidden = String(!this.navigating);
+    this.overlay.hidden = this.navigating;
+    this.updateNavigationChrome?.(this.navigating);
+    this.updatePreviewControls?.();
+    for (const button of this.pageModes.querySelectorAll<HTMLButtonElement>('[data-mode]')) button.ariaPressed = String(button.dataset.mode === this.mode);
+    if (this.workbench) {
+      this.setWorkbenchStyle(this.mode === 'style' ? 'selection' : 'closed');
+      this.center.classList.toggle('focus-style', this.mode === 'style');
+      const split = this.pageContexts.get(this.page)?.split ?? false;
+      this.root.toggleAttribute('data-blueprint-split', split);
+      this.splitButton?.setAttribute('aria-pressed', String(split));
+      for (const view of this.behaviorViews.values()) if (view.node.parentElement === this.root) view.node.remove();
+      if (this.mode === 'behavior' && !split && this.workbenchIsPage(this.workbenchPage())) {
+        const host = this.renderBehavior(this.page);
+        if (host && host.parentElement !== this.root) this.root.append(host);
+      }
+    }
+  }
+  workbenchBehaviorCompanion(key: PageKey) {
+    if (!this.pageContexts.get(key)?.split || !this.workbenchIsPage(key)) return undefined;
+    return this.renderBehavior(key);
+  }
+  closeBehaviorSplit(key: PageKey, notify = true) {
+    const view = this.pageContexts.get(key);
+    if (!view?.split) return;
+    view.split = false;
+    if (key === this.page && this.workbenchPage() === key) { this.stopBehaviorPreview(); this.updatePageMode(); }
+    if (notify) this.workbench?.changed();
+  }
+  private splitBehavior() {
+    if (!this.workbenchIsPage(this.workbenchPage())) return;
+    this.rememberPageView();
+    const context = this.pageContexts.get(this.page)!;
+    if (context.split) { this.closeBehaviorSplit(this.page); return; }
+    context.split = true;
+    if (this.mode !== 'layout') this.setPageMode('layout');
+    else { this.updatePageMode(); this.workbench?.changed(); }
+  }
+  stopBehaviorPreview() {
+    this.activeBehaviorAbort?.abort();
+    this.player?.view.stopBlueprints?.();
+  }
+  private async editBlueprint(label: string, operation: PageEditOperation) {
+    await this.queueEdit(async () => {
+      const prepare = this.services.bridge.templates?.preparePageEdit;
+      if (!prepare) throw new Error(this.t('页面编辑服务不可用。', 'Page editing is unavailable.', 'ページ編集を利用できません。'));
+      const prepared = await prepare({ label, operations: [operation] });
+      if (!prepared.ok) throw new Error(prepared.error.message);
+      await this.apply(prepared.value.edit, false);
+      this.drawTree(); this.drawInspector(); await this.preview();
+    });
+  }
+  private behaviorTargets(componentId: Id) {
+    return [...this.surface.querySelectorAll<HTMLElement>(`[data-gc-component="${CSS.escape(componentId)}"][data-gc-instance]`)].filter(element => !element.closest('[hidden],[inert]')).map((element, index) => {
+      const id = element.dataset.gcInstance!;
+      return { id, key: id.slice(id.indexOf('/') + 1), label: element.getAttribute('aria-label') || element.textContent?.trim() || `${index + 1}` };
+    });
+  }
+  private async runBlueprint(key: PageKey, pageId: Id, componentId: Id, bindingId: Id, draft: BlueprintDraft | undefined,
+    target: { instance?: string; event?: { value: Json; checked: boolean } }, options: BlueprintRunOptions) {
+    if (this.workbenchPage() !== key) throw new Error(this.t('先激活蓝图所属的页面。', 'Activate the page that owns this blueprint first.', '先にこのブループリントのページを開いてください。'));
+    const template = structuredClone(this.template);
+    if (draft) {
+      const page = template.pages.find(item => item.id === pageId)!;
+      const issues = validatePageBlueprint(draft.graph, page, template);
+      if (issues.length) throw new Error(issues.map(issue => issue.message).join('\n'));
+      const component = components(page.root).find(item => item.id === componentId)!;
+      const bindings = component.interactions ??= [];
+      const index = bindings.findIndex(item => item.id === bindingId);
+      if (draft.graph.revision !== (bindings[index]?.blueprint?.revision ?? 0)) throw new Error('BLUEPRINT_BINDING_STALE');
+      const binding: UIInteraction = { id: bindingId, event: draft.event, actions: [], blueprint: { ...draft.graph, revision: draft.graph.revision + 1 } };
+      if (index < 0) bindings.push(binding); else bindings[index] = binding;
+    }
+    const controller = new AbortController();
+    this.activeBehaviorAbort?.abort(); this.activeBehaviorAbort = controller;
+    const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+    let player: StudioPlayer | null = null;
+    try {
+      await this.preview(template);
+      player = this.player;
+      signal.throwIfAborted();
+      if (this.workbenchPage() !== key || !player || this.surface.dataset.previewStatus !== 'ready') throw new Error(this.t('页面预览不可用。', 'Page preview is unavailable.', 'ページのプレビューを利用できません。'));
+      if (!player.view.triggerBlueprint) throw new Error(this.t('请使用当前开发 Player 调试蓝图。', 'Use the current development Player to debug blueprints.', '現在の開発版 Player でデバッグしてください。'));
+      const targets = this.behaviorTargets(componentId);
+      const instance = target.instance ? targets.find(item => item.key === target.instance)?.id : targets.length === 1 ? targets[0]?.id : undefined;
+      if (target.instance && !instance) throw new Error(this.t('此重复项已不在当前样例中。','The repeated item is missing from this sample.','現在のサンプルにこの項目がありません。'));
+      return await player.view.triggerBlueprint({ pageId, componentId, bindingId, instance, event: target.event }, { ...options, signal });
+    } finally {
+      if (this.activeBehaviorAbort === controller) this.activeBehaviorAbort = null;
+      if (player && draft && this.workbenchPage() === key && this.player === player) {
+        const snapshot = this.snapshot && pagePreviewSample(this.snapshot, this.template, key, this.sample, this.previewLocale ?? this.snapshot.project.languages.menuDefault);
+        if (snapshot) player.updatePreview(snapshot, Object.assign({}, ...this.documents.map(doc => doc.files)), this.template.styles.map(style => style.id));
+      }
+    }
+  }
+  private renderBehavior(key: PageKey) {
+    const page = this.template?.pages.find(item => item.key === key);
+    if (!page) return undefined;
+    const selected = key === this.page ? [...this.selected] : this.pageContexts.get(key)?.selected ?? [];
+    const component = components(page.root).find(item => item.id === selected[0]) ?? page.root;
+    let view = this.behaviorViews.get(key);
+    if (!view) {
+      const node = this.node('section', '', 'designer-blueprint-host');
+      node.dataset.blueprintPage = key;
+      view = { node, root: createRoot(node) };
+      this.behaviorViews.set(key, view);
+    }
+    const bindings = component.interactions ?? [];
+    const drafts = Object.values(this.behaviorDrafts).filter(draft => draft.pageId === page.id && draft.componentId === component.id);
+    const remembered = this.selectedBindings.get(component.id);
+    const ids = [...drafts.map(draft => draft.bindingId), ...bindings.filter(binding => binding.blueprint).flatMap(binding => binding.id ?? [])];
+    const bindingId = remembered && ids.includes(remembered) ? remembered : ids[0];
+    const select = (id: Id) => { this.selectedBindings.set(component.id, id); this.renderBehavior(key); };
+    const draftChanged = () => { this.renderBehavior(key); this.draftChanged?.(); this.selectionChanged?.(); };
+    view.root.render(createElement(PageBlueprintEditor, {
+      key: component.id, page: this.pageLabel(key), component: this.componentLabel(component), pageId: page.id, componentId: component.id,
+      bindings, drafts, selected: bindingId, context: this.pageFieldContext(page), animations: this.template.animations,
+      conversionProblem: index => blueprintConversionProblem(bindings[index]!, bindings.slice(index + 1)),
+      diagnostics: graph => validatePageBlueprint(graph, page, this.template),
+      instances: key === this.page ? this.behaviorTargets(component.id) : [],
+      onSelect: select,
+      onNew: event => {
+        const id = createId([this.template, this.behaviorDrafts]);
+        this.behaviorDrafts[id] = { pageId: page.id, componentId: component.id, bindingId: id, event, graph: { revision: 0, entry: '', nodes: [], edges: [] } };
+        this.selectedBindings.set(component.id, id); draftChanged();
+      },
+      onDraft: draft => { this.behaviorDrafts[draft.bindingId] = draft; draftChanged(); },
+      onDiscard: id => { delete this.behaviorDrafts[id]; draftChanged(); },
+      onConvert: async (index, binding) => {
+        const problem = blueprintConversionProblem(binding, bindings.slice(index + 1));
+        if (problem) throw new Error(problem);
+        await this.editBlueprint(this.t('转换页面行为蓝图', 'Convert page blueprint', 'ページ動作をブループリントへ変換'), { kind: 'blueprint.convert', pageId: page.id, componentId: component.id, bindingIndex: index, binding });
+        const id = findComponent(this.template, component.id)?.interactions?.[index]?.id;
+        if (id) select(id);
+      },
+      onApply: async ({ pageId, componentId, bindingId, event, graph }) => {
+        const address = { pageId, componentId, bindingId, graph };
+        await this.editBlueprint(this.t('应用页面行为蓝图', 'Apply page blueprint', 'ページ動作ブループリントを適用'),
+          graph.revision === 0 ? { kind: 'blueprint.create', ...address, event } : { kind: 'blueprint.apply', ...address });
+        delete this.behaviorDrafts[bindingId]; draftChanged();
+      },
+      onRun: (id, draft, options) => this.runBlueprint(key, page.id, component.id, id, draft, options, {
+        signal: options.signal, beforeNode: (node, run) => options.beforeNode(node, run.revision), onStep: options.onStep,
+      }),
+      onLocate: () => {
+        if (this.workbenchPage() !== key) return;
+        this.setPageMode('layout'); this.selectComponents([component.id]); this.canvas.focus();
+      },
+    }));
+    return view.node;
+  }
   hasAnimationDraft() { const state=this.capture().animation;return !!state&&JSON.stringify(state.draft)!==state.baseline; }
   useWorkbenchCanvas() {
     if (this.started && !this.workbenchCanvas) throw new Error('Select the page canvas presentation before starting the designer.');
@@ -160,6 +371,7 @@ export class PageDesigner {
       if (this.workbenchCanvas) this.previewWorkbenchField(null);
       if (!navigating) this.previewLocale = this.player?.data.current()?.preferences.menuLocale ?? this.previewLocale;
       this.navigating = navigating;
+      this.mode = navigating ? 'preview' : 'layout';
       this.surface.ariaHidden = String(!navigating);
       this.cancelDrag?.();
       if (navigating) this.setWorkbenchStyle('closed');
@@ -176,6 +388,8 @@ export class PageDesigner {
     if (modeChanged || changes.state !== undefined || changes.locale !== undefined) this.drawInspector();
     if (modeChanged) this.scheduleFit();
     if (changes.zoom !== undefined) this.fitPreview();
+    this.updatePreviewControls?.();
+    this.selectionChanged?.();
     if (changes.state !== undefined || changes.sample !== undefined || changes.locale !== undefined) await this.preview();
   }
   previewWorkbenchStartup() {
@@ -223,6 +437,10 @@ export class PageDesigner {
     });
   }
   workbenchRegions() { this.tree.dataset.workbench = 'true'; this.inspector.dataset.workbench = 'true'; return { tree: this.tree, inspector: this.inspector }; }
+  workbenchOutline(key: string) {
+    if (!this.workbenchIsPage(key) || key !== this.workbenchPage()) return undefined;
+    return { key, title: this.pageLabel(key), selected: [...this.selected], inspector: this.inspector, tools: this.tree };
+  }
   hasWorkbenchPage(key: string): boolean | null { return this.template ? this.workbenchPages().some(page => page.id === key) : null; }
   workbenchPages() { return [...(this.template?.pages.map(page => ({ id: page.key, name: this.pageLabel(page.key) })) ?? []),
     {id:'gallery-content',name:this.t('鉴赏内容','Gallery content','鑑賞コンテンツ')}, {id:'@animations',name:this.t('界面动画','Interface animations','UIアニメーション')},
@@ -234,13 +452,30 @@ export class PageDesigner {
     const visit = (component: ComponentConfig): import('../components/workbench/ObjectTree.js').WorkbenchTreeNode => ({ id: component.id, name: this.componentLabel(component), detail: component.locked ? this.t('锁定','Locked','ロック') : undefined, ...(component.children.length||['container','list','tab','button'].includes(componentDefinition(component.part)?.kind??'') ? { children: component.children.map(visit) } : {}) });
     return [visit(this.currentPage().root)];
   }
-  selectComponents(ids: Id[]) { if(this.galleryEditor){if(ids[0])this.galleryEditor.selectEntry(ids[0]);return;}this.selected = new Set(ids.filter(id => components(this.currentPage().root).some(component => component.id === id))); this.drawInspector(); this.selectionBounds(); if(!this.stylePinned&&this.center.classList.contains('has-style'))this.styleEditor(); }
+  selectComponents(ids: Id[]) { if(this.galleryEditor){if(ids[0])this.galleryEditor.selectEntry(ids[0]);return;}const next = new Set(ids.filter(id => components(this.currentPage().root).some(component => component.id === id))); if ([...next].join() === [...this.selected].join()) return; this.stopBehaviorPreview(); this.selected = next; this.drawInspector(); this.selectionBounds(); if(!this.stylePinned&&this.center.classList.contains('has-style'))this.styleEditor(); }
   async moveComponents(ids:Id[],parentId:Id) {const page=this.currentPage(),valid=ids.filter(id=>id!==page.root.id&&findComponent(this.template,id)&&!findComponent(this.template,id)!.locked);if(valid.length)await this.instanceOperation(this.t('移动到容器','Reparent components','親を変更'),{kind:'component.reparent',pageId:page.id,componentIds:valid,parentId});}
   async renameComponent(id:Id,name:string):Promise<string|void> {try{await this.editInstances(this.t('重命名组件','Rename component','部品名を変更'),[{kind:'component.update',pageId:this.currentPage().id,componentId:id,changes:{name}}]);}catch(reason){return String(reason);}}
   private componentLabel(component: ComponentConfig): string {
     return component.name || designerComponentName(component,this.locale,this.template.locales);
   }
-  workbenchDocumentId() { return this.template ? this.historyScope().documentId : null; }
+  workbenchDocumentId(key?: string) {
+    if (!this.template) return null;
+    if (!key) return this.historyScope().documentId;
+    if (key === 'gallery-content') return this.galleryEditor?.documentId() ?? this.template.instanceId;
+    const style = key.startsWith('@style:') && this.template.styles.find(item => item.id === key.slice(7));
+    if (style) return this.documents.find(item => style.sourcePath in item.files)?.documentId ?? this.template.instanceId;
+    if (key.startsWith('@')) return this.template.instanceId;
+    return this.template.pages.find(item => item.key === key)?.id ?? null;
+  }
+  workbenchDirty(key: string) {
+    const documentId = this.workbenchDocumentId(key);
+    return this.documents.some(document => document.documentId === documentId && document.dirty) || this.workbenchHasDraft(key);
+  }
+  workbenchHasDraft(key: string) {
+    return key === '@animations' && this.hasAnimationDraft() || key.startsWith('@draft:') && key.slice(7) in this.styleDrafts
+      || Object.keys(this.styleDrafts).some(id => this.styleDraftOptions[id]?.scope.pageId === this.workbenchDocumentId(key))
+      || Object.values(this.behaviorDrafts).some(draft => draft.pageId === this.workbenchDocumentId(key));
+  }
   private historyScope() {
     if (this.galleryEditor) return { documentId: this.galleryEditor.documentId() ?? this.template.instanceId };
     const focusedStyle = document.activeElement?.closest<HTMLElement>('[data-style-id]')?.dataset.styleId;
@@ -250,7 +485,17 @@ export class PageDesigner {
     return { documentId: this.auxiliaryDocument ? this.template.instanceId : this.currentPage().id };
   }
   workbenchPage() { return this.galleryEditor ? 'gallery-content' : this.auxiliaryDocument ?? this.page; }
-  hasWorkingChanges() { return this.hasAnimationDraft() || this.documents.some(document => document.dirty && Object.keys(document.files).some(path => path.startsWith('ui/'))) || Object.keys(this.styleDrafts).length > 0; }
+  discardWorkbenchDrafts(key: string) {
+    if (key === '@animations') this.discardAnimationDraft();
+    const pageId = this.workbenchDocumentId(key);
+    for (const [id, draft] of Object.entries(this.behaviorDrafts)) if (draft.pageId === pageId) delete this.behaviorDrafts[id];
+    for (const id of Object.keys(this.styleDrafts)) if (key === `@draft:${id}` || this.styleDraftOptions[id]?.scope.pageId === pageId) {
+      const editor = this.styleEditors.get(id); editor?.dispose(); editor?.node.remove();
+      this.styleEditors.delete(id); delete this.styleDrafts[id]; delete this.styleDraftOptions[id];
+    }
+    for (const id of Object.keys(this.fieldInputDrafts)) if (id.startsWith(`${key}:`)) delete this.fieldInputDrafts[id];
+    this.draftChanged?.();
+  }
   discardAnimationDraft() {
     this.animationResume=null;
     this.animationManagerRoot?.unmount();this.animationManagerRoot=null;
@@ -260,21 +505,46 @@ export class PageDesigner {
   discardStyleDrafts() { for (const editor of this.styleEditors.values()) { editor.dispose(); editor.node.remove(); } this.styleEditors.clear(); this.styleDrafts = {};this.styleDraftOptions={}; this.center.classList.remove('has-style'); }
   async openPage(id: string, notify = false) {
     if(this.started)await this.started;else if(!this.template)await this.start();
+    await this.edits;
     if(this.disposed)return;
+    const previous = this.workbenchPage();
+    if (previous !== id) { this.rememberPageView(); this.cancelDrag?.(); this.stopBehaviorPreview(); }
+    const isAuxiliary = id.startsWith('@') || id === 'gallery-content';
+    this.root.toggleAttribute('data-page-auxiliary', isAuxiliary);
+    if (isAuxiliary) {
+      this.navigating = false;
+      this.setWorkbenchStyle('closed');
+      this.center.classList.remove('focus-style');
+    }
     if(id!=='@animations'&&this.animationManagerHost){this.animationResume=this.animationManager.current?.capture()??this.animationResume;this.animationManagerHost.hidden=true;}
     if(this.templateWorkspace){this.templateWorkspace.node.hidden=id!=='@templates';this.center.classList.toggle('has-template',id==='@templates');}
     this.auxiliaryDocument = null;
     if(id==='@animations'){this.auxiliaryDocument=id;if(this.animationManagerHost)this.animationManagerHost.hidden=false;this.openAnimations();return;}
     if(id==='@templates'){this.auxiliaryDocument=id;this.templates();return;}
-    if(id.startsWith('@draft:')){const key=id.slice(7),style=this.styleDraftOptions[key];if(!style)return;await this.openPage(style.scope.pageId);this.selected=new Set(style.scope.componentId?[style.scope.componentId]:[]);this.auxiliaryDocument=id;this.styleEditor(undefined,false,key);return;}
-    if(id.startsWith('@style:')){const style=this.template.styles.find(item=>item.id===id.slice(7));if(!style)return;await this.openPage(style.scope.pageId);this.selected=new Set(style.scope.componentId?[style.scope.componentId]:[]);this.auxiliaryDocument=id;this.styleEditor(style.id);this.drawInspector();return;}
+    if (id.startsWith('@draft:') || id.startsWith('@style:')) {
+      const draftKey = id.startsWith('@draft:') ? id.slice(7) : undefined;
+      const style = draftKey ? this.styleDraftOptions[draftKey] : this.template.styles.find(item => item.id === id.slice(7));
+      if (!style) return;
+      await this.openPage(style.scope.pageId);
+      this.root.setAttribute('data-page-auxiliary', '');
+      this.navigating = false;
+      this.selected = new Set(style.scope.componentId ? [style.scope.componentId] : []);
+      this.auxiliaryDocument = id;
+      this.styleEditor(draftKey ? undefined : style.id, false, draftKey);
+      this.drawInspector();
+      return;
+    }
     if(id==='gallery-content'){this.openGalleryContent();return;}
     const hadGallery=!!this.galleryEditor;this.galleryEditor?.root.remove();this.galleryEditor=null;this.canvas.hidden=false;this.root.querySelector<HTMLElement>('.designer-toolbar')?.removeAttribute('hidden');
-    const page = this.template?.pages.find(page => page.id === id || page.key === id); if(!page)return;if(this.page===page.key){if(hadGallery){this.drawTree();this.drawInspector();await this.preview();}return;}
-    const center = this.center; this.pageContexts.set(this.page, { selected: [...this.selected], state: this.state, sample: this.sample, zoom: this.zoom, scrollTop: center?.scrollTop ?? 0 });
-    this.page = page.key; const context = this.pageContexts.get(this.page); this.selected = new Set(context?.selected ?? []); this.state = context?.state ?? 'normal'; this.sample = context?.sample ?? 'normal'; this.zoom = context?.zoom ?? 'fit';
-    this.drawTree(); this.drawInspector(); await this.preview(); if (center) center.scrollTop = context?.scrollTop ?? 0;
-    if(center?.classList.contains('has-style')&&!this.stylePinned)this.styleEditor();
+    const page = this.template?.pages.find(page => page.id === id || page.key === id); if(!page)return;
+    if (previous === page.key && !hadGallery) { if (!this.player) await this.preview(); return; }
+    this.page = page.key;
+    this.restorePageView(this.page);
+    this.updatePageMode();
+    this.drawTree(); this.drawInspector();
+    const context = this.pageContexts.get(page.key);
+    await this.preview();
+    if (this.page === page.key) this.restoreCanvasScroll(context);
     if (notify) this.pageChanged?.(page.key, this.pageLabel(page.key));
   }
   async refresh() { if (this.disposed) return; await this.reload(); this.drawTree(); this.drawInspector(); await this.preview(); }
@@ -289,9 +559,15 @@ export class PageDesigner {
     const shape=document.createElementNS('http://www.w3.org/2000/svg','path');shape.setAttribute('d',path);svg.append(shape);
     control.append(svg,this.node('span',label));control.title=designerText(label,this.locale);return control;
   }
-  start():Promise<void> { return this.started??=(async()=>{await this.reload(); if (this.disposed) return; this.draw(); if(this.animationResume)this.openAnimations(this.animationResume.target);await this.preview();})(); }
+  private restoreCanvasScroll(context: StoredPageView | undefined) {
+    this.center.scrollLeft = context?.scrollLeft ?? 0;
+    this.center.scrollTop = context?.scrollTop ?? 0;
+  }
+  start():Promise<void> { return this.started??=(async()=>{await this.reload(); if (this.disposed) return; this.draw(); if(this.animationResume && !this.workbench)this.openAnimations(this.animationResume.target);await this.preview();this.restoreCanvasScroll(this.pageContexts.get(this.page));})(); }
   dispose() {
+    if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame);
     for (const editor of this.numberEditors.values()) editor.root.unmount(); this.numberEditors.clear();
+    for (const view of this.behaviorViews.values()) view.root.unmount(); this.behaviorViews.clear();
     this.animationManagerRoot?.unmount();this.animationManagerRoot=null; for (const root of this.colorProperties) root.unmount(); this.colorProperties = []; this.templateWorkspace?.root.unmount(); this.templateWorkspace=null; for (const editor of this.styleEditors.values()) editor.dispose(); this.styleEditors.clear(); this.pluginProperties?.unmount(); this.pluginProperties = null; this.cancelDrag?.(); this.disposed = true; this.generation++; this.geometry?.dispose(); this.geometry = null; this.player?.dispose(); this.player = null; this.resize?.disconnect(); this.backgroundRelease?.(); for(const dialog of (this.workbenchCanvas ? this.center : this.root).querySelectorAll('dialog'))dialog.close(); }
   private async reload() {
     const listed = await this.services.bridge.documents.list(); if (!listed.ok) throw new Error(listed.error.message);
@@ -378,12 +654,13 @@ export class PageDesigner {
     reading.append(this.action(this.t('头像阅读','Portrait reading','ポートレート付き'),()=>this.change(next=>applyReadingPreset(next,'portrait'))),this.action(this.t('通透阅读','Clear reading','透過表示'),()=>this.change(next=>applyReadingPreset(next,'clear'))));
     const batchPortraits = this.action(this.t('批量开启立绘头像', 'Enable figure portraits in bulk', '立ち絵のポートレートを一括有効化'), () => this.enableFigurePortraits());
     batchPortraits.dataset.portraitBatch = ''; batchPortraits.title = this.t('为立绘入场与重置设置默认头像；已有取景保持，差分继续继承已有取景。可在立绘属性中逐个微调。', 'Enable default portraits for figure entries and resets. Preserve existing crops and let replacements inherit them. Fine-tune each in figure properties.', '立ち絵の登場とリセットに既定のポートレートを設定し、既存の範囲を保持します。差分は範囲を継承し、立ち絵のプロパティで個別調整できます。'); reading.append(batchPortraits);
-    const startup=this.action(this.t('开屏预览','Preview startup','起動画面をプレビュー'),()=>this.previewWorkbenchStartup());startup.dataset.startupPreview='';preview.append(modes,startup);header.append(title,actions);
-    if(this.assistant) { const ai=group('AI 与素材'), open=(intent:'assist'|'ui-assets')=>this.assistant!({pageIds:[this.currentPage().id],componentIds:[...this.selected]},intent);
-      const assist=this.iconAction('AI 辅助','m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3z',()=>open('assist'));
-      assist.title=this.t('调整当前页面或组件的布局与样式','Adjust the selected page or component layout and styles','現在のページ・部品の配置とスタイルを調整');
-      const assets=this.iconAction('UI 素材','M3 3h18v18H3z M3 17l6-6 4 4 3-3 5 5 M16 7h.01',()=>open('ui-assets'));
-      assets.title=this.t('制作页面背景、边框和图标素材','Create page backgrounds, frames and icons','ページ背景・枠・アイコン素材を制作');ai.append(assist,assets); }
+    const startup=this.action(this.t('开屏预览','Preview startup','起動画面をプレビュー'),()=>this.previewWorkbenchStartup());startup.dataset.startupPreview='';preview.append(...(this.workbench ? [startup] : [modes,startup]));header.append(title,actions);
+    if (this.openUiAssets) {
+      const assets = this.iconAction('UI 素材', 'M3 3h18v18H3z M3 17l6-6 4 4 3-3 5 5 M16 7h.01',
+        () => this.openUiAssets?.({ pageIds: [this.currentPage().id], componentIds: [...this.selected] }));
+      assets.title = this.t('制作页面背景、边框和图标素材', 'Create page backgrounds, frames and icons', 'ページ背景・枠・アイコン素材を制作');
+      group(this.t('素材', 'Assets', '素材')).append(assets);
+    }
     const toolbar = this.node('div', '', 'designer-toolbar');
     const choices = this.workbenchPreviewOptions();
     const select = <T extends string>(label: string, values: PreviewOption<T>[], value: T, changed: (value: T) => Promise<void>) => {
@@ -404,7 +681,11 @@ export class PageDesigner {
     const styleToggle=this.iconAction(this.t('样式','Styles','スタイル'),'m8 6-6 6 6 6M16 6l6 6-6 6',
       ()=>this.setWorkbenchStyle(this.center.classList.contains('has-style') ? 'closed' : 'selection'));
     styleToggle.dataset.styleToggle='';styleToggle.setAttribute('aria-pressed','false');
-    toolbar.append(this.node('span', '同一 Player · 独立样例资料'), states, samples, menuLanguage, zoom, styleToggle);
+    toolbar.append(this.node('span', '同一 Player · 独立样例资料'), states, samples, menuLanguage, zoom, ...(this.workbench ? [] : [styleToggle]));
+    this.updatePreviewControls = () => {
+      states.value = this.state; samples.value = this.sample; zoom.value = this.zoom;
+      menuLanguage.value = this.previewLocale ?? choices.defaultLocale;
+    };
     this.updateNavigationChrome = navigating => {
       for (const control of [...edit.querySelectorAll('button'), ...templates.querySelectorAll('button'), ...reading.querySelectorAll('button')]) control.disabled = navigating;
       design.setAttribute('aria-pressed', String(!navigating));
@@ -417,6 +698,9 @@ export class PageDesigner {
   }
   private draw() {
     const center = this.center;
+    if (this.workbench) center.addEventListener('scroll', () => {
+      if (!this.scrollFrame) this.scrollFrame = requestAnimationFrame(() => { this.scrollFrame = 0; this.workbench?.remember(); });
+    });
     const chrome = this.workbenchCanvas ? undefined : this.drawChrome();
     this.canvas.dataset.mode = this.navigating ? 'preview' : 'design';
     this.surface.ariaHidden = String(!this.navigating);
@@ -479,10 +763,28 @@ export class PageDesigner {
       if (this.tree.dataset.workbench !== 'true') layout.append(this.tree);
       layout.append(center);
       if (this.inspector.dataset.workbench !== 'true') layout.append(this.inspector);
+      if (this.workbench) {
+        const row = this.node('div', '', 'designer-page-bar');
+        this.pageModes.setAttribute('role', 'group');
+        this.pageModes.ariaLabel = this.t('页面模式', 'Page mode', 'ページモード');
+        const labels = { layout: this.t('布局', 'Layout', 'レイアウト'), style: this.t('样式', 'Styles', 'スタイル'), behavior: this.t('行为', 'Behavior', '動作'), preview: this.t('导航预览', 'Navigation preview', 'ナビゲーションプレビュー') };
+        for (const [key, label] of Object.entries(labels)) {
+          const button = this.action(label, () => this.setPageMode(key as PageMode));
+          button.dataset.mode = key;
+          this.pageModes.append(button);
+        }
+        const panels = this.node('div', '', 'designer-page-panel-controls');
+        this.splitButton = this.action(this.t('画布与行为并排', 'Show canvas and behavior side by side', 'キャンバスと動作を並べて表示'), () => this.splitBehavior());
+        panels.append(this.splitButton);
+        panels.append(this.action(this.t('页面目录', 'Page directory', 'ページ一覧'), () => this.workbench?.showDirectory()),
+          this.action(this.t('页面大纲', 'Page outline', 'ページ構成'), () => this.workbench?.showOutline()));
+        row.append(this.pageModes, panels);
+        this.root.append(row);
+      }
       this.root.append(chrome.header, this.notice, layout);
     } else center.append(this.canvas);
     this.drawTree(); this.drawInspector();
-    if (chrome) this.styleEditor();
+    if (this.workbench) this.updatePageMode(); else if (chrome) this.styleEditor();
   }
   private async editInstances(label:string, operations:PageEditOperation[]) {
     if(this.navigating)return;
@@ -580,13 +882,18 @@ export class PageDesigner {
     this.inspector.append(this.node('p',this.t(`只修改当前部件的 ${locale} 文案；其他语言保留默认。`,`Edit only this component in ${locale}; other languages keep their default labels.`,`この部品の ${locale} のみ編集します。他の言語は既定の表示を保持します。`),'designer-field-help'));
     const reset=this.action(this.t('恢复此语言默认文字','Restore default for this language','この言語の既定に戻す'),()=>edit(null));reset.disabled=override===undefined;this.inspector.append(reset);
   }
-  private pageFieldContext() {
-    return { t:this.t.bind(this), local:this.currentPage().localState??{}, pages:this.template.pages.map(item=>({value:item.key,label:this.pageLabel(item.key)})),
+  private pageFieldContext(page = this.currentPage()) {
+    return { t:this.t.bind(this), local:page.localState??{}, pages:this.template.pages.map(item=>({value:item.key,label:this.pageLabel(item.key)})),
       variables:[...(this.snapshot?.variables??[]),...(this.snapshot?.scenes??[]).flatMap(item=>item.scene.locals.map(variable=>({...variable,sceneName:item.scene.name})))] };
   }
   private interactionInspector(component:ComponentConfig) {
     const page=this.currentPage(),context=this.pageFieldContext();
-    this.inspector.append(pageInteractionEditor(component.interactions??[],context,async interactions=>{await this.editInstances(this.t('配置组件交互','Edit component interactions','操作を設定'),[{kind:'component.update',pageId:page.id,componentId:component.id,changes:{interactions}}]);}),pageLocalStateEditor(page.localState??{},context.t,async localState=>{await this.editInstances(this.t('配置局部状态','Edit local state','ローカル状態を編集'),[{kind:'page.update',pageId:page.id,localState}]);}));
+    this.inspector.append(pageInteractionEditor(component.interactions??[],context,async interactions=>{
+      const current = findComponent(this.template, component.id)?.interactions ?? [];
+      if (JSON.stringify(current) !== JSON.stringify(component.interactions ?? [])) throw new Error('BLUEPRINT_BINDING_STALE');
+      await this.editInstances(this.t('配置组件交互','Edit component interactions','操作を設定'),[{kind:'component.update',pageId:page.id,componentId:component.id,changes:{interactions}}]);
+    }, this.workbench ? binding => { if (binding.id) this.selectedBindings.set(component.id, binding.id); this.setPageMode('behavior'); } : undefined),
+    pageLocalStateEditor(page.localState??{},context.t,async localState=>{await this.editInstances(this.t('配置局部状态','Edit local state','ローカル状態を編集'),[{kind:'page.update',pageId:page.id,localState}]);}));
   }
   private instanceTools() {
     const page=this.currentPage(), component=findComponent(this.template,[...this.selected][0]??''), controls=this.node('section','','designer-instance-tools');
@@ -675,6 +982,7 @@ export class PageDesigner {
     if (group instanceof HTMLDetailsElement) { group.open = this.inspectorGroups.has(key); group.ontoggle = () => { if (group.isConnected) group.open ? this.inspectorGroups.add(key) : this.inspectorGroups.delete(key); }; }
   }
   private drawInspector(focus = captureAuthoringFocus(this.inspector)) {
+    if (this.workbench && this.workbenchIsPage(this.workbenchPage()) && (this.mode === 'behavior' || this.pageContexts.get(this.page)?.split)) this.renderBehavior(this.page);
     this.renderedNumberFields.clear();
     this.renderInspector();
     for (const [key, editor] of this.numberEditors) if (!this.renderedNumberFields.has(key)) { editor.root.unmount(); this.numberEditors.delete(key); }
@@ -896,6 +1204,7 @@ export class PageDesigner {
     this.center.append(this.galleryEditor.root);
   }
   private openAnimations(target?:{componentId:Id;event:UIAnimationBinding}) {
+    this.canvas.hidden = true;
     if(this.animationManagerRoot){if(this.animationManagerHost)this.animationManagerHost.hidden=false;this.animationManager.current?.open(target);return;}
     const host=this.node('section','','designer-animation-document');this.animationManagerHost=host;
     const root=createRoot(host);this.animationManagerRoot=root;this.canvas.hidden=true;
@@ -1010,7 +1319,11 @@ export class PageDesigner {
     const files = Object.assign({}, ...this.documents.map(doc => doc.files)) as Record<string, string>;
     const dialog = this.node('section', '', 'designer-style-workspace'); dialog.ariaLabel = this.t('作用域 CSS / SCSS', 'Scoped CSS / SCSS', 'スコープ CSS / SCSS');
     dialog.dataset.styleId = id;
-    const heading = this.node('header');const closeStyle=this.iconAction(this.t('关闭样式视图','Close styles','スタイルを閉じる'),'m6 6 12 12M18 6 6 18',()=>{dialog.hidden=true;center.classList.remove('has-style');this.root.querySelector('[data-style-toggle]')?.setAttribute('aria-pressed','false');this.canvas.focus();this.scheduleFit();}); closeStyle.classList.add('designer-style-close'); closeStyle.replaceChildren(actionIcon('close')); heading.append(this.node('strong',`${this.page} / ${selected?this.componentLabel(findComponent(this.template,selected)!):this.t('页面','Page','ページ')} / ${this.state}`),closeStyle); dialog.append(heading); center.append(dialog); center.classList.add('has-style');
+    const heading = this.node('header');const closeStyle=this.iconAction(this.t('关闭样式视图','Close styles','スタイルを閉じる'),'m6 6 12 12M18 6 6 18',()=>{
+      if (this.workbench && this.mode === 'style' && this.workbenchIsPage(this.workbenchPage())) this.setPageMode('layout');
+      else { dialog.hidden=true;center.classList.remove('has-style','focus-style');this.root.querySelector('[data-style-toggle]')?.setAttribute('aria-pressed','false'); }
+      this.canvas.focus();this.scheduleFit();
+    }); closeStyle.classList.add('designer-style-close'); closeStyle.replaceChildren(actionIcon('close')); heading.append(this.node('strong',`${this.page} / ${selected?this.componentLabel(findComponent(this.template,selected)!):this.t('页面','Page','ページ')} / ${this.state}`),closeStyle); dialog.append(heading); center.append(dialog); center.classList.add('has-style');
     const scope=this.node('p',this.t(`作用域：${selected?findComponent(this.template,selected)!.part:this.page}`,`Scope: ${selected?findComponent(this.template,selected)!.part:this.page}`,`スコープ：${selected?findComponent(this.template,selected)!.part:this.page}`));
     const source = this.node('div','','designer-style-source'); source.ariaLabel = this.t('样式源码','Style source','スタイルソース');
     const defaultSource = `[data-gc-part="${selected ? findComponent(this.template, selected)!.part : components(page.root)[1]?.part ?? page.root.part}"] {\n  color: #466b92;\n}`;
@@ -1131,10 +1444,11 @@ export class PageDesigner {
       const resize=new ResizeObserver(fit);resize.observe(host);fit();
       return ()=>{resize.disconnect();player.dispose();releaseResources();surface.remove();};
     };
-    const protectDrafts=()=>{if(Object.keys(this.fieldInputDrafts).length||Object.keys(this.styleDrafts).length||this.hasAnimationDraft())throw new Error(this.t('请先处理尚未应用的页面、样式或动画输入，再切换模板。','Apply or discard unapplied page, style and animation input before switching templates.','テンプレート切替前に未適用のページ・スタイル・アニメーション入力を処理してください。'));};
+    const protectDrafts=()=>{if(Object.keys(this.fieldInputDrafts).length||Object.keys(this.styleDrafts).length||this.hasAnimationDraft()||this.hasBehaviorDrafts())throw new Error(this.t('请先处理尚未应用的页面、样式、动画或蓝图输入，再切换模板。','Apply or discard unapplied page, style, animation and blueprint input before switching templates.','テンプレート切替前に未適用のページ・スタイル・アニメーション・ブループリント入力を処理してください。'));};
     const bridge=this.services.bridge.templates;
     const manage=bridge?.library?async(input:import('@galcraft/contracts').TemplateLibraryInput)=>{const result=await bridge.library!(input);if(!result.ok)throw new Error(result.error.message);return result.value;}:undefined;
     const targets=this.documents.flatMap(document=>Object.entries(document.files).flatMap(([path,raw])=>{if(!path.endsWith('.json'))return[];let data:any;try{data=JSON.parse(raw).data;}catch{return[];}return [...(data?.variables??[]).map((item:any)=>({id:item.id,name:item.name,kind:'variable'})),...(data?.locals??[]).map((item:any)=>({id:item.id,name:item.name,kind:'variable'})),...(data?.characters??[]).map((item:any)=>({id:item.id,name:item.name,kind:'character'})),...(path.startsWith('scenes/')&&data?.id?[{id:data.id,name:data.name,kind:'scene'}]:[])];}));
+    targets.push(...galleryDocuments(this.documents).filter(item => item.entry.kind === 'cg').map(({ entry }) => ({ id: entry.id, name: entry.name, kind: 'gallery' })));
     root.render(createElement(TemplateChooser,{current:this.template,locale:this.locale,preview,manage,targets,hiddenPages:readTemplateSource(this.documents)?.hiddenPages,
       prepare:bridge?.prepareTemplateSwitch?async request=>{protectDrafts();const result=await bridge.prepareTemplateSwitch!(request);if(!result.ok)throw new Error(result.error.message);return result.value;}:undefined,
       applyPlan:async selected=>{protectDrafts();if(selected.blocked||!selected.edit)throw new Error('TEMPLATE_PLAN_BLOCKED');const errors=templateIssues(selected.template);if(errors.length)throw new Error(errors.join('\n'));await this.apply(selected.edit);close();},
@@ -1209,7 +1523,7 @@ export class PageDesigner {
     const styles = Object.assign({}, ...this.documents.map(doc => doc.files)) as Record<string,string>;
     this.surface.style.width=`${snapshot.project.canvas.width}px`;this.surface.style.height=`${snapshot.project.canvas.height}px`;this.surface.style.transformOrigin='top left';
     this.canvas.style.aspectRatio = `${snapshot.project.canvas.width} / ${snapshot.project.canvas.height}`;
-    if(!this.resize){this.resize=new ResizeObserver(()=>this.fitPreview());this.resize.observe(this.canvas.parentElement!);this.resize.observe(this.canvas);}this.fitPreview();
+    if(!this.resize){this.resize=new ResizeObserver(()=>this.scheduleFit());this.resize.observe(this.canvas.parentElement!);this.resize.observe(this.canvas);}this.fitPreview();
     let player:StudioPlayer|null=this.player;
     const previousMount=this.surface.querySelector<HTMLElement>('.designer-preview-mount');
     let mount=previousMount;
@@ -1266,6 +1580,7 @@ export class PageDesigner {
       player.view.navigation.replace(page);if(stale()){retire();return;}
       if(created){this.player?.dispose();mount!.style.position='';mount!.style.visibility='';this.surface.replaceChildren(mount!);}
       this.player=player;this.surface.dataset.previewStatus='ready';this.surface.setAttribute('aria-busy','false');this.surface.dataset.previewMounts=String(this.previewMounts);this.surface.dataset.previewDurationMs=String(performance.now()-started);for(const button of this.inspector.querySelectorAll<HTMLButtonElement>('[data-preview-animation]'))button.disabled=false;
+      if (this.workbench && (this.mode === 'behavior' || this.pageContexts.get(page)?.split)) this.renderBehavior(page);
       this.geometry?.dispose();
       this.geometry = new PreviewGeometry(createId([this.documents, this.template]), mount!, player.view.stageElement,
         this.documents.map(doc => ({ ref: { kind: 'document', id: doc.documentId }, revision: doc.revision })));

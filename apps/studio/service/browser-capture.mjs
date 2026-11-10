@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { CollaborationError } from '@galcraft/collaboration';
 import { parseAnimationResource } from '@galcraft/contracts';
 import { compileCollaborationProject } from '../main/collaboration-compile.mjs';
-import { resolvePreviewEventSource } from '../main/collaboration-preview-target.mjs';
+import { resolvePreviewEventSource } from '../main/collaboration-preview-target.ts';
 import { exercisePluginStage } from '../main/asset-stage-targets.mjs';
+import { awaitPreviewCapture } from '../main/preview-capture-protocol.ts';
 
 /** One service-owned Chromium; every inspection gets an isolated Player profile. */
 export function createBrowserCapture({ origin, host: getHost, executablePath = process.env.GALCRAFT_CHROMIUM_PATH }) {
@@ -36,16 +37,28 @@ export function createBrowserCapture({ origin, host: getHost, executablePath = p
     const context = await (await currentBrowser()).newContext({ viewport });
     try { return await work(await context.newPage()); } finally { await context.close(); }
   }
-  async function capture(input) {
+  /** @param {import('../main/preview-capture-protocol.js').PreviewCaptureOptions} options */
+  async function capture(input, options = {}) {
     const host = getHost(), production = host.production, context = await production.current();
-    const compiled = await compileCollaborationProject({ production, plugins: host.plugins }, context.project);
+    if (options.project && options.project !== context.project) throw new CollaborationError('BLUEPRINT_STALE', 'The project changed before preview.');
+    options.signal?.throwIfAborted();
+    const compiled = await compileCollaborationProject({ production, plugins: host.plugins }, context.project, { template: options.template });
     if (!compiled.snapshot) return { reached: false, issues: compiled.issues, snapshotId: null };
+    options.signal?.throwIfAborted();
     const snapshot = compiled.snapshot;
     const eventSource = resolvePreviewEventSource(snapshot, input);
     return withPage(snapshot.project.canvas, async page => {
-      const pending = new Set();
+      const pending = new Set(), engineHandles = new Set();
       await page.exposeBinding('__galcraftNodeCall', (_source, group, method, args) => {
-        const work = host.call(group, method, ...args); pending.add(work); work.finally(() => pending.delete(work)); return work;
+        const work = host.call(group, method, ...args).then(result => {
+          if (group === 'engines' && result.ok) {
+            if (method === 'resolvePreview') engineHandles.add(result.value.handleId);
+            if (method === 'releasePreview') engineHandles.delete(args[0]);
+          }
+          return result;
+        });
+        pending.add(work);
+        return work.finally(() => pending.delete(work));
       });
       await page.addInitScript(methods => {
         window.studioBridge = Object.fromEntries(Object.entries(methods).map(([group, names]) => [group, Object.fromEntries(names.map(method => [method, (...args) => window.__galcraftNodeCall(group, method, args)]))]));
@@ -53,19 +66,17 @@ export function createBrowserCapture({ origin, host: getHost, executablePath = p
       try {
         await page.goto(`${origin}/?collaborationCapture=1`);
         await page.waitForFunction(() => !!window.__galcraftCollaborationCapture, null, { timeout: 30000 });
-        let timeout;
-        const observation = await Promise.race([
-          page.evaluate(payload => window.__galcraftCollaborationCapture.capture(payload), { snapshot, input }),
-          new Promise((_, reject) => { timeout = setTimeout(() => reject(new CollaborationError('PREVIEW_TIMEOUT', 'Player capture timed out. Query the original callId before capturing again.')), 45000); }),
-        ]).finally(() => clearTimeout(timeout));
+        options.signal?.throwIfAborted();
+        const observation = await awaitPreviewCapture(page.evaluate(payload => window.__galcraftCollaborationCapture.capture(payload), { snapshot, input }), options.signal);
         if (!observation.reached) return { ...observation, issues: [...compiled.issues, ...observation.issues ?? []] };
         if (eventSource) observation.eventSource = eventSource;
-        if(input.observation)return {...observation,issues:[...compiled.issues,...observation.issues??[]]};
+        if(input.observation || input.blueprintTrigger)return {...observation,issues:[...compiled.issues,...observation.issues??[]]};
         const pixels = await page.screenshot({ type: 'png', animations: 'disabled' });
         return { ...observation, pixels, mime: 'image/png', ...snapshot.project.canvas, issues: [...compiled.issues, ...observation.issues ?? []] };
       } finally {
-        await page.evaluate(() => window.__galcraftCollaborationCapture?.dispose()).catch(() => {});
+        await awaitPreviewCapture(page.evaluate(() => window.__galcraftCollaborationCapture?.dispose()), undefined, 3000).catch(() => {});
         await Promise.allSettled([...pending]);
+        await Promise.allSettled([...engineHandles].map(handle => host.call('engines', 'releasePreview', handle)));
       }
     });
   }

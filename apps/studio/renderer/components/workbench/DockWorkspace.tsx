@@ -40,7 +40,7 @@ export type DockWorkspaceProps = {
   onRestoreStageSource?(sceneId: string): void;
   activeView?: string;
   documentViews?: readonly { id: string; preview?: boolean }[];
-  companion?: { id: string; document: string; axis?: 'x' | 'y' };
+  companion?: { id: string; document: string; axis?: 'x' | 'y'; preserveSidebars?: boolean };
   retainStowedView?(id: string): boolean;
   createDefaultLayout?(preset: LayoutPreset): ZonedLayout;
   initialLayout?: ZonedLayout;
@@ -483,7 +483,8 @@ export function DockWorkspace(props: DockWorkspaceProps) {
     }));
     const width = host.current?.clientWidth || size.width;
     const horizontal = split('x');
-    const horizontalFits = minimum(horizontal, 'x', minSize) <= width - sideRailWidth.left - sideRailWidth.right;
+    const currentInsets = companion.preserveSidebars ? bounds(next).leftInset + bounds(next).rightInset : 0;
+    const horizontalFits = minimum(horizontal, 'x', minSize) <= width - sideRailWidth.left - sideRailWidth.right - currentInsets;
     next.tree = companion.axis ? split(companion.axis) : horizontalFits ? horizontal : split('y');
     next.kept.push(companion.id);
     return true;
