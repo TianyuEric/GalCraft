@@ -3,7 +3,7 @@ import { configureMonacoWorkers } from '../components/monaco-workers.js';
 import * as monaco from 'monaco-editor';
 import { connectMonaco, createCommandRegistry, LanguageService, languageId, parse } from '@galcraft/dsl';
 import type { CommandSpec, Id, Ref, Variable } from '@galcraft/contracts';
-import type { ConditionMetadata } from '@galcraft/dsl';
+import type { ConditionMetadata, MonacoContext } from '@galcraft/dsl';
 import type { SceneSource } from './controller.js';
 
 type Input = { container: HTMLElement; scene: SceneSource; engineVersion: string; wordWrap: boolean; fontSize: number;
@@ -16,17 +16,36 @@ type Input = { container: HTMLElement; scene: SceneSource; engineVersion: string
   onComposition?(active: boolean): void;
   initialText?: string; onDraft(text: string | null): void; onCommit(text: string): Promise<boolean> };
 
+type LanguageModel = Parameters<Parameters<typeof connectMonaco>[2]>[0];
+const languageContexts = new Map<LanguageModel, () => MonacoContext>();
+const unboundContext: MonacoContext = { documentId: '000000', revision: 0, registry: new Map(), references: [], variables: [], issues: [] };
+let languageConnection: ReturnType<typeof connectMonaco> | null = null;
+
+function releaseLanguageIfIdle(): void {
+  if (languageContexts.size) return;
+  languageConnection?.dispose();
+  languageConnection = null;
+}
+
 export async function mountScriptEditor(input: Input): Promise<{ flush(): Promise<boolean>; update(next: Input): void; dispose(): void }> {
   configureMonacoWorkers();
-  const service = new LanguageService();
   let registry = createCommandRegistry(input.engineVersion, input.pluginCommands ?? []);
-  const connection = connectMonaco(monaco as never, service, model => ({ documentId: input.scene.documentId, revision: input.scene.revision,
-    registry, references: input.references, variables: input.variables, pluginConditions: input.pluginConditions, locale:input.locale,
+  // Monaco providers apply to every model of a language, including the other visible scene panes.
+  const connection = languageConnection ??= connectMonaco(monaco as never, new LanguageService(),
+    model => languageContexts.get(model)?.() ?? unboundContext);
+  let editor: ReturnType<typeof monaco.editor.create>;
+  try {
+    editor = monaco.editor.create(input.container, { value: input.initialText ?? input.scene.text, language: languageId,
+      automaticLayout: true, minimap: { enabled: false }, wordWrap: input.wordWrap ? 'on' : 'off', fontSize: input.fontSize,
+      theme: input.container.closest('[data-theme="dark"]') ? 'vs-dark' : 'vs' });
+  } catch (error) {
+    releaseLanguageIfIdle(); throw error;
+  }
+  const model = editor.getModel()!;
+  languageContexts.set(model, () => ({ documentId: input.scene.documentId, revision: input.scene.revision,
+    registry, references: input.references, variables: input.variables, pluginConditions: input.pluginConditions, locale: input.locale,
     issues: parse({ documentId: input.scene.documentId, revision: input.scene.revision, text: model.getValue() }).issues }));
-  const editor = monaco.editor.create(input.container, { value: input.initialText ?? input.scene.text, language: languageId,
-    automaticLayout: true, minimap: { enabled: false }, wordWrap: input.wordWrap ? 'on' : 'off', fontSize: input.fontSize,
-    theme: input.container.closest('[data-theme="dark"]') ? 'vs-dark' : 'vs' });
-  const model = editor.getModel()!; connection.updateMarkers(model);
+  connection.updateMarkers(model);
   const reveal = (offset: number) => {
     const position = model.getPositionAt(offset);
     editor.setPosition(position);
@@ -113,6 +132,8 @@ export async function mountScriptEditor(input: Input): Promise<{ flush(): Promis
   }, dispose: () => {
     input.onDraft(userDraft ? model.getValue() : null);
     if (composing) input.onComposition?.(false);
-    cursor.dispose(); selection.dispose(); scroll.dispose(); change.dispose(); blur.dispose(); compositionStart.dispose(); compositionEnd.dispose(); editor.dispose(); model.dispose(); connection.dispose();
+    cursor.dispose(); selection.dispose(); scroll.dispose(); change.dispose(); blur.dispose(); compositionStart.dispose(); compositionEnd.dispose();
+    languageContexts.delete(model);
+    editor.dispose(); model.dispose(); releaseLanguageIfIdle();
   } };
 }

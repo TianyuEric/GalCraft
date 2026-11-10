@@ -20,6 +20,11 @@ const sourceKey = source => JSON.stringify([source.documentId, source.revision,
   source.statementId ?? null, source.field ?? null, source.range ?? null]);
 const commandFields = new Map(CoreCommandSpecs.map(spec => [spec.key, spec.fields]));
 
+function incompleteVariantReview([first, ...remaining]) {
+  const error = { ...first, severity: 'error' };
+  return { ok: false, error, issues: [error, ...remaining] };
+}
+
 function walkCommandAssets(command, args, matches, add, parts = []) {
   const fields = commandFields.get(command);
   if (!fields) return false;
@@ -197,6 +202,7 @@ export class StudioAssets {
   #thumbnailLeases = [];
   #preparedMatting = new Map();
   #renamePlans = new Map();
+  #variantSwitches = new WeakMap();
   #resourceProcessing = new WeakMap();
   #processorCalls = new Map();
   #targetVerification = false;
@@ -607,15 +613,82 @@ export class StudioAssets {
     if (!current) return fail('ASSET_INDEX_MISSING', '请先打开作品', 'M04');
     return this.#applyIndex(new AssetCatalog(current.index).planRename(changes), '重命名素材');
   }
-  async prepareCatalogEdit(input) {
-    const current=this.current();if(!current)return fail('ASSET_INDEX_MISSING','Open a project with an asset index first.','M04');
-    const references=await this.readReferences(current.session,input.assetId),lease=await this.acquireTypes(current.session);
+  async prepareCatalogEdit(input, current = this.current(), references = undefined) {
+    if(!current)return fail('ASSET_INDEX_MISSING','Open a project with an asset index first.','M04');
+    references ??= await this.readReferences(current.session,input.assetId);
+    if (input.action === 'prepareVariantSwitch' && references.warnings.length) return incompleteVariantReview(references.warnings);
+    const lease=await this.acquireTypes(current.session);
     try {const catalog=this.catalog(current,references.value,lease.types);
       if(input.action==='rename')return catalog.planRename([{id:input.assetId,name:input.name}]);
-      if(input.action==='prepareVariantSwitch')return catalog.planActiveVariant(input.assetId,input.variantId);
+      if(input.action==='prepareVariantSwitch'){
+        const planned=catalog.planActiveVariant(input.assetId,input.variantId);
+        return planned.ok ? ok({...planned.value,floatingRefs:references.value.filter(reference=>reference.variantId===null)}) : planned;
+      }
       if(input.action==='setMetadata')return catalog.planMetadata([input.assetId],asset=>({...asset,...input.fields}));
       return fail('ASSET_ACTION','Unknown catalog edit action.','M04');
     }finally{await lease.release();}
+  }
+
+  async prepareVariantSwitch({ assetId, variantId, expectedRevision }) {
+    const current = this.current(), asset = current?.index.data.assets.find(item => item.id === assetId);
+    if (!current || !asset || asset.revision !== expectedRevision)
+      return fail('ASSET_VARIANT_SWITCH_STALE', '素材已变化，请刷新后重新审阅版本切换。', 'M04', ['compare']);
+    if (asset.activeVariantId === variantId)
+      return fail('ASSET_VARIANT_ALREADY_ACTIVE', '该版本已经是活动版本。', 'M04');
+    const { session } = current;
+    const references = await this.readReferences(session, assetId);
+    const prepared = await this.prepareCatalogEdit({ action: 'prepareVariantSwitch', assetId, variantId }, current, references);
+    if (!prepared.ok) return prepared;
+    if (session !== this.projectDocuments.currentSession) return fail('PROJECT_STALE', '作品已切换，请重新审阅版本切换。', 'M04', ['compare']);
+    const { edit, floatingRefs: affectedReferences } = prepared.value;
+    const expected = [...edit.expected];
+    for (const { source } of affectedReferences) {
+      if (source && !expected.some(version => version.ref.id === source.documentId))
+        expected.push({ ref: { kind: 'document', id: source.documentId }, revision: source.revision });
+    }
+    const planned = session.planEdit({ label: '切换素材活动版本', origin: 'field', expected, patches: edit.indexPatches,
+      requiredRefs: edit.requiredRefs, preparedAssets: edit.preparedAssets });
+    if (!planned.ok) return planned;
+    let plans = this.#variantSwitches.get(session);
+    if (!plans) { plans = new Map(); this.#variantSwitches.set(session, plans); }
+    const planId = planned.value.planId;
+    plans.set(planId, { assetId, affectedReferences });
+    return ok({ planId, expected, beforeVariantId: asset.activeVariantId, afterVariantId: variantId, affectedReferences });
+  }
+
+  async applyVariantSwitch({ planId, expected }) {
+    const session = this.projectDocuments.currentSession;
+    const plans = session && this.#variantSwitches.get(session);
+    const reviewed = plans?.get(planId);
+    if (!reviewed || !session.editPlans.has(planId))
+      return fail('ASSET_VARIANT_SWITCH_STALE', '版本切换计划已失效，请重新审阅。', 'M04', ['compare']);
+    const checked = await this.reviewedVariantScope(session, reviewed.assetId, reviewed.affectedReferences);
+    const stillCurrent = checked.ok ? checked.value() : checked;
+    if (!stillCurrent.ok) {
+      if (stillCurrent.error.code === 'ASSET_VARIANT_SWITCH_STALE') {
+        plans.delete(planId);
+        session.editPlans.delete(planId);
+      }
+      return stillCurrent;
+    }
+    const applied = session.applyEdit(planId, expected);
+    if (applied.ok) plans.delete(planId);
+    return applied;
+  }
+
+  async reviewedVariantScope(session, assetId, affectedReferences) {
+    const revisions = new Map([...session.documents].map(([id, document]) => [id, document.revision]));
+    const references = await this.readReferences(session, assetId);
+    if (references.warnings.length) return incompleteVariantReview(references.warnings);
+    const keys = items => items.map(({ owner, source, usage, required }) => JSON.stringify([owner.kind, owner.id,
+      source ? [source.documentId, source.revision, source.statementId, source.eventId, source.field, source.range?.start, source.range?.end] : null,
+      usage, required])).sort();
+    const stale = () => fail('ASSET_VARIANT_SWITCH_STALE', 'The asset references changed. Prepare and review the variant switch again.', 'M04', ['compare']);
+    if (JSON.stringify(keys(references.value.filter(reference => reference.variantId === null))) !== JSON.stringify(keys(affectedReferences))) return stale();
+    const guard = () => session === this.projectDocuments.currentSession && session.documents.size === revisions.size
+      && [...session.documents].every(([id, document]) => revisions.get(id) === document.revision) ? ok(undefined) : stale();
+    const current = guard();
+    return current.ok ? ok(guard) : current;
   }
   async lookupImport(context) {
     const path=join(context.projectRoot??this.projectDocuments.currentRoot,'.galcraft','asset-import-results',`${context.sessionId}-${context.callId}.json`);
@@ -633,8 +706,9 @@ export class StudioAssets {
       values: new Map(input.values.map(value => [value.assetId, value])) });
     if (!planned.ok) return planned;
     const planId = createId();
-    this.#renamePlans.set(planId, { projectId: current.session.projectId, edit: planned.value.edit });
-    return ok({ planId, names: planned.value.names, conflicts: planned.value.conflicts,
+    this.#renamePlans.set(planId, { projectId: current.session.projectId, indexRevision: current.index.revision, edit: planned.value.edit });
+    const versions = new Map(current.index.data.assets.map(asset => [asset.id, asset.activeVariantId]));
+    return ok({ planId, names: planned.value.names.map(name => ({ ...name, variantId: versions.get(name.assetId) })), conflicts: planned.value.conflicts,
       indexRevision: current.index.revision });
   }
 
@@ -643,14 +717,23 @@ export class StudioAssets {
     const current = this.current();
     if (!plan || !current || plan.projectId !== current.session.projectId)
       return fail('RENAME_PLAN_MISSING', '批量命名计划不属于当前作品', 'M04');
+    const stale = () => {
+      this.#renamePlans.delete(planId);
+      return fail('PLAN_STALE', '素材索引已变化，请重新预览批量名称及版本', 'M04', ['compare']);
+    };
+    if (current.index.revision !== plan.indexRevision) return stale();
     const applied = await this.#applyIndex(ok(plan.edit), '批量命名素材');
+    if (!applied.ok && this.current()?.index.revision !== plan.indexRevision) return stale();
     if (applied.ok) this.#renamePlans.delete(planId);
     return applied;
   }
 
-  async remove(ids) {
+  /** @param {import('@galcraft/contracts').Id[]} ids @param {{ projectId: import('@galcraft/contracts').Id; indexRevision: number }} [expected] */
+  async remove(ids, expected) {
     const current = this.current();
     if (!current) return fail('ASSET_INDEX_MISSING', '请先打开作品', 'M04');
+    const stale = () => fail('PLAN_STALE', '素材索引已变化，请重新核对移除范围', 'M04', ['compare']);
+    if (expected && (expected.projectId !== current.session.projectId || expected.indexRevision !== current.index.revision)) return stale();
     const typeLease = await this.acquireTypes(current.session);
     try {
       for (const asset of current.index.data.assets) for (const variant of asset.variants) {
@@ -666,7 +749,9 @@ export class StudioAssets {
         !document.files['assets/index.json'] && Object.values(document.files).some(content => content.includes(id)));
       if (used) return fail('ASSET_REFERENCED', `素材 ${id} 仍被作品引用`, 'M04', ['locate']);
     }
-    return this.#applyIndex(indexEdit(current.index, current.index.data.assets.filter(asset => !selected.has(asset.id))), '移除素材');
+    if (this.projectDocuments.currentSession !== current.session) return stale();
+    const result = await this.#applyIndex(indexEdit(current.index, current.index.data.assets.filter(asset => !selected.has(asset.id))), '移除素材');
+    return expected && !result.ok && (result.error.code === 'EDIT_CONFLICT' || result.error.code === 'PROJECT_STALE') ? stale() : result;
   }
 
   async #applyIndex(edit, label, options = {}) {

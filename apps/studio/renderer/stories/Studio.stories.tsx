@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { mountAuthoring } from '../authoring/view.js';
 import { studioFixture, type ProductState } from './studio-fixture.js';
 import { componentSceneRequest } from './page-component-fixture.js';
-import { figureId, productSnapshot } from './product-fixture.js';
+import { figureId, figureVariantId, productSnapshot } from './product-fixture.js';
 import { FixtureIds } from '@galcraft/contracts/fixtures';
 import { expect, fireEvent, userEvent, waitFor, within } from 'storybook/test';
 
@@ -16,8 +16,7 @@ function StudioPage({ page, state='normal', locale='zh-CN', theme='light',compon
     setError('');
     if (!root.current) return;
     let active = true;
-    // Enter the requested workspace before injecting a refresh failure/loading state.
-    // These routes await their first query before making the page active.
+    // Mount the requested tools before injecting a refresh failure/loading state.
     const deferredState = ['assets', 'production'].includes(page) && (state === 'failed' || state === 'loading');
     const fixture=studioFixture(deferredState ? 'normal' : state,locale,theme);
     const {services}=fixture;
@@ -33,8 +32,8 @@ function StudioPage({ page, state='normal', locale='zh-CN', theme='light',compon
       if(components)await workspace.openDocument({kind:'page',objectId:'component-workspace',title:'基础组件'});
       if (deferredState && active) {
         fixture.setState(state);
-        // Production's mounted session polls; assets refreshes through the same route.
-        if (page === 'assets') void workspace.navigate(page);
+        // Production's mounted session polls; asset refresh is independent of navigation.
+        if (page === 'assets') void workspace.showAssets();
       }
     }).catch(reason => { if (active) setError(String(reason)); });
     return () => {
@@ -54,12 +53,74 @@ export const Projects: Story = { args: { page: 'projects' } };
 export const Editor: Story = { args: { page: 'editor' } };
 export const Assets: Story = { args: { page: 'assets' } };
 export const AssetsDark: Story = { args: { page: 'assets', theme: 'dark' } };
+export const AssetToCharacter: Story = {
+  args: { page: 'editor' },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const library = () => canvasElement.querySelector<HTMLElement>('[data-view="studio-assets"]');
+    const directory = () => canvasElement.querySelector<HTMLElement>('[data-view="studio-asset-directory"]');
+    const row = () => library()?.querySelector<HTMLElement>(`[data-plugin-asset-id="${figureId}"]`);
+    const scene = () => canvasElement.querySelector<HTMLElement>('.authoring-scene-views');
+    await waitFor(() => expect(scene()).toBeVisible());
+    await userEvent.click(await canvas.findByRole('button', { name: '素材库' }));
+    await waitFor(() => expect(row()).toBeVisible(), { timeout: 30000 });
+    await userEvent.click(row()!.querySelector<HTMLElement>('.asset-row-name')!);
+    const preview = () => canvasElement.querySelector<HTMLElement>(`[data-view="asset:${figureId}"] [data-asset-preview]`);
+    await expect(scene()).toBeVisible();
+    await expect(preview()).toBeNull();
+    await expect(directory()).toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: '工作面' }));
+    await userEvent.click(await body.findByRole('menuitem', { name: '素材管理' }));
+    await waitFor(() => expect(preview()).toHaveAttribute('data-preview-variant', figureVariantId));
+    await userEvent.click(within(preview()!).getByRole('button', { name: '绑定角色差分' }));
+    const dialog = within(await body.findByRole('dialog', { name: '绑定共同差分' }));
+    const name = dialog.getByRole('textbox');
+    await userEvent.clear(name);
+    await userEvent.type(name, '长中文名角色差分·夜色里重新抬起头的林舟');
+    await userEvent.click(dialog.getByRole('button', { name: '绑定差分' }));
+    const character = () => canvasElement.querySelector<HTMLElement>(`[data-view="character:${FixtureIds.an}"]`);
+    await waitFor(() => expect(character()).toBeVisible());
+    await waitFor(() => expect(character()).toHaveTextContent('长中文名角色差分·夜色里重新抬起头的林舟'));
+    await expect(library()).toBeVisible();
+    canvasElement.dataset.assetCharacterAcceptance = 'passed';
+  },
+};
+export const AssetToCharacterDusk: Story = { ...AssetToCharacter, args: { page: 'editor', theme: 'dark' } };
+export const MixedSceneGroups: Story = {
+  args: { page: 'editor', locale: 'en' },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const bookshop = productSnapshot().scenes[1]!.scene;
+    const pane = (id: string) => canvasElement.querySelector<HTMLElement>(`[data-view="scene:${id}"]`)!;
+    await waitFor(() => expect(pane(FixtureIds.street)).toBeVisible());
+    await userEvent.dblClick(canvasElement.querySelector<HTMLElement>(`[data-node-id="${bookshop.id}"]`)!);
+    const tab = await canvas.findByRole('tab', { name: bookshop.name });
+    await userEvent.click(canvas.getByRole('button', { name: 'Plot outline' }));
+    tab.focus(); await userEvent.keyboard('{Shift>}{F10}{/Shift}');
+    await userEvent.click(await body.findByRole('menuitem', { name: 'Split right' }));
+    await waitFor(() => expect(pane(FixtureIds.street)).toBeVisible());
+    await expect(pane(bookshop.id)).toBeVisible();
+    for (const [id, docId] of [[FixtureIds.street, FixtureIds.streetDocument], [bookshop.id, FixtureIds.bookshopDocument]]) {
+      const group = pane(id!);
+      await userEvent.click(within(group).getByRole('button', { name: 'Writing' }));
+      await waitFor(() => expect(group.querySelector(`[data-scene-document="${docId}"] [data-scene-view="writing"]`)).toBeVisible());
+    }
+    await expect(pane(FixtureIds.street).querySelector('[data-scene-view="writing"]')).toBeVisible();
+    await expect(pane(bookshop.id).querySelector('[data-scene-view="writing"]')).toBeVisible();
+    canvasElement.dataset.mixedSceneGroups = 'passed';
+  },
+};
 export const PageDesigner:Story={args:{page:'pages'}};
 export const PageDesignerDark:Story={args:{page:'pages',theme:'dark'}};
 export const PageComponents:Story={args:{page:'pages',components:true},play:async({canvas,canvasElement})=>{
-  await canvas.findByRole('button',{name:'展开 基础组件工作页'},{timeout:60000});
-  await userEvent.click(canvas.getByRole('button',{name:'展开 基础组件工作页'}));
+  const target = () => canvasElement.querySelector<HTMLElement>('[data-view="page:component-workspace"]');
+  await waitFor(() => expect(target()).toBeVisible());
+  const document = within(target()!);
+  await userEvent.click(await document.findByText('当前文档工具', { exact: true }));
   const tree=()=>within(canvas.getByRole('tree',{name:'页面组件'}));
+  await waitFor(() => expect(tree().getByText('基础组件工作页')).toBeVisible());
+  const expand = tree().queryByRole('button', { name: '展开 基础组件工作页' });
+  if (expand) await userEvent.click(expand);
   await userEvent.click(tree().getByText('页面数值滑杆',{exact:true}));
   await userEvent.selectOptions(canvas.getByLabelText('控件值 · 来源'),'data');
   await userEvent.selectOptions(canvas.getByLabelText('控件值 · 属性'),'preferences.volumes.master');
@@ -85,11 +146,14 @@ export const PageComponents:Story={args:{page:'pages',components:true},play:asyn
   await userEvent.click(canvas.getByRole('button',{name:'应用交互'}));
   await waitFor(()=>expect(previousAction.isConnected).toBe(false));
   await waitFor(()=>expect(canvasElement.querySelector('[data-action-index="0"] select[aria-label="动作类型"]')).toHaveValue('setLocal'));
+  await userEvent.click(document.getByText('当前文档工具', { exact: true }));
   await userEvent.click(canvas.getByRole('button',{name:'导航预览'}));
-  const player=canvasElement.querySelector('.designer-player')!;
-  await waitFor(()=>expect(player.querySelector('[data-gc-page="component-workspace"]')).toBeTruthy());
-  await userEvent.click(within(player as HTMLElement).getByRole('button',{name:'打开标题页'}));
-  await waitFor(()=>expect(player.querySelector('[data-gc-page="character-intro"]')).toBeTruthy());
+  await waitFor(() => {
+    const player = canvasElement.querySelector<HTMLElement>('.designer-player[aria-hidden="false"][data-preview-status="ready"]');
+    expect(player).toBeTruthy();
+    expect(player!.querySelector('[data-gc-page="component-workspace"]')).toBeTruthy();
+    expect(within(player!).getByRole('button', { name: '打开标题页' })).toBeVisible();
+  });
   canvasElement.dataset.bindingAcceptance='passed';
 }};
 export const PageComponentsDark:Story={args:{page:'pages',components:true,theme:'dark'}};
@@ -126,7 +190,7 @@ export const PinnedSceneProperties: Story = {
     await userEvent.click(companion);
     await waitFor(() => expect(canvas.getByRole('button', { name: /^Direction$/ })).toHaveAttribute('aria-pressed', 'true'));
     await userEvent.click(canvas.getByRole('button', { name: /^Close Direction$/ }));
-    await userEvent.click(await canvas.findByRole('button', { name: /^Layout$/ }));
+    await userEvent.click(await canvas.findByRole('button', { name: /^Workfaces$/ }));
     await userEvent.click(await body.findByRole('menuitem', { name: 'Writing and stage' }));
     await userEvent.click(await canvas.findByRole('button', { name: /^Direction$/ }));
     await waitFor(() => expect(sceneCard(FixtureIds.statements[0]!)).toBeVisible());
@@ -144,8 +208,18 @@ export const PinnedSceneProperties: Story = {
     const speaker = canvasElement.querySelector<HTMLSelectElement>('.authoring-inspector-fields [data-field="speaker"] select')!;
     await userEvent.selectOptions(speaker, speaker.value ? '' : FixtureIds.an);
     await waitFor(() => expect(properties()).toHaveAttribute('data-source-revision', '2'));
-    await expect(canvasElement.querySelector('.authoring-scene-views')).toHaveAttribute('data-scene-revision', '1');
-    await expect(canvasElement.querySelector('.authoring-scene-views')).toHaveAttribute('data-scene-document', FixtureIds.bookshopDocument);
+    const activeBookshop = canvasElement.querySelector(`[data-view="scene:${bookshop.id}"] .authoring-scene-views`);
+    await expect(activeBookshop).toHaveAttribute('data-scene-revision', '1');
+    await expect(activeBookshop).toHaveAttribute('data-scene-document', FixtureIds.bookshopDocument);
+    await userEvent.click(canvas.getByRole('button', { name: 'Resume stage following' }));
+    await waitFor(() => expect(stage()).toHaveAttribute('data-source-document', FixtureIds.bookshopDocument));
+    await userEvent.click(canvas.getByRole('button', { name: /^Workbench preferences$/ }));
+    await waitFor(() => expect(stage()).toHaveTextContent('Open a scene document to resume following.'));
+    await expect(within(stage()!).getByRole('button', { name: 'Pin stage source' })).toBeDisabled();
+    await expect(properties()).toHaveAttribute('data-source-document', FixtureIds.streetDocument);
+    await userEvent.click(canvas.getByRole('tab', { name: bookshop.name }));
+    await waitFor(() => expect(stage()).toHaveAttribute('data-source-document', FixtureIds.bookshopDocument));
+    canvasElement.dataset.pinnedSceneProperties = 'passed';
   },
 };
 export const PinnedInlineEvent: Story = {
@@ -154,6 +228,7 @@ export const PinnedInlineEvent: Story = {
     const body = within(canvasElement.ownerDocument.body);
     const properties = () => canvasElement.querySelector<HTMLElement>('[data-source-panel="inspector"]');
     await userEvent.click(await canvas.findByRole('button', { name: /^Writing$/ }));
+    await userEvent.click(await canvas.findByRole('button', { name: /^Inspector$/ }));
     const line = () => canvasElement.querySelector<HTMLElement>(`.authoring-center[data-scene-view="writing"] [data-statement-id="${FixtureIds.statements[0]}"]`)!;
     await waitFor(() => expect(line()).toBeVisible());
     await userEvent.click(within(line()).getByRole('button', { name: 'More command actions' }));
@@ -165,7 +240,8 @@ export const PinnedInlineEvent: Story = {
     const eventId = properties()!.dataset.sourceEvent;
     await userEvent.click(await canvas.findByRole('button', { name: 'Pin properties source' }));
     await userEvent.dblClick(canvasElement.querySelector<HTMLElement>(`[data-node-id="${FixtureIds.bookshop}"]`)!);
-    await waitFor(() => expect(canvasElement.querySelector('.authoring-scene-views')).toHaveAttribute('data-scene-document', FixtureIds.bookshopDocument));
+    const bookshop = () => canvasElement.querySelector(`[data-view="scene:${FixtureIds.bookshop}"] .authoring-scene-views`);
+    await waitFor(() => expect(bookshop()).toHaveAttribute('data-scene-document', FixtureIds.bookshopDocument));
     await expect(properties()).toHaveAttribute('data-source-event', eventId);
     await userEvent.click(await canvas.findByRole('button', { name: 'Edit inline event' }));
     const edit = within(await body.findByRole('dialog', { name: /^Inline wait$/ }));
@@ -176,7 +252,7 @@ export const PinnedInlineEvent: Story = {
     await userEvent.click(edit.getByRole('button', { name: /^Confirm$/ }));
     await waitFor(() => expect(properties()).toHaveAttribute('data-source-revision', '3'));
     await expect(properties()).toHaveAttribute('data-source-event', eventId);
-    await expect(canvasElement.querySelector('.authoring-scene-views')).toHaveAttribute('data-scene-revision', '1');
+    await expect(bookshop()).toHaveAttribute('data-scene-revision', '1');
     await userEvent.click(await canvas.findByRole('button', { name: 'Edit inline event' }));
     const clickWait = within(await body.findByRole('dialog', { name: /^Inline wait$/ }));
     const automatic = clickWait.getByRole('spinbutton', { name: /^Wait in auto mode \(ms\)/ });

@@ -54,7 +54,7 @@ it('paginates the actual M04 index, retains source names, and applies recoverabl
 it('reviews complete floating-reference impact and protects author operations during undo',async()=>{
   const {invoke,assets}=await setup(),references=await invoke({action:'references',assetId:assets[0].id});expect(references.result.references.filter(ref=>ref.variantId===null)).toHaveLength(1);expect(references.result.references.filter(ref=>ref.variantId!==null)).toHaveLength(1);
   const expected=[version('Index1',1),...references.result.documents],prepared=await invoke({action:'prepareVariantSwitch',assetId:assets[0].id,variantId:'Vari02',expected},'switch-plan');expect(prepared.state).toBe('completed');expect(prepared.result.affectedReferences).toHaveLength(1);
-  const apply=project.applyExternalEdit.bind(project);project.applyExternalEdit=async(...args)=>{await apply(...args);throw new Error('Variant response lost after commit');};const lost=await invoke({action:'applyVariantSwitch',planId:prepared.result.planId,expected},'switch-apply');expect(lost.state).toBe('uncertain');project.applyExternalEdit=apply;service.variantPlans.clear();const applied=await service.core.query(sessionIdOf(prepared),'switch-apply');expect(applied.state).toBe('completed');expect(applied.result.affectedReferences).toEqual(prepared.result.affectedReferences);expect(applied.result.asset.activeVariantId).toBe('Vari02');
+  const apply=project.applyExternalEdit.bind(project);project.applyExternalEdit=async(...args)=>{await apply(...args);throw new Error('Variant response lost after commit');};const lost=await invoke({action:'applyVariantSwitch',planId:prepared.result.planId,expected},'switch-apply');expect(lost.state,JSON.stringify(lost.error)).toBe('uncertain');project.applyExternalEdit=apply;service.variantPlans.clear();const applied=await service.core.query(sessionIdOf(prepared),'switch-apply');expect(applied.state).toBe('completed');expect(applied.result.affectedReferences).toEqual(prepared.result.affectedReferences);expect(applied.result.asset.activeVariantId).toBe('Vari02');
   const record=await invoke({action:'get',operationId:applied.result.receipt.operationId},undefined,'galcraft_history');expect(record.result.changes).not.toHaveLength(0);
   const undo=await invoke({action:'prepareUndo',operationId:applied.result.receipt.operationId,documentId:'Index1'},undefined,'galcraft_history');expect(undo.result.issues).toEqual([]);
   const undone=await invoke({action:'undo',planId:undo.result.plan.planId,expected:undo.result.plan.expected},'undo-switch','galcraft_history');expect(undone.state).toBe('completed');
@@ -62,6 +62,19 @@ it('reviews complete floating-reference impact and protects author operations du
   const index=service.assets.current().index,edit=await service.assets.prepareCatalogEdit({action:'setMetadata',assetId:assets[0].id,fields:{tags:['作者修改']}}),plan=project.planEdit({label:'Author change',origin:'field',expected:edit.value.expected,patches:edit.value.indexPatches,preparedAssets:[],requiredRefs:[]});expect(project.applyEdit(plan.value.planId,edit.value.expected).ok).toBe(true);
   const affected=await invoke({action:'prepareUndo',operationId:applied.result.receipt.operationId,documentId:'Index1'},undefined,'galcraft_history');expect(affected.result.issues[0].code).toBe('AUTHOR_REVIEW_REQUIRED');
   const denied=await invoke({action:'undo',planId:affected.result.plan.planId,expected:affected.result.plan.expected},'author-protected','galcraft_history');expect(denied.state).toBe('failed');expect(denied.error.code).toBe('AUTHOR_REVIEW_REQUIRED');
+});
+it('rejects a reviewed asset switch when a new floating reference appears in another document',async()=>{
+  const other={documentId:'Ref002',revision:1,format:'json',files:{'other.json':JSON.stringify({schemaVersion:1,documentId:'Ref002',revision:1,data:{backgroundImage:null}})}};
+  const {invoke,assets}=await setup([other]);
+  const expected=[version('Index1',1),version('Ref001',1)];
+  const prepared=await invoke({action:'prepareVariantSwitch',assetId:assets[0].id,variantId:'Vari02',expected},'switch-before-reference');
+  expect(prepared.state).toBe('completed');
+  const changed=[version('Ref002',1)], edit=project.planEdit({label:'Add floating reference',origin:'field',expected:changed,
+    patches:[{kind:'json',documentId:'Ref002',changes:[{path:'/data/backgroundImage',before:null,after:assets[0].id,op:'set'}]}],preparedAssets:[],requiredRefs:[]});
+  expect(project.applyEdit(edit.value.planId,changed).ok).toBe(true);
+  const applied=await invoke({action:'applyVariantSwitch',planId:prepared.result.planId,expected},'switch-after-reference');
+  expect(applied).toMatchObject({state:'failed',error:{code:'ASSET_VARIANT_SWITCH_STALE'}});
+  expect(service.assets.get(assets[0].id).value.activeVariantId).toBe(assets[0].activeVariantId);
 });
 it('keeps review files outside projects, reports missing/expired media and cleans release/end/restart/stop',async()=>{
   const {session}=await setup(),context={sessionId:session.id,callId:'media-one',toolKey:'galcraft_media',projectId:'Proj01',writeSessionId:'Write01'},source={kind:'preview',projectId:'Proj01',snapshotId:'Snap01',engineVersion:'0.1.0',pluginVersions:[]};

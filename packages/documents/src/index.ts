@@ -577,9 +577,10 @@ export class ProjectSession {
     const planned=this.planEdit(input);if(!planned.ok)return planned;
     await mkdir(dirname(path),{recursive:true});await writeFile(`${path}.tmp`,JSON.stringify(planned.value));await renameWithSharingRetry(`${path}.tmp`,path);return planned;
   }
-  async applyExternalEdit(planId:Id,expected:VersionRef[],context:import('@galcraft/contracts').CollaborationContext):Promise<Result<EditReceipt>> {
+  async applyExternalEdit(planId:Id,expected:VersionRef[],context:import('@galcraft/contracts').CollaborationContext,beforeApply?:()=>Result<void>):Promise<Result<EditReceipt>> {
     const previous=await this.lookupExternalCall(context);if(previous)return previous;
     const plan=this.editPlans.get(planId);if(!plan)return fail('EDIT_PLAN_MISSING','外部修改计划已失效，请重新准备');
+    const allowed=beforeApply?.();if(allowed&&!allowed.ok)return allowed;
     const result=this.applyEdit(planId,expected);if(!result.ok)return result;
     this.externalCalls[`${context.sessionId}/${context.callId}`]={input:clone(plan.input),result:clone(result)};
     // The working documents and the receipt enter the same atomic recovery image.

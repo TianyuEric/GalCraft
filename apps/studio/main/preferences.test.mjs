@@ -6,6 +6,27 @@ import { randomUUID } from 'node:crypto';
 import { AuthoringPreferences, ConnectionVault } from './preferences.mjs';
 import { DefaultStudioPreferences } from '@galcraft/contracts';
 
+it('restores each project’s asset tool state and exact preview versions alongside old workspace records', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'galcraft-asset-workspace-'));
+  try {
+    const preferences = new AuthoringPreferences(directory);
+    const legacy = { schemaVersion: 1, projectId: 'ProjBB', documentId: 'DocAAA', sceneId: 'SceneA', documentRevision: 2,
+      view: 'script', caret: { statementId: null, field: null, offset: 0, documentOffset: 0 },
+      previousStatementId: null, nextStatementId: null, scroll: { statementId: null, offsetPx: 0, scrollLeft: 0 },
+      updatedAt: '2026-10-25T00:00:00.000Z', workbench: { documents: [], active: 'route:assets' } };
+    const query = { kind: 'image', text: '雨站', offset: 80, limit: 40, folder: ['背景'], sort: 'modified', direction: 'desc', typeFields: { alpha: true } };
+    const restored = { ...legacy, projectId: 'ProjAA', workbench: { documents: [{ id: 'asset:Art001', title: '雨站.png', kind: 'asset', objectId: 'Art001' }],
+      active: 'asset:Art001', assets: { query, selectionQuery: { ...query, offset: 40 }, selectedIds: ['Art001', 'Art002'],
+        selectionRevision: 4, primaryId: 'Art002', primaryVersions: [{ assetId: 'Art002', variantId: 'Ver002' }],
+        previewVersions: [{ assetId: 'Art001', variantId: 'Ver001' }], inspectorPin: { assetId: 'Art001', variantId: 'Ver003' }, scroll: 370.5 } } };
+    await preferences.writeWorkspace(legacy);
+    await preferences.writeWorkspace(restored);
+    const reopened = new AuthoringPreferences(directory);
+    expect(await reopened.readWorkspace('ProjAA')).toEqual(restored);
+    expect(await reopened.readWorkspace('ProjBB')).toEqual(legacy);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 it('restores actual uncommitted fields separately for desktop and browser entries', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'galcraft-input-draft-'));
   try {

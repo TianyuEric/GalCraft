@@ -376,8 +376,11 @@ export class StudioCollaboration {
     if(input.action==='applyVariantSwitch'){
       const saved=this.variantPlans?.get(input.planId),plan=project.editPlans.get(input.planId);
       if(!saved||saved.sessionId!==context.sessionId||!plan)throw new CollaborationError('ASSET_PLAN_EXPIRED','The variant plan has expired. Prepare and review it again.');
-      check({...this.planConstraint(plan),documents:[...new Set([...plan.members,...saved.affectedReferences.map(ref=>ref.source.documentId)])]});
-      const receipt=unwrap(await project.applyExternalEdit(plan.planId,input.expected,context));this.changed();return {action:input.action,asset:assetSummary(unwrap(this.assets.get(saved.assetId))),affectedReferences:saved.affectedReferences,receipt};
+      check({...this.planConstraint(plan),documents:[...new Set([...plan.members,...saved.affectedReferences.flatMap(ref=>ref.source?[ref.source.documentId]:[])])]});
+      const scope=await this.assets.reviewedVariantScope(project,saved.assetId,saved.affectedReferences);
+      const result=scope.ok?await project.applyExternalEdit(plan.planId,input.expected,context,scope.value):scope;
+      if(!result.ok&&result.error.code==='ASSET_VARIANT_SWITCH_STALE'){this.variantPlans.delete(plan.planId);project.editPlans.delete(plan.planId);}
+      const receipt=unwrap(result);this.variantPlans.delete(plan.planId);this.changed();return {action:input.action,asset:assetSummary(unwrap(this.assets.get(saved.assetId))),affectedReferences:saved.affectedReferences,receipt};
     }
     if(!asset)throw new CollaborationError('ASSET_MISSING','The asset does not exist. Query the current index again.');
     if(input.action==='get')return {action:'get',asset,index,issues:[]};

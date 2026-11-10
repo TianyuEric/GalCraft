@@ -6,7 +6,7 @@ import { FixtureAsset, FixtureCharacters, FixtureDsl, FixtureIds, FixtureProject
 import { SceneDecorLayerSchema, type DocumentView, type Result } from '@galcraft/contracts';
 import { parse } from '@galcraft/dsl';
 import { ProjectSession, type SessionOptions } from './index.js';
-import { AuthorOperationDefinitions, AuthorOperationSchema, authoringReferences, characterDraft, mergeCharacterDraft, neutralCharacter, normalizeCharacterVoicePresets, prepareAuthoringEdit, rebaseAuthoringOperation, type AuthorOperation } from './authoring.js';
+import { AuthorOperationDefinitions, AuthorOperationSchema, authoringReferences, characterDraft, characterEdit, mergeCharacterDraft, neutralCharacter, normalizeCharacterVoicePresets, prepareAuthoringEdit, rebaseAuthoringOperation, type AuthorOperation } from './authoring.js';
 const unwrap = <T>(result: Result<T>): T => { if (!result.ok) throw new Error(result.error.message); return result.value; };
 const json = (documentId: string, path: string, data: unknown): DocumentView => ({ documentId, revision: 1, savedRevision: 1, dirty: false, format: 'json', savedFiles: {}, files: { [path]: JSON.stringify({ schemaVersion: 1, documentId, revision: 1, data }) } });
 function documents(): DocumentView[] {
@@ -232,12 +232,47 @@ describe('shared semantic author operations',()=>{
     expect(prepareAuthoringEdit(input,{op:'variable.replace',id:FixtureVariables[0]!.id,replacementId:'LocalB'})).toMatchObject({ok:false,error:{message:expect.stringContaining('LOCAL_SCOPE')}});
   });
   it('creates independent group and difference identities and replaces difference consumers before removal',async()=>{
-    const project=await session();execute(project,{op:'character.group.create',characterId:FixtureIds.an,name:'Casual',assetIds:[]});execute(project,{op:'character.difference.create',characterId:FixtureIds.an,name:'Smile',figure:{assetId:'AssetA',variantId:null},avatar:null,initial:true});execute(project,{op:'character.difference.create',characterId:FixtureIds.an,name:'Neutral',figure:{assetId:'AssetB',variantId:null},avatar:null,initial:false});
+    const project = await session([...documents(), json('IndexA', 'assets/index.json', { assets: [FixtureAsset] })], { resolveRequiredRef: ref => ref.id === FixtureAsset.id });
+    const figure = { assetId: FixtureAsset.id, variantId: null };
+    execute(project,{op:'character.group.create',characterId:FixtureIds.an,name:'Casual',assetIds:[]});execute(project,{op:'character.difference.create',characterId:FixtureIds.an,name:'Smile',figure,avatar:null,initial:true});execute(project,{op:'character.difference.create',characterId:FixtureIds.an,name:'Neutral',figure,avatar:null,initial:false});
     const character=data([...project.documents.values()],`characters/${FixtureIds.an}.json`),[first,second]=character.differences;
     expect(character.groups[0].id).not.toBe(first.id);execute(project,{op:'commands.insert',sceneId:FixtureIds.bookshop,beforeId:null,commands:[{command:'characterDifference',args:{characterId:FixtureIds.an,differenceId:first.id}}]});
     expect(prepareAuthoringEdit([...project.documents.values()],{op:'character.difference.remove',characterId:FixtureIds.an,id:first.id})).toMatchObject({ok:false});
     execute(project,{op:'character.difference.remove',characterId:FixtureIds.an,id:first.id,replacementId:second.id});
     expect(data([...project.documents.values()],`characters/${FixtureIds.an}.json`).initialDifferenceId).toBe(second.id);expect(project.readDocument('SceneB')!.files[`scenes/${FixtureIds.bookshop}/script.gal`]).toContain(second.id);expect(project.readDocument('SceneB')!.files[`scenes/${FixtureIds.bookshop}/script.gal`]).not.toContain(first.id);
+  });
+
+  it('checks exact character image bindings across named operations and forms without blocking unrelated legacy edits', async () => {
+    const other = { ...FixtureAsset, id: 'ImageB', name: 'Other image', activeVariantId: 'VersnB', variants: [{ ...FixtureAsset.variants[0]!, id: 'VersnB' }] };
+    const project = await session([...documents(), json('IndexA', 'assets/index.json', { assets: [FixtureAsset, other] })],
+      { resolveRequiredRef: ref => [FixtureAsset.id, FixtureAsset.activeVariantId, other.id, other.activeVariantId].includes(ref.id) });
+    const current = () => [...project.documents.values()];
+    const figure = { assetId: FixtureAsset.id, variantId: FixtureAsset.activeVariantId };
+    const operation = { op: 'character.difference.create', characterId: FixtureIds.an, name: 'Smile', figure,
+      avatar: { kind: 'image', assetId: other.id, variantId: other.activeVariantId }, initial: true } as const;
+    const broken = { ...operation, avatar: { ...operation.avatar, variantId: figure.variantId } };
+    expect(prepareAuthoringEdit(current(), broken)).toMatchObject({ ok: false, error: { message: expect.stringContaining('does not belong to image Other image') } });
+    const edit = unwrap(prepareAuthoringEdit(current(), operation));
+    expect(edit.expected).toContainEqual({ ref: { kind: 'document', id: 'IndexA' }, revision: 1 });
+    expect(edit.requiredRefs).toEqual([{ kind: 'asset', id: figure.assetId }, { kind: 'variant', id: figure.variantId }, { kind: 'asset', id: other.id }, { kind: 'variant', id: other.activeVariantId }]);
+    const receipt = execute(project, operation);
+    const path = `characters/${FixtureIds.an}.json`;
+    const saved = data(current(), path) as typeof FixtureCharacters[number];
+    expect(saved.differences?.[0]).toMatchObject({ figure, avatar: operation.avatar });
+    const stale = FixtureCharacters[0]!;
+    expect(() => characterEdit({ project: FixtureProject, characters: [stale] }, current(), [{ ...stale, description: 'Retained draft' }])).toThrow('CHARACTER_BASIS_CHANGED');
+    expect(prepareAuthoringEdit(current(), { op: 'character.difference.update', characterId: saved.id, id: saved.differences![0]!.id, changes: { avatar: broken.avatar } })).toMatchObject({ ok: false });
+    const source = { project: FixtureProject, characters: [saved] };
+    expect(() => characterEdit(source, current(), [{ ...saved, differences: [{ ...saved.differences![0]!, figure: { assetId: figure.assetId, variantId: other.activeVariantId } }] }])).toThrow('does not belong');
+    const older = { ...saved, differences: [{ ...saved.differences![0]!, avatar: broken.avatar }] };
+    const legacy = characterEdit({ ...source, characters: [older] }, current().map(document => document.documentId === 'CharAA' ? json('CharAA', path, older) : document), [{ ...older, description: 'Updated profile' }]);
+    expect(legacy.requiredRefs).toEqual([]);
+    expect(legacy.expected).not.toContainEqual({ ref: { kind: 'document', id: 'IndexA' }, revision: 1 });
+    const undo = unwrap(project.planUndo('CharAA', receipt.operationId));
+    unwrap(project.undo(undo.planId));
+    expect(data(current(), path).differences).toBeUndefined();
+    unwrap(project.redo(undo.planId));
+    expect(data(current(), path).differences[0]).toMatchObject({ figure, avatar: operation.avatar });
   });
 
   it('requires explicit caller argument removal when replacing a parameter with a project variable',async()=>{

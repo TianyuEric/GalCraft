@@ -4,7 +4,7 @@ import { prepareNativeDialog } from '../components/motion.js';
 import { actionIcon } from '../components/action-icon.js';
 import './asset-details.css';
 
-export function createAssetDetails(asset: Asset, locale: string, actions: { preview(variantId: string): void | Promise<void>; transparent(): void | Promise<void> }, reference?: { variantId: string | null }): HTMLDialogElement {
+export function createAssetDetails(asset: Asset, locale: string, actions: { preview(variantId: string): void | Promise<void>; transparent(): void | Promise<void> }, reference?: { variantId: string | null }, workbench?: { viewedVariantId: string }): HTMLDialogElement {
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
   const node = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = '') => { const item = document.createElement(tag); item.className = className; item.textContent = text; return item; };
   const button = (label: string, run: () => void | Promise<void>, icon?: string) => { const item = domButton(label, run); if (icon) item.prepend(actionIcon(icon)); return item; };
@@ -31,6 +31,7 @@ export function createAssetDetails(asset: Asset, locale: string, actions: { prev
   variants.append(node('h3', '', t('版本与文件', 'Versions and files', 'バージョンとファイル')));
   for (const [index, variant] of asset.variants.entries()) {
     const row = node('article', 'asset-details-version'); row.dataset.active = String(variant.id === asset.activeVariantId);
+    if (workbench) row.dataset.viewed = String(variant.id === workbench.viewedVariantId);
     const visual = node('div', 'asset-details-visual');
     if (asset.kind === 'image') { const image = node('img'); image.alt = `${asset.name} · ${t('版本', 'Version', 'バージョン')} ${index + 1}`; image.dataset.assetId = asset.id; image.dataset.variantId = variant.id; visual.append(image); }
     else visual.append(actionIcon(asset.kind === 'audio' ? 'music' : asset.kind === 'video' ? 'play' : 'image'));
@@ -43,7 +44,14 @@ export function createAssetDetails(asset: Asset, locale: string, actions: { prev
     const files = node('details', 'asset-details-files'); files.append(node('summary', '', t('查看文件', 'View files', 'ファイルを表示')));
     const fileList = node('ul'); for (const file of variant.files) { const fileItem = node('li'); fileItem.append(node('span', '', file.path), node('small', '', formatBytes(file.bytes))); fileList.append(fileItem); } files.append(fileList); copy.append(files);
     const provenance = node('details'); provenance.append(node('summary', '', t('来源与技术详情', 'Source and technical details', '出典と技術情報')), node('pre', '', JSON.stringify({ id: variant.id, original: variant.id === asset.originalVariantId, processing: variant.processing, metadata: variant.metadata, targets: variant.targets }, null, 2))); copy.append(provenance);
-    row.append(visual, copy, button(t('查看版本', 'View version', 'バージョンを表示'), () => actions.preview(variant.id), 'search')); variants.append(row);
+    const view = button(t('查看版本', 'View version', 'バージョンを表示'), () => actions.preview(variant.id), 'search');
+    if (workbench) {
+      view.ariaLabel = t(`查看版本 ${index + 1}`, `View version ${index + 1}`, `バージョン ${index + 1} を表示`);
+      view.dataset.focusKey = `asset-inspector-version:${variant.id}`;
+      view.dataset.inspectVariant = variant.id;
+      view.ariaPressed = String(variant.id === workbench.viewedVariantId);
+    }
+    row.append(visual, copy, view); variants.append(row);
   }
   body.append(variants); dialog.append(body);
   const footer = node('footer', 'asset-details-footer');

@@ -27,6 +27,77 @@ const sourceVariantId = fixtureId(0xb07);
 const sourcePath = join(root, ...assetFilePath(assetId, sourceVariantId, 'source.png').split('/'));
 const envelope = (documentId, data) => JSON.stringify({ schemaVersion: 1, documentId, revision: 1, data }, null, 2) + '\n';
 let session;
+
+it('requires a new rename or removal review after the confirmed asset versions become stale', async () => {
+  const asset = { ...structuredClone(FixtureAsset), id: assetId };
+  const variant = { ...structuredClone(asset.variants[0]), id: fixtureId(0xb11), parentId: asset.activeVariantId, role: 'transparent' };
+  asset.variants.push(variant);
+  const index = { ...createAssetIndex(indexDocumentId), data: { assets: [asset] } };
+  session = await ProjectSession.createProject(root, projectId, [
+    { documentId: indexDocumentId, revision: index.revision, format: 'json', files: { 'assets/index.json': JSON.stringify(index) } },
+  ]);
+  const service = new StudioAssets({ currentSession: session, currentRoot: root }, '', null, null, null);
+  const expected = { projectId, indexRevision: index.revision };
+  const rename = { assetIds: [assetId], template: '立绘 {number}', values: [{ assetId, chapter: '', character: '', usage: '' }] };
+  const preview = service.planBatchRename(rename);
+  expect(preview).toMatchObject({ ok: true, value: { names: [{ assetId, before: asset.name, variantId: asset.activeVariantId }] } });
+  const switchPlan = await service.prepareVariantSwitch({ assetId, variantId: variant.id, expectedRevision: asset.revision });
+  expect(switchPlan.ok).toBe(true);
+  expect((await service.applyVariantSwitch(switchPlan.value)).ok).toBe(true);
+  expect(await service.applyBatchRename(preview.value.planId)).toMatchObject({ ok: false, error: { code: 'PLAN_STALE' } });
+  expect(service.get(assetId).value.name).toBe(asset.name);
+  const refreshed = service.planBatchRename(rename);
+  expect(refreshed).toMatchObject({ ok: true, value: { names: [{ variantId: variant.id }] } });
+  expect(await service.applyBatchRename(refreshed.value.planId)).toMatchObject({ ok: true });
+  expect(await service.remove([assetId], expected)).toMatchObject({ ok: false, error: { code: 'PLAN_STALE' } });
+  expect(service.get(assetId).value.activeVariantId).toBe(variant.id);
+  expect(await service.remove([assetId], { projectId, indexRevision: service.current().index.revision })).toMatchObject({ ok: true });
+  expect(service.get(assetId)).toMatchObject({ ok: true, value: null });
+});
+
+it('reviews the exact affected documents before changing the active variant and supports M02 undo', async () => {
+  const asset = { ...structuredClone(FixtureAsset), id: assetId };
+  const nextVariant = { ...structuredClone(asset.variants[0]), id: fixtureId(0xb11), parentId: asset.activeVariantId, role: 'transparent' };
+  asset.variants.push(nextVariant);
+  const index = { ...createAssetIndex(indexDocumentId), data: { assets: [asset] } };
+  const scriptPath = `scenes/${sceneId}/script.gal`;
+  const statement = (variantId, id) => `changeBg ${JSON.stringify({ assetId, variantId })} @${id};`;
+  const script = `${statement(null, statementId)}\n${statement(asset.activeVariantId, otherStatementId)}\n`;
+  const newDocumentId = fixtureId(0xb12), newSceneId = fixtureId(0xb13);
+  const newScriptPath = `scenes/${newSceneId}/script.gal`;
+  const initial = `say {"speaker":{"kind":"narrator"},"text":"Placeholder"} @${fixtureId(0xb14)};`;
+  session = await ProjectSession.createProject(root, projectId, [
+    { documentId: indexDocumentId, revision: 1, format: 'json', files: { 'assets/index.json': JSON.stringify(index) } },
+    { documentId: sceneDocumentId, revision: 1, format: 'dsl', files: { [scriptPath]: script } },
+    { documentId: newDocumentId, revision: 1, format: 'dsl', files: { [newScriptPath]: initial } },
+  ]);
+  const service = new StudioAssets({ currentSession: session, currentRoot: root }, '', null, null, null);
+  const prepare = () => service.prepareVariantSwitch({ assetId, variantId: nextVariant.id, expectedRevision: asset.revision });
+  const planned = await prepare();
+  expect(planned).toMatchObject({ ok: true, value: { beforeVariantId: asset.activeVariantId, afterVariantId: nextVariant.id, affectedReferences: [
+    { variantId: null, source: { documentId: sceneDocumentId, statementId } },
+  ] } });
+  expect(planned.value.expected.map(item => item.ref.id)).toEqual([indexDocumentId, sceneDocumentId]);
+  const expected = [{ ref: { kind: 'document', id: newDocumentId }, revision: 1 }];
+  const inserted = session.planEdit({ label: 'Add a floating reference', origin: 'script', expected, requiredRefs: [], preparedAssets: [], patches: [
+    { kind: 'text', documentId: newDocumentId, edits: [{ start: 0, end: initial.length, before: initial, after: statement(null, fixtureId(0xb14)) }] },
+  ] });
+  expect(inserted).toMatchObject({ ok: true });
+  expect(session.applyEdit(inserted.value.planId, expected)).toMatchObject({ ok: true });
+  expect((await service.applyVariantSwitch(planned.value)).error.code).toBe('ASSET_VARIANT_SWITCH_STALE');
+  expect(service.get(assetId).value.activeVariantId).toBe(asset.activeVariantId);
+  const refreshed = await prepare();
+  expect(refreshed.value.affectedReferences).toHaveLength(2);
+  const applied = await service.applyVariantSwitch(refreshed.value);
+  expect(applied.ok).toBe(true);
+  expect(service.get(assetId).value.activeVariantId).toBe(nextVariant.id);
+  expect(session.readDocument(sceneDocumentId).files[scriptPath]).toBe(script);
+  const undo = session.planUndo(indexDocumentId, applied.value.operationId);
+  expect(undo.ok).toBe(true);
+  expect(session.undo(undo.value.planId).ok).toBe(true);
+  expect(service.get(assetId).value.activeVariantId).toBe(asset.activeVariantId);
+});
+
 it('locates and replaces the exact sound asset binding of an inline dialogue event', () => {
   const audio = FixtureVoiceAssets[0], replacement = FixtureVoiceAssets[1];
   const event = { id: 'EventA', offset: 1, kind: 'sound', assetId: audio.id, variantId: audio.activeVariantId };

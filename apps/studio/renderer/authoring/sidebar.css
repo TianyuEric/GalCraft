@@ -1,24 +1,7 @@
-.authoring-nav:has(> .authoring-sidebar) { display:flex; flex-direction:column; min-height:0; overflow:hidden; padding:0; }
-.authoring-nav>.authoring-scene-tree { flex:0 1 38%; min-height:100px; overflow:auto; overscroll-behavior:contain; padding:16px 12px 10px; }
-.authoring-nav>.authoring-scene-tree>button { border-color:transparent; background:transparent; }
-.authoring-nav>.authoring-scene-tree>button.selected { background:var(--soft); color:var(--accent); border-color:transparent; }
-.authoring-nav>.authoring-scene-tree>h2 { margin:0 0 12px; }
-#app .authoring-scene-tree .character-manager-trigger { display:flex;align-items:center;gap:8px;min-height:36px;padding:8px 10px;margin-bottom:16px;background:var(--secondary);color:var(--secondary-foreground);border:1px solid var(--border);font-size:13px;font-weight:500; }
-#app .authoring-scene-tree .character-manager-trigger:hover { background:color-mix(in srgb,var(--primary) 14%,var(--card)); }
-#app .authoring-scene-tree .scene-add { display:flex;align-items:center;gap:8px;min-height:32px;font-size:12px; }
-#app .authoring-scene-tree .scene-add:hover { border-color:var(--primary);background:var(--secondary);color:var(--primary); }
-#app .authoring-scene-tree :is(.scene-add,.scene-row,.character-manager-trigger):focus-visible { outline:2px solid var(--ring);outline-offset:2px; }
-#app .authoring-scene-tree .scene-add:active { background:var(--primary);color:var(--primary-foreground);border-color:var(--primary); }
-#app .authoring-scene-tree .scene-row { padding:8px 10px;font-size:13px;overflow-wrap:anywhere; }
-#app .authoring-scene-tree .scene-row:hover { background:var(--secondary);color:var(--foreground); }
-#app .authoring-scene-tree .scene-row[aria-current='page'] { background:var(--secondary);color:var(--primary);box-shadow:inset 3px 0 var(--primary);font-weight:500; }
 .authoring-sidebar { display:flex; flex:1 1 360px; flex-direction:column; min-height:150px; min-width:0; overflow:hidden; border-top:1px solid var(--line); background:var(--panel); color:var(--ink); }
 .authoring-sidebar [hidden] { display:none!important; }
-.authoring-sidebar .sidebar-tabs { display:flex; flex:none; gap:4px; padding:9px 8px 7px; border-bottom:1px solid var(--line); }
-.authoring-sidebar .sidebar-tabs>button { display:flex; flex:1; align-items:center; justify-content:center; gap:7px; width:auto; margin:0; padding:7px 5px; border:0; border-radius:7px; font-size:12px; text-align:center; background:transparent; color:var(--muted); }
-.authoring-sidebar .sidebar-tabs>button[aria-selected="true"] { background:var(--soft); color:var(--accent); }
-.authoring-sidebar .sidebar-tabs svg,.authoring-sidebar .sidebar-target-picker svg,.authoring-sidebar .sidebar-library-link svg { width:14px; height:14px; flex:none; }
-.authoring-sidebar .sidebar-panel { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
+.authoring-sidebar .sidebar-target-picker svg { width:14px; height:14px; flex:none; }
+.authoring-sidebar .sidebar-source { margin:0; padding:4px 10px; color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
 .authoring-sidebar .sidebar-controls { display:flex; flex-direction:column; flex:none; gap:7px; padding:10px 9px 6px; }
 .authoring-sidebar .sidebar-controls input,.authoring-sidebar .sidebar-controls select { width:100%; min-width:0; padding:7px 8px; border-radius:7px; font-size:12px; }
 .authoring-sidebar .sidebar-filters { display:flex; gap:5px; }
@@ -49,25 +32,8 @@
 .authoring-sidebar .sidebar-paging { display:flex; flex:none; justify-content:center; align-items:center; gap:12px; padding:6px 9px; color:var(--muted); }
 .authoring-sidebar .sidebar-paging:empty { padding:0; }
 .authoring-sidebar .sidebar-paging button { width:auto; margin:0; padding:2px 8px; font-size:17px; line-height:1.1; }
-.authoring-sidebar .sidebar-asset-results { display:flex; flex-direction:column; gap:4px; }
-.authoring-sidebar .sidebar-asset-row { display:flex; align-items:center; flex:none; gap:7px; min-width:0; padding:6px 4px; border:1px solid transparent; border-radius:7px; cursor:grab; }
-.authoring-sidebar .sidebar-asset-row:hover { border-color:var(--line); background:var(--soft); }
-.authoring-sidebar .sidebar-asset-thumb { display:flex; align-items:center; justify-content:center; flex:none; position:relative; width:38px; height:38px; overflow:hidden; border-radius:6px; background:var(--surface); color:var(--muted); }
-.authoring-sidebar .sidebar-asset-thumb img { display:block; width:100%; height:100%; object-fit:contain; }
-.authoring-sidebar .sidebar-asset-thumb svg { width:17px; height:17px; }
-.authoring-sidebar .sidebar-asset-thumb>small { position:absolute; bottom:2px; font-size:8px; }
-.authoring-sidebar .sidebar-asset-caption { display:flex; flex:1; flex-direction:column; gap:3px; min-width:0; }
-.authoring-sidebar .sidebar-asset-caption strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:500; }
-.authoring-sidebar .sidebar-asset-caption small { color:var(--muted); font-size:10px; }
-.authoring-sidebar .sidebar-asset-actions { display:flex; flex:none; gap:1px; }
-.authoring-sidebar .sidebar-icon-button { display:flex; align-items:center; justify-content:center; width:23px; height:27px; margin:0; padding:3px; border-color:transparent; background:transparent; color:var(--muted); }
-.authoring-sidebar .sidebar-icon-button svg { width:13px; height:13px; }
-.authoring-sidebar .sidebar-library-link { display:flex; flex:none; align-items:center; justify-content:center; gap:6px; width:auto; margin:4px 9px 9px; padding:6px; font-size:11px; text-align:center; }
-.authoring-sidebar .sidebar-missing-asset { display:flex; justify-content:space-between; align-items:center; gap:4px; padding:6px; color:var(--muted); }
-.authoring-sidebar .sidebar-missing-asset button { width:auto; margin:0; padding:3px 5px; font-size:10px; }
 #app .authoring-sidebar :is(button,input,select) { font-size:12px; }
 #app .authoring-sidebar .sidebar-filters select { min-height:28px; padding:5px 4px; gap:5px; font-size:11px; }
 #app .authoring-sidebar .sidebar-targets select { min-height:31px; padding:6px 7px; gap:6px; }
-#app .authoring-sidebar :is(.sidebar-chips button,.sidebar-origin,.sidebar-clear,.sidebar-library-link) { font-size:11px; }
+#app .authoring-sidebar :is(.sidebar-chips button,.sidebar-origin,.sidebar-clear) { font-size:11px; }
 #app .authoring-sidebar .sidebar-paging button { font-size:17px; }
-#app .authoring-sidebar .sidebar-missing-asset button { font-size:10px; }

@@ -1,6 +1,6 @@
 import { assetFieldReferences, assetReferenceTarget, createId, normalizeCharacterAuthoringData, normalizeProjectAuthoringData, readPluginDocumentInstances } from '@galcraft/contracts';
 import { AssetSchema, CharacterSchema, FlowSchema, GalleryEntrySchema, IdSchema, LockSchema, PerformancePresetSchema, ProjectSchema, SceneSchema, VariableSchema } from '@galcraft/contracts';
-import type { AssetQuery as CatalogQuery, AssetReference, DocumentView, Issue, Ref, Result, Source, StudioBridge } from '@galcraft/contracts';
+import type { Asset, AssetQuery as CatalogQuery, AssetReference, DocumentView, Issue, Ref, Result, Source, StudioBridge } from '@galcraft/contracts';
 import type { CompileInput } from '@galcraft/dsl';
 import { readTemplateDocuments } from '@galcraft/templates';
 import { parse } from '@galcraft/dsl';
@@ -68,6 +68,7 @@ function sourceFrom(documents: DocumentView[]): Result<AuthoringSource> {
   catch { return fail('PROJECT_INVALID', '作品配置不符合当前规格'); }
   const scenes: SceneSource[] = [];
   const characters: AuthoringSource['characters'] = [];
+  const characterDocuments: NonNullable<AuthoringSource['characterDocuments']> = {};
   const variables: NonNullable<AuthoringSource['variables']> = [];
   const references: NonNullable<AuthoringSource['references']> = [];
   for (const document of documents.filter(item => item.format === 'json')) {
@@ -75,7 +76,9 @@ function sourceFrom(documents: DocumentView[]): Result<AuthoringSource> {
     if (!characterFile) continue;
     try {
       const data: unknown = JSON.parse(characterFile[1]).data, current = CharacterSchema.safeParse(data);
-      characters.push(current.success ? current.data : CharacterSchema.parse(normalizeCharacterAuthoringData(data)));
+      const character = current.success ? current.data : CharacterSchema.parse(normalizeCharacterAuthoringData(data));
+      characters.push(character);
+      characterDocuments[character.id] = { documentId: document.documentId, dirty: document.dirty };
     }
     catch { return fail('CHARACTER_INVALID', `角色 ${document.documentId} 的配置无效`); }
   }
@@ -122,9 +125,21 @@ function sourceFrom(documents: DocumentView[]): Result<AuthoringSource> {
   } catch { /* M08 的模板错误由编译状态呈现。 */ }
   const order = new Map(project.chapters.flatMap(chapter => chapter.sceneIds).map((id, index) => [id, index]));
   scenes.sort((a, b) => (order.get(a.sceneId) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.sceneId) ?? Number.MAX_SAFE_INTEGER));
+  const assetIndex = documents.find(document => document.files['assets/index.json']);
+  const folders = new Map<string, string[]>();
+  try {
+    const indexed = assetIndex ? JSON.parse(assetIndex.files['assets/index.json']!).data.assets as Pick<Asset, 'folder'>[] : [];
+    for (const { folder } of indexed) {
+      if (!Array.isArray(folder)) continue;
+      for (let depth = 1; depth <= folder.length; depth++) {
+        const path = folder.slice(0, depth);
+        folders.set(path.join('/'), path);
+      }
+    }
+  } catch { /* The M04 catalog reports invalid asset index data. */ }
   return { ok: true, value: { projectDocumentId: projectDocument.documentId, projectRevision: projectDocument.revision,
-    documentVersions:documents.map(document=>({documentId:document.documentId,revision:document.revision})),projectSavedRevision: projectDocument.savedRevision, projectDirty: projectDocument.dirty, project, scenes, characters, variables, references,
-    anyDirty: documents.some(document => document.dirty), assetIndexDocumentId: documents.find(document => document.files['assets/index.json'])?.documentId, assetIndexRevision: documents.find(document => document.files['assets/index.json'])?.revision }, warnings: [] };
+    documentVersions:documents.map(document=>({documentId:document.documentId,revision:document.revision})),projectSavedRevision: projectDocument.savedRevision, projectDirty: projectDocument.dirty, project, scenes, characters, characterDocuments, variables, references,
+    anyDirty: documents.some(document => document.dirty), assetIndexDocumentId: assetIndex?.documentId, assetIndexRevision: assetIndex?.revision, assetFolders: [...folders.values()] }, warnings: [] };
 }
 
 export function compileInput(documents: DocumentView[]): Result<CompileInput> {
@@ -251,7 +266,7 @@ export function createAuthoringServices(bridge: StudioBridge): AuthoringServices
     verifyAssetTarget: (target, operationId) => bridge.assets.verifyTarget(target, operationId),
     planBatchRename: input => bridge.assets.planBatchRename(input),
     applyBatchRename: id => bridge.assets.applyBatchRename(id),
-    removeAssets: ids => bridge.assets.remove(ids),
+    removeAssets: (ids, expected) => bridge.assets.remove(ids, expected),
     previewAsset: (id, variantId) => bridge.assets.preview(id, variantId),
     stopAssetPreview: () => bridge.assets.stopPreview(),
     thumbnails: requests => bridge.assets.thumbnails(requests),

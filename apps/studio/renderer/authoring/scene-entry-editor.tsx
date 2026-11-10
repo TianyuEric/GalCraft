@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type {Asset,Id,Interlude,SceneDecorLayer,SceneEntryPresentation,Transition} from '@galcraft/contracts';
 import {Button,Choice,Field} from '../components/controls.js';
 import {Input} from '../components/ui/input.js';
@@ -7,13 +7,15 @@ import { StudioNumberField } from '../components/editor-fields/StudioNumberField
 import './scene-entry-editor.css';
 const fade=(durationMs=200):Transition=>({preset:'fade',durationMs,resourceId:null,easing:{family:'sine',direction:'inOut'},direction:'left'});
 
-export function SceneDecorEditor({ layers, assets, locale, change, choose }: {
+export function SceneDecorEditor({ layers, assets, locale, change, choose, locate }: {
   layers: SceneDecorLayer[]; assets: Asset[]; locale: string;
   change(layers: SceneDecorLayer[]): void;
   choose(layer: SceneDecorLayer | null, origin: HTMLElement): Promise<SceneDecorLayer | null>;
+  locate?: { id: Id; request: number };
 }) {
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
-  const [selected, setSelected] = useState<Id>();
+  const [selected, setSelected] = useState<Id | undefined>(locate?.id);
+  useEffect(() => { if (locate) setSelected(locate.id); }, [locate]);
   const index = Math.max(0, layers.findIndex(layer => layer.id === selected));
   const active = layers[index];
   const name = (layer: SceneDecorLayer) => assets.find(asset => asset.id === layer.assetId)?.name
@@ -43,7 +45,7 @@ export function SceneDecorEditor({ layers, assets, locale, change, choose }: {
         'Decor shares stacking levels with figures. The list determines order between decor layers at the same level. Use Transform with the Stage target to move the camera.',
         '背景レイヤーと立ち絵は重なり順を共有します。同じレベルの背景レイヤーはリスト順に重なります。ステージを対象に変換してカメラを動かします。')}</p>
       {active && <>
-        <div className="scene-decor-tools">
+        <div className="scene-decor-tools" data-decor-layer-id={active.id}>
           <Choice label={t('编辑布景图层', 'Edit decor layer', '背景レイヤーを編集')} value={active.id}
             options={layers.map((layer, order) => ({ value: layer.id, label: `${order + 1} · ${name(layer)}` }))} onChange={setSelected}/>
           <Button tone="quiet" disabled={index === 0} onClick={() => move(-1)}>{t('上移', 'Move up', '上に移動')}</Button>

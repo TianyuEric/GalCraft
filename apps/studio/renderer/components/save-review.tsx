@@ -6,9 +6,9 @@ import { SaveChangeList } from './change-list.js';
 import { buildSaveChanges, changedValues, type SaveChangeGroup } from './save-changes.js';
 import './save-changes.css';
 
-type ReviewScope = Exclude<SaveScope, { kind: 'objects' }>;
+export type SaveReviewScope = Exclude<SaveScope, { kind: 'objects' }> | Pick<Extract<SaveScope, { kind: 'objects' }>, 'kind' | 'objects'>;
 type Props = {
-  initialPlan: SavePlan; initialDocuments: DocumentView[]; initialObjects?: SaveObject[]; scope: ReviewScope;
+  initialPlan: SavePlan; initialDocuments: DocumentView[]; initialObjects?: SaveObject[]; scope: SaveReviewScope;
   locale: string; names?: Record<string, string>; bridge: StudioBridge['documents'];
   save(plan: SavePlan): Promise<void>; changed(receipt: EditReceipt, documentId: Id): Promise<void>;
   close(): void; pin?(plan: SavePlan, documents: DocumentView[], objects: SaveObject[]): void; dialog?: boolean;
@@ -18,13 +18,28 @@ const identity = (object: SaveObject): SaveObjectRef => object.kind === 'asset'
   : { documentId: object.documentId, kind: 'document', objectId: null };
 const filesFor = (documents: readonly DocumentView[]) => documents.flatMap(document => [...new Set([...Object.keys(document.files), ...Object.keys(document.savedFiles)])]
   .map(path => ({ path, documentId: document.documentId, oldExists: path in document.savedFiles, newExists: path in document.files })));
+const assetValue = (files: Record<string, string>, assetId: Id): unknown => files['assets/index.json']
+  ? JSON.parse(files['assets/index.json']).data?.assets?.find((asset: { id: Id }) => asset.id === assetId) : undefined;
+
+export function revisionedSaveReviewScope(scope: SaveReviewScope, documents: readonly DocumentView[]): SaveScope {
+  if (scope.kind !== 'objects') return scope;
+  const objects = scope.objects.filter(object => {
+    const document = documents.find(item => item.documentId === object.documentId);
+    if (!document?.dirty) return false;
+    if (object.kind === 'document') return true;
+    return 'assets/index.json' in document.files
+      && JSON.stringify(assetValue(document.savedFiles, object.objectId)) !== JSON.stringify(assetValue(document.files, object.objectId));
+  });
+  const expected = documents.filter(document => objects.some(object => object.documentId === document.documentId))
+    .map(document => ({ ref: { kind: 'document' as const, id: document.documentId }, revision: document.revision }));
+  return { kind: 'objects', objects, expected };
+}
 
 function objectChanges(object: SaveObject, documents: DocumentView[], names: Record<string, string>, locale: string): SaveChangeGroup[] {
   const document = documents.find(document => document.documentId === object.documentId);
   if (!document) return [];
   if (object.kind === 'document') return buildSaveChanges(filesFor([document]), [document], names, locale);
-  const asset = (files: Record<string, string>) => files['assets/index.json'] ? JSON.parse(files['assets/index.json']).data.assets.find((asset: { id: Id }) => asset.id === object.objectId) : undefined;
-  const before = asset(document.savedFiles), after = asset(document.files);
+  const before = assetValue(document.savedFiles, object.objectId), after = assetValue(document.files, object.objectId);
   return [{ documentId: object.documentId, name: object.name, paths: object.paths, changes: [{
     kind: before === undefined ? 'add' : after === undefined ? 'delete' : 'update', label: object.name,
     fields: changedValues(before ?? {}, after ?? {}),
@@ -43,7 +58,7 @@ export function SaveReview(props: Props) {
   const replan = async (requested: Set<string>, source = documents, objects = pool) => unwrap(await bridge.planSave({ kind: 'objects',
     objects: objects.filter(object => requested.has(object.key)).map(identity), expected: source.map(document => ({ ref: { kind: 'document' as const, id: document.documentId }, revision: document.revision })) }));
   const refresh = async () => {
-    const source = unwrap(await bridge.list()), fresh = unwrap(await bridge.planSave(props.scope));
+    const source = unwrap(await bridge.list()), fresh = unwrap(await bridge.planSave(revisionedSaveReviewScope(props.scope, source)));
     const requested = new Set(plan.requestedObjects.filter(key => fresh.objects.some(object => object.key === key)));
     const next = await replan(requested, source, fresh.objects);
     setDocuments(source); setPool(fresh.objects); setPlan(next); setStale(false);

@@ -3,7 +3,7 @@ import { AuthoringOutlineSchema, DialogueContentSchema, DialogueEventSchema, Eff
 import type { Asset, CommandSpec, DialogueContent, DialogueEvent, GalleryEntry, Character, DocumentView, EditInput, Id, Issue, Json, Project, Ref, Result, Scene, Variable } from '@galcraft/contracts';
 import { applyTextEdits, validateAuthoringCommands, presentationArgs, dialogueInterpolations, parseExpression, variableReads, commandOwnedIds, parse, patchFields, resolveStaticStageImage, rewriteScriptReferences, toDocumentPatch } from '@galcraft/dsl';
 import type { FieldPatchInput, ParseResult, TextEdit } from '@galcraft/dsl';
-import { characterEdit, neutralCharacter } from './characters.js';
+import { characterDifferenceDependencies, characterEdit, neutralCharacter } from './characters.js';
 import { createWorkbenchChapter, moveWorkbenchObjects, renameWorkbenchObject } from './structure.js';
 import { invalidSceneEdit } from './scene-sources.js';
 export * from './characters.js';
@@ -370,7 +370,7 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
         if(changes.defaultEffects)changes.defaultEffects=merge(previous.defaultEffects,changes.defaultEffects) as Character['defaultEffects'];
         if(changes.personalRoute)changes.personalRoute=merge(previous.personalRoute??{sceneIds:[],endingIds:[]},changes.personalRoute) as NonNullable<Character['personalRoute']>;
         const next = CharacterSchema.parse({ ...previous, ...changes, ...(operation.op === 'character.create' ? { name: operation.name } : {}) });
-        const result = characterEdit({ project, characters }, documents, [next]); edit.patches.push(...result.patches); edit.expected.push(...result.expected); break;
+        const result = characterEdit({ project, characters }, documents, [next]); edit.patches.push(...result.patches); edit.expected.push(...result.expected); edit.requiredRefs.push(...result.requiredRefs); break;
       }
       case 'character.remove': {
         const file = required(dataFiles.find(file => file.path === `characters/${operation.id}.json`), 'Character');
@@ -380,6 +380,7 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
       case 'character.group.create': case 'character.group.update': case 'character.group.remove':
       case 'character.difference.create': case 'character.difference.update': case 'character.difference.remove': {
         const file=required(dataFiles.find(file=>file.path===`characters/${operation.characterId}.json`),'Character'), character=CharacterSchema.parse(normalizeCharacterAuthoringData(file.data));
+        const previous = operation.op === 'character.difference.create' || operation.op === 'character.difference.update' ? structuredClone(character) : undefined;
         if(operation.op==='character.group.create')character.groups.push({id:allocate(),name:operation.name,assetIds:operation.assetIds});
         else if(operation.op==='character.group.update'){const group=required(character.groups.find(item=>item.id===operation.id),'Character asset group');Object.assign(group,operation.changes);}
         else if(operation.op==='character.group.remove'){required(character.groups.find(item=>item.id===operation.id),'Character asset group');character.groups=character.groups.filter(item=>item.id!==operation.id);}
@@ -391,6 +392,11 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
           replaceReferences(operation.id,operation.replacementId,file);
           character.differences=character.differences!.filter(item=>item.id!==operation.id);
           if(character.initialDifferenceId===operation.id)character.initialDifferenceId=operation.replacementId??null;
+        }
+        if (previous) {
+          const dependencies = characterDifferenceDependencies(documents, character, previous);
+          edit.expected.push(...dependencies.expected);
+          edit.requiredRefs.push(...dependencies.requiredRefs);
         }
         change(file,CharacterSchema.parse(character));if(JSON.stringify(project)!==JSON.stringify(projectFile.data))changeProject();break;
       }

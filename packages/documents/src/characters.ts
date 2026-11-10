@@ -1,5 +1,5 @@
-import { CharacterSchema, createId } from '@galcraft/contracts';
-import type { Character, DocumentView, EditInput, Id, Project } from '@galcraft/contracts';
+import { CharacterSchema, createId, normalizeCharacterAuthoringData } from '@galcraft/contracts';
+import type { Asset, Character, CharacterDifference, DocumentView, EditInput, Id, Project } from '@galcraft/contracts';
 import { parse } from '@galcraft/dsl';
 
 export type CharacterDraft = Pick<Character, 'id' | 'name' | 'description' | 'narrativeRole' | 'personalRoute'> &
@@ -46,17 +46,53 @@ export function normalizeCharacterVoicePresets(character: Character, languages: 
   result.voicePresets = presets;
   return result;
 }
+
+export function characterDifferenceDependencies(documents: DocumentView[], next: Character, previous?: Character): Pick<EditInput, 'expected' | 'requiredRefs'> {
+  const prior = new Map(previous?.differences?.map(difference => [difference.id, difference]));
+  const changed: { binding: CharacterDifference['figure']; name: string; role: 'figure' | 'portrait' }[] = [];
+  for (const difference of next.differences ?? []) {
+    const old = prior.get(difference.id);
+    const add = (binding: CharacterDifference['figure'], previous: CharacterDifference['figure'] | undefined, role: 'figure' | 'portrait') => {
+      if (binding.assetId !== previous?.assetId || binding.variantId !== previous.variantId) changed.push({ binding, name: difference.name, role });
+    };
+    add(difference.figure, old?.figure, 'figure');
+    if (difference.avatar?.kind === 'image') add(difference.avatar, old?.avatar?.kind === 'image' ? old.avatar : undefined, 'portrait');
+  }
+  if (!changed.length) return { expected: [], requiredRefs: [] };
+  const path = 'assets/index.json';
+  const index = documents.find(document => Object.hasOwn(document.files, path));
+  if (!index) throw new Error('The project asset index is unavailable');
+  const assets = new Map<Id, Asset>((JSON.parse(index.files[path]!).data.assets as Asset[]).map(asset => [asset.id, asset]));
+  const refs = new Map<string, EditInput['requiredRefs'][number]>();
+  for (const { binding, name, role } of changed) {
+    const asset = assets.get(binding.assetId);
+    if (asset?.kind !== 'image') throw new Error(`Shared difference ${name} ${role} requires a project image: ${binding.assetId}`);
+    const variantId = binding.variantId ?? asset.activeVariantId;
+    if (!asset.variants.some(variant => variant.id === variantId)) throw new Error(`Shared difference ${name} ${role} version ${variantId} does not belong to image ${asset.name}`);
+    refs.set(`asset:${asset.id}`, { kind: 'asset', id: asset.id });
+    if (binding.variantId) refs.set(`variant:${binding.variantId}`, { kind: 'variant', id: binding.variantId });
+  }
+  return { expected: [{ ref: { kind: 'document', id: index.documentId }, revision: index.revision }], requiredRefs: [...refs.values()] };
+}
+
 export function characterEdit(source: CharacterAuthoringSource, documents: DocumentView[], drafts: CharacterDraft[]): EditInput {
   const editedIds = new Set(drafts.map(draft => draft.id));
   if (editedIds.size !== drafts.length) throw new Error('Duplicate character identity');
   const names = new Set(source.characters.filter(character => !editedIds.has(character.id)).map(character => character.name));
-  const patches: EditInput['patches'] = [], expected: EditInput['expected'] = [];
+  const patches: EditInput['patches'] = [], expected: EditInput['expected'] = [], requiredRefs: EditInput['requiredRefs'] = [];
   for (const draft of drafts) {
     const name = draft.name.trim();
     if (!name) throw new Error('Character name is required');
     if (names.has(name)) throw new Error(`Character name ${name} already exists`);
     names.add(name);
     const previous = source.characters.find(character => character.id === draft.id);
+    const document = characterDocument(documents, draft.id);
+    if (previous && !document) throw new Error('Character document is unavailable');
+    const path = `characters/${draft.id}.json`;
+    const before = document ? JSON.parse(document.files[path]!).data : undefined;
+    if (document && (!previous || JSON.stringify(CharacterSchema.parse(normalizeCharacterAuthoringData(previous))) !== JSON.stringify(CharacterSchema.parse(normalizeCharacterAuthoringData(before))))) {
+      throw new Error(`CHARACTER_BASIS_CHANGED: ${name} changed in the workspace. Refresh the character and review your retained input before applying.`);
+    }
     const next = normalizeCharacterVoicePresets(CharacterSchema.parse({ ...(previous ?? neutralCharacter(draft.id, name, source.project, draft.narrativeRole)), ...draft, name }), source.project.languages);
     if (next.narrativeRole !== 'main' && next.afterstory) throw new Error('Remove the afterstory entry before changing the narrative role');
     if (source.project.player.name?.characterId === next.id && next.narrativeRole !== 'viewpoint') throw new Error('Change the player-name association before changing the narrative role');
@@ -72,10 +108,10 @@ export function characterEdit(source: CharacterAuthoringSource, documents: Docum
       if(consumers.length)throw new Error(`DIFFERENCE_IN_USE: ${removed.name} is used by ${consumers.join(', ')}; replace its consumers before removing it`);
     }
     if(new Set(next.groups.map(group=>group.id)).size!==next.groups.length)throw new Error('Character group identities must be unique');
-    const document = characterDocument(documents, draft.id);
-    if (previous && !document) throw new Error('Character document is unavailable');
+    const dependencies = characterDifferenceDependencies(documents, next, previous);
+    for (const item of dependencies.expected) if (!expected.some(value => value.ref.id === item.ref.id)) expected.push(item);
+    for (const ref of dependencies.requiredRefs) if (!requiredRefs.some(value => value.kind === ref.kind && value.id === ref.id)) requiredRefs.push(ref);
     if (document) {
-      const before = JSON.parse(document.files[`characters/${draft.id}.json`]!).data;
       patches.push({ kind: 'json', documentId: document.documentId, changes: [{ path: '/data', before, after: JSON.parse(JSON.stringify(next)), op: 'set' }] });
       expected.push({ ref: { kind: 'document', id: document.documentId }, revision: document.revision });
     } else {
@@ -84,7 +120,7 @@ export function characterEdit(source: CharacterAuthoringSource, documents: Docum
         after: { format: 'json', files: { [`characters/${draft.id}.json`]: JSON.stringify({ schemaVersion: 1, documentId, revision: 1, data: next }, null, 2) + '\n' } } });
     }
   }
-  return { label: 'Edit characters', origin: 'field', expected, patches, preparedAssets: [], requiredRefs: [] };
+  return { label: 'Edit characters', origin: 'field', expected, patches, preparedAssets: [], requiredRefs };
 }
 function containsId(value: unknown, id: Id): boolean {
   if (value === id) return true;

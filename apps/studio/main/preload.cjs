@@ -195,6 +195,8 @@ const bridge = {
   },
   assets: {
     typeCatalog: () => call('assets', 'typeCatalog'),
+    prepareVariantSwitch: input => call('assets', 'prepareVariantSwitch', input),
+    applyVariantSwitch: input => call('assets', 'applyVariantSwitch', input),
     editTypeData: input => call('assets', 'editTypeData', input),
     saveAnimation: input => call('assets', 'saveAnimation', input),
     weatherTexture: key => call('assets', 'weatherTexture', key),
@@ -226,7 +228,7 @@ const bridge = {
     rename: changes => call('assets', 'rename', changes),
     planBatchRename: input => call('assets', 'planBatchRename', input),
     applyBatchRename: planId => call('assets', 'applyBatchRename', planId),
-    remove: ids => call('assets', 'remove', ids),
+    remove: (ids, expected) => call('assets', 'remove', ids, expected),
     preview: (assetId, variantId) => call('assets', 'preview', assetId, variantId),
     thumbnails: requests => call('assets', 'thumbnails', requests),
     stopPreview: () => call('assets', 'stopPreview'),

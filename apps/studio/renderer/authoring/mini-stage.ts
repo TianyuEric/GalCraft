@@ -145,9 +145,13 @@ export class MiniStage {
     if (key === this.key) return; this.key = key; const generation = ++this.generation;
     if (this.timer) clearTimeout(this.timer);
     this.clearPending(); this.route.replaceChildren(); this.routeActions=[];this.routeInput=null;if(!target)this.entryState=null;this.selectEntryAction=null;this.root.dataset.stale = String(Boolean(this.player));
+    for (const control of this.controls.querySelectorAll('button')) control.disabled = !target;
+    this.surface.hidden = this.provenance.hidden = !target;
+    this.surface.inert = true;
+    if (!target && !this.workbench) this.entryRoot.render(null);
     if(this.player){this.player.session.setPreviewPaused(true);this.player.view.render();}
     this.status.textContent = message ?? (target ? this.t('正在准备当前指令…','Preparing the current command…','現在のコマンドを準備中…') : this.t('选择一条指令查看舞台效果','Select a command to preview its stage','コマンドを選択して舞台をプレビュー'));
-    if (this.player) this.status.textContent += this.t(' · 保留上次有效画面', ' · showing the last valid stage', '・前回の有効な舞台を表示');
+    if (target && this.player) this.status.textContent += this.t(' · 保留上次有效画面', ' · showing the last valid stage', '・前回の有効な舞台を表示');
     if (target) this.timer = setTimeout(() => { void this.prepare(target, generation); }, 180);
     this.publishWorkbench();
   }

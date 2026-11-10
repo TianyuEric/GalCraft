@@ -223,6 +223,7 @@ export class PageDesigner {
     });
   }
   workbenchRegions() { this.tree.dataset.workbench = 'true'; this.inspector.dataset.workbench = 'true'; return { tree: this.tree, inspector: this.inspector }; }
+  hasWorkbenchPage(key: string): boolean | null { return this.template ? this.workbenchPages().some(page => page.id === key) : null; }
   workbenchPages() { return [...(this.template?.pages.map(page => ({ id: page.key, name: this.pageLabel(page.key) })) ?? []),
     {id:'gallery-content',name:this.t('鉴赏内容','Gallery content','鑑賞コンテンツ')}, {id:'@animations',name:this.t('界面动画','Interface animations','UIアニメーション')},
     {id:'@templates',name:this.t('作品模板','Project templates','作品テンプレート')}, ...(this.template?.styles.map(style=>({id:`@style:${style.id}`,name:style.name,detail:style.language.toUpperCase()}))??[]),...Object.entries(this.styleDraftOptions).filter(([,style])=>!this.template?.styles.some(item=>item.id===style.id)).map(([key,style])=>({id:`@draft:${key}`,name:`${style.name} · ${this.t('草稿','Draft','下書き')}`}))]; }

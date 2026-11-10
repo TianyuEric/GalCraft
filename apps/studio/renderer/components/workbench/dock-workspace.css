@@ -31,6 +31,7 @@
 
 .gc-dock-content[hidden] { display: none !important; }
 .gc-dock-content > div { height: 100%; min-height: 0; }
+.gc-dock-content:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 
 .gc-dock-header {
   position: absolute;
@@ -44,6 +45,31 @@
   background: var(--workbench-explorer);
 }
 
+.gc-dock-tool-title {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-inline: 12px 4px;
+}
+
+.gc-dock-tool-title > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--muted-foreground);
+}
+
+.gc-dock-tool-title > h2 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--foreground);
+  font: 600 13px/18px var(--font-sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gc-dock-splitter {
   position: absolute;
   z-index: 5;
@@ -55,8 +81,9 @@
 .gc-dock-splitter.vertical { cursor: row-resize; }
 .gc-dock-splitter:is(:hover, :focus-visible) { background: var(--primary); }
 
-.gc-dock-bottom-rail { position:absolute; bottom:0; height:28px; display:flex; align-items:center; gap:4px; background:var(--workbench-explorer); border-top:1px solid var(--border); z-index:18; overflow:visible; }
+.gc-dock-bottom-rail { position:absolute; bottom:0; height:28px; display:flex; align-items:center; gap:4px; background:var(--workbench-explorer); border-top:1px solid var(--border); z-index:18; overflow-x:auto; scrollbar-width:none; }
 .gc-dock-bottom-rail > .gc-dock-button { gap:4px; min-block-size:24px; padding-block:2px; white-space:nowrap; }
+.gc-dock-bottom-rail > .gc-dock-button > svg { inline-size:14px; block-size:14px; }
 .gc-dock-content.is-temporary { box-shadow:var(--shadow); border:1px solid var(--border); }
 .gc-dock-missing-view { padding:24px; max-width:60ch; font:400 14px/20px var(--font-sans); }
 .gc-dock-drop-hint { position:absolute; z-index:30; bottom:36px; left:50%; transform:translateX(-50%); padding:8px 12px; background:var(--popover); border:1px solid var(--primary); border-radius:4px; color:var(--primary); font:400 12px/16px var(--font-sans); pointer-events:none; }

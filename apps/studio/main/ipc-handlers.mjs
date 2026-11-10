@@ -511,6 +511,8 @@ export function createStudioHandlers(host) {
     },
     assets: {
       typeCatalog: async () => host.assets ? host.assets.typeCatalog() : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
+      prepareVariantSwitch: async input => host.assets ? host.assets.prepareVariantSwitch(input) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
+      applyVariantSwitch: async input => host.assets ? host.assets.applyVariantSwitch(input) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
       editTypeData: async input => host.assets ? host.assets.editTypeData(input) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
       saveAnimation: async input => host.assets ? host.assets.saveAnimation(input) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
       weatherTexture: async key => host.assets ? host.assets.weatherTexture(key) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
@@ -583,7 +585,7 @@ export function createStudioHandlers(host) {
         return host.assets ? host.assets.applyBatchRename(args[0]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
       },
       remove: async (...args) => {
-        return host.assets ? host.assets.remove(args[0]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
+        return host.assets ? host.assets.remove(args[0], args[1]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
       },
       preview: async (...args) => {
         return host.assets ? host.assets.preview(args[0], args[1]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');

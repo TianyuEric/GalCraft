@@ -3,6 +3,22 @@ import type { DocumentView,SavePlan } from '@galcraft/contracts';
 import { FixtureIds } from '@galcraft/contracts/fixtures';
 import { applyTextEdits,parse,patchFields } from '@galcraft/dsl';
 import { buildSaveChanges,compactSourceDiff,scriptChanges } from './save-changes.js';
+import { revisionedSaveReviewScope } from './save-review.js';
+
+it('plans and refreshes save review for the exact asset within a shared index', () => {
+  const path = 'assets/index.json', documentId = 'IndexA';
+  const files = (first: string, second: string) => ({ [path]: JSON.stringify({ data: { assets: [
+    { id: 'AssetA', name: first }, { id: 'AssetB', name: second },
+  ] } }) });
+  const savedFiles = files('Same name', 'Same name');
+  const scope = { kind: 'objects' as const, objects: [{ kind: 'asset' as const, documentId, objectId: 'AssetA' }] };
+  const working: DocumentView = { documentId, revision: 5, savedRevision: 1, format: 'json', dirty: true,
+    files: files('Changed A', 'Changed B'), savedFiles };
+  expect(revisionedSaveReviewScope(scope, [working])).toEqual({ ...scope, expected: [{ ref: { kind: 'document', id: documentId }, revision: 5 }] });
+  expect(revisionedSaveReviewScope(scope, [{ ...working, revision: 6 }])).toEqual({ ...scope, expected: [{ ref: { kind: 'document', id: documentId }, revision: 6 }] });
+  expect(revisionedSaveReviewScope(scope, [{ ...working, revision: 7, files: files('Same name', 'Changed B') }]))
+    .toEqual({ kind: 'objects', objects: [], expected: [] });
+});
 
 const id=FixtureIds.streetDocument, first=FixtureIds.statements[0]!,second=FixtureIds.statements[1]!,third=FixtureIds.statements[2]!;
 const say=(statementId:string,text:string,extra='')=>`say {speaker:{kind:"narrator"},text:${JSON.stringify(text)}${extra}} @${statementId};\n`;

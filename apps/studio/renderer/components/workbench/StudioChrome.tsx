@@ -102,16 +102,19 @@ export type StudioChromeProps = {
   preferences(value: { locale?: StudioLocale; theme?: 'light' | 'dark' }): void;
   items: readonly RailItem[];
   navigate(key: string): void;
+  combinations?: readonly StudioChromeMenuItem[];
   layout?: readonly StudioChromeMenuItem[];
   preview?(): void;
   saving?: boolean;
+  editTarget?: string;
+  historyUnavailable?: string;
   canSaveCurrent?: boolean;
   service?: ReactNode;
   auxiliary?: ReactNode;
 };
 
 /** Connect the shared workbench chrome to the real Studio commands. */
-export function StudioChrome({ locale, theme, project, dirty, action, preferences, items, navigate, layout, preview, saving, canSaveCurrent = !!project, service, auxiliary }: StudioChromeProps) {
+export function StudioChrome({ locale, theme, project, dirty, action, preferences, items, navigate, combinations = [], layout, preview, saving, editTarget, historyUnavailable, canSaveCurrent = !!project, service, auxiliary }: StudioChromeProps) {
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
   const workbench = t('作品工作台', 'Project workbench', '作品ワークスペース');
   const preferencesLabel = t('工作台偏好', 'Workbench preferences', 'ワークスペース設定');
@@ -121,10 +124,12 @@ export function StudioChrome({ locale, theme, project, dirty, action, preference
   const previewLabel = t('运行预览', 'Run preview', 'プレビューを実行');
   const undoLabel = t('撤销', 'Undo', '元に戻す');
   const redoLabel = t('重做', 'Redo', 'やり直す');
+  const commandTitle = (label: string, shortcut: string) => `${label}${editTarget ? ` · ${editTarget}` : ''} · ${shortcut}`;
   const workfaces: StudioChromeMenuItem[] = items.map(item => ({
     id: item.key, label: item.label, current: item.current, disabled: item.disabled, run: () => navigate(item.key),
   }));
   workfaces.push(
+    ...combinations.map((item, index) => index === 0 ? { ...item, separatorBefore: true } : item),
     { id: 'view-writing', label: t('当前场景文稿', 'Current scene manuscript', '現在のシーンの原稿'), separatorBefore: true, disabled: !project, run: () => action('writing') },
     { id: 'view-cards', label: t('当前场景指令', 'Current scene commands', '現在のシーンのコマンド'), disabled: !project, run: () => action('cards') },
     { id: 'view-script', label: t('当前场景源码', 'Current scene source', '現在のシーンのソース'), disabled: !project, run: () => action('script') },
@@ -162,12 +167,12 @@ export function StudioChrome({ locale, theme, project, dirty, action, preference
         {items.filter(item => quickRoutes.includes(item.key)).map(item => <Button key={item.key} tone="quiet" disabled={item.disabled} aria-current={item.current ? 'page' : undefined} data-focus-key={`route:${item.key}`} onClick={() => navigate(item.key)}>{item.label}</Button>)}
       </StudioChromeToolGroup>}
       history={<StudioChromeToolGroup label={t('编辑历史', 'Edit history', '編集履歴')}>
-        <Button tone="quiet" className="gc-studio-chrome-icon" aria-label={undoLabel} title={`${undoLabel} · Ctrl+Z`} data-action="undo" data-focus-key="studio:undo" disabled={!project} onClick={() => action('undo')}><Undo2 aria-hidden="true"/></Button>
-        <Button tone="quiet" className="gc-studio-chrome-icon" aria-label={redoLabel} title={`${redoLabel} · Ctrl+Y`} data-action="redo" data-focus-key="studio:redo" disabled={!project} onClick={() => action('redo')}><Redo2 aria-hidden="true"/></Button>
+        <Button tone="quiet" className="gc-studio-chrome-icon" aria-label={undoLabel} aria-description={historyUnavailable} title={historyUnavailable ?? commandTitle(undoLabel, 'Ctrl+Z')} data-action="undo" data-focus-key="studio:undo" disabled={!project || !!historyUnavailable} onClick={() => action('undo')}><Undo2 aria-hidden="true"/></Button>
+        <Button tone="quiet" className="gc-studio-chrome-icon" aria-label={redoLabel} aria-description={historyUnavailable} title={historyUnavailable ?? commandTitle(redoLabel, 'Ctrl+Y')} data-action="redo" data-focus-key="studio:redo" disabled={!project || !!historyUnavailable} onClick={() => action('redo')}><Redo2 aria-hidden="true"/></Button>
       </StudioChromeToolGroup>}
       layout={<ChromeMenu label={t('布局', 'Layout', 'レイアウト')} items={layoutItems} focusKey="studio:layout" align="end"/>}
       save={<StudioChromeToolGroup split>
-        <Button aria-label={saveLabel} title={`${saveLabel} · Ctrl+S`} data-action="save" data-focus-key="studio:save" disabled={saving || !canSaveCurrent} onClick={() => action('save')}>
+        <Button aria-label={saveLabel} title={commandTitle(saveLabel, 'Ctrl+S')} data-action="save" data-focus-key="studio:save" disabled={saving || !canSaveCurrent} onClick={() => action('save')}>
           <Save aria-hidden="true"/>{saving ? t('保存中…', 'Saving…', '保存中…') : t('保存', 'Save', '保存')}
         </Button>
         <ChromeMenu label={t('保存选项', 'Save options', '保存オプション')} iconOnly align="end" focusKey="studio:save-options" disabled={!project || saving} items={[

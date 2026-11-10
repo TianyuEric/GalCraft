@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { DomainSchema, IdSchema, JsonSchema, RevisionSchema, UtcTimeSchema, VersionSchema } from './common.js';
 import type { CancelResult, Id, Issue, Json, Lock, Operation, Ref, Result, Revision, Source, Target, VersionRef } from './common.js';
-import type { Asset, AssetIdsResult, AssetPage, AssetPickerPage, AssetPickerQuery, AssetQuery, AssetTypeCatalogEntry, AssetTypeEditInput } from './assets.js';
+import type { Asset, AssetIdsResult, AssetPage, AssetPickerPage, AssetPickerQuery, AssetQuery, AssetReference, AssetTypeCatalogEntry, AssetTypeEditInput } from './assets.js';
+import { AssetKindSchema } from './assets.js';
 import type { DocumentView, EditInput, EditPlan, EditReceipt, FileConflict, PluginDocumentInstance, SavePlan, SaveReceipt, SaveScope, UndoPlan, DiscardScope, DiscardPlan } from './documents.js';
 import type { CapabilityReport, ConnectionConfig, ConnectionSelection } from './generation.js';
 import type { Snapshot } from './runtime.js';
@@ -71,22 +72,55 @@ export const EditorAnchorSchema = z.strictObject({
 });
 export type EditorAnchor = z.infer<typeof EditorAnchorSchema>;
 const SceneViewSchema = z.enum(['cards', 'writing', 'script']);
+const WorkspaceScrollSchema = z.strictObject({ statementId: IdSchema.nullable(), offsetPx: finite, scrollLeft: finite });
+const WorkspaceScenePaneSchema = z.strictObject({
+  view: SceneViewSchema, caret: EditorAnchorSchema, scroll: WorkspaceScrollSchema,
+  selection: z.strictObject({ documentId: IdSchema, statementIds: z.array(IdSchema), primaryId: IdSchema.nullable(),
+    textRange: z.strictObject({ start: RevisionSchema, end: RevisionSchema }).nullable() }).nullable(),
+});
 const WorkspaceStatementSourceSchema = z.strictObject({
   sceneId: IdSchema, documentId: IdSchema, statementId: IdSchema, eventId: IdSchema.optional(),
   projectId: IdSchema.optional(), revision: RevisionSchema.optional(),
 });
+const WorkspaceAssetQuerySchema = z.strictObject({
+  kind: z.string().nullable(), text: z.string(), offset: RevisionSchema, limit: z.number().int().positive(),
+  typeFields: z.record(z.string(), JsonSchema).optional(), folder: z.array(z.string()).nullable().optional(),
+  sort: z.enum(['name', 'size', 'modified']).optional(), direction: z.enum(['asc', 'desc']).optional(),
+  allowedKinds: z.array(AssetKindSchema).optional(), characterId: IdSchema.nullable().optional(),
+  sceneId: IdSchema.nullable().optional(), locale: z.string().nullable().optional(), tags: z.array(z.string()).optional(),
+  usage: z.string().nullable().optional(), reference: z.enum(['any', 'used', 'unused']).optional(),
+  review: z.enum(['any', 'needsReview']).optional(), indexRevision: RevisionSchema.nullable().optional(),
+});
+const WorkspaceAssetVersionSchema = z.strictObject({ assetId: IdSchema, variantId: IdSchema });
+const WorkspaceAssetStateSchema = z.strictObject({
+  query: WorkspaceAssetQuerySchema, selectionQuery: WorkspaceAssetQuerySchema.nullable(),
+  selectedIds: z.array(IdSchema), selectionRevision: RevisionSchema.nullable(), primaryId: IdSchema.nullable(),
+  primaryVersions: z.array(WorkspaceAssetVersionSchema), previewVersions: z.array(WorkspaceAssetVersionSchema),
+  inspectorPin: WorkspaceAssetVersionSchema.nullable(), scroll: finite.nonnegative(),
+});
 export const WorkspaceResumeSchema = z.strictObject({
-  schemaVersion: z.literal(1), projectId: IdSchema, documentId: IdSchema, sceneId: IdSchema,
+  schemaVersion: z.literal(1), projectId: IdSchema, documentId: IdSchema.nullable(), sceneId: IdSchema.nullable(),
   documentRevision: RevisionSchema, view: SceneViewSchema,
   caret: EditorAnchorSchema, previousStatementId: IdSchema.nullable(), nextStatementId: IdSchema.nullable(),
-  scroll: z.strictObject({ statementId: IdSchema.nullable(), offsetPx: finite, scrollLeft: finite }), updatedAt: UtcTimeSchema,
+  scroll: WorkspaceScrollSchema, updatedAt: UtcTimeSchema,
   workbench: z.strictObject({
-    documents: z.array(z.strictObject({ id: z.string(), title: z.string(), kind: z.enum(['scene', 'page', 'asset', 'project', 'characters', 'scene-graph', 'startup', 'route']), objectId: z.string().optional() })),
+    documents: z.array(z.strictObject({ id: z.string(), title: z.string(), kind: z.enum(['scene', 'page', 'asset', 'project', 'character', 'characters', 'scene-graph', 'startup', 'route']), objectId: z.string().optional() })),
     active: z.string(),
     sceneSplits: z.array(z.strictObject({ sceneId: IdSchema, views: z.tuple([SceneViewSchema, SceneViewSchema])
       .refine(([left, right]) => left !== right) })).optional(),
-    stageSource: WorkspaceStatementSourceSchema.optional(), inspectorSource: WorkspaceStatementSourceSchema.optional(),
+    sceneContexts: z.array(WorkspaceScenePaneSchema.extend({ sceneId: IdSchema, revision: RevisionSchema, beside: z.array(WorkspaceScenePaneSchema) })).optional(),
+    outline: z.strictObject({ query: z.string(), scrollTop: finite.nonnegative(), selected: z.array(IdSchema) }).optional(),
+    characterQuery: z.string().optional(),
+    stageSource: WorkspaceStatementSourceSchema.extend({ statementId: IdSchema.nullable() }).optional(),
+    inspectorSource: WorkspaceStatementSourceSchema.optional(),
+    semanticSearch: z.strictObject({
+      mode: z.enum(['text', 'dialogue', 'variable', 'asset', 'bgm']), term: z.string(),
+      target: z.union([IdSchema, z.literal('')]), targetLabel: z.string(), scope: z.enum(['project', 'scene']),
+      variableAccess: z.enum(['read', 'write', 'both']), offset: RevisionSchema, hasSearched: z.boolean(),
+      searchScrollTop: finite.nonnegative(),
+    }).optional(),
     dockLayout: JsonSchema.optional(),
+    assets: WorkspaceAssetStateSchema.optional(),
   }).optional(),
 });
 export type WorkspaceResume = z.infer<typeof WorkspaceResumeSchema>;
@@ -104,6 +138,7 @@ export const StudioPreferencesSchema = z.strictObject({
   schemaVersion: z.literal(1), theme: z.enum(['light', 'dark']), palette: z.enum(['neutral', 'blue']).transform(() => 'blue' as const).default('blue'), locale: z.enum(['zh-CN', 'en', 'ja']),
   layout: z.strictObject({ left: finite, right: finite, bottom: finite, diagnosticsVisible: z.boolean() }),
   namedDockLayouts: z.record(z.string(), JsonSchema).optional(),
+  resumeProject: z.strictObject({ projectId: IdSchema, directory: z.string().min(1) }).optional(),
   editor: z.strictObject({ fontFamily: z.string(), fontSize: finite, wordWrap: z.boolean(),
     view: z.enum(['cards', 'writing', 'script']), autoCollapse: z.boolean(), cascadeSeparator: z.string() }),
   onboardingDismissed: z.boolean(), recentCommands: z.array(z.string()),
@@ -260,6 +295,10 @@ export interface StudioBridge {
   };
   assets: {
     typeCatalog(): Promise<Result<AssetTypeCatalogEntry[]>>;
+    prepareVariantSwitch?(input: { assetId: Id; variantId: Id; expectedRevision: Revision }): Promise<Result<{
+      planId: Id; expected: VersionRef[]; beforeVariantId: Id; afterVariantId: Id; affectedReferences: (AssetReference & { label?: string })[];
+    }>>;
+    applyVariantSwitch?(input: { planId: Id; expected: VersionRef[] }): Promise<Result<EditReceipt>>;
     editTypeData(input: AssetTypeEditInput): Promise<Result<{ assetId: Id; variantId: Id; edit: EditReceipt }>>;
     saveAnimation(input: { name: string; animation: NativeAnimation; assetId?: Id; expectedRevision?: number }): Promise<Result<{ assetId: Id; variantId: Id; edit: EditReceipt }>>;
     weatherTexture(preset: import('./weather-presets.js').StageWeatherPresetKey): Promise<Result<Asset>>;
@@ -286,10 +325,10 @@ export interface StudioBridge {
     rename(changes: { id: Id; name: string }[]): Promise<Result<EditReceipt>>;
     planBatchRename(input: { assetIds: Id[]; template: string;
       values: { assetId: Id; chapter: string; character: string; usage: string }[] }): Promise<Result<{
-        planId: Id; names: { assetId: Id; before: string; after: string }[];
+        planId: Id; names: { assetId: Id; before: string; after: string; variantId?: Id }[];
         conflicts: { name: string; assetIds: Id[] }[]; indexRevision: number }>>;
     applyBatchRename(planId: Id): Promise<Result<EditReceipt>>;
-    remove(ids: Id[]): Promise<Result<EditReceipt>>;
+    remove(ids: Id[], expected?: { projectId: Id; indexRevision: Revision }): Promise<Result<EditReceipt>>;
     preview(assetId: Id, variantId?: Id): Promise<Result<{ uri: string; mime: string; playback: { loopStartSec: number | null; loopEndSec: number | null } }>>;
     thumbnails(requests: { assetId: Id; variantId?: Id }[]): Promise<Result<{ assetId: Id; variantId: Id; uri: string }[]>>;
     stopPreview(): Promise<Result<void>>;

@@ -1,12 +1,14 @@
 /** Personal geometry and view identities. Workspaces own document content and drafts. */
 export type Zone = 'left' | 'right' | 'center' | 'bottom';
+export type ToolZone = Exclude<Zone, 'center'>;
 export type Group = { kind: 'group'; id: string; tabs: string[]; active: string };
 export type Tree = Group | { kind: 'split'; id: string; axis: 'x' | 'y'; ratio: number; first: Tree; second: Tree };
 export type Rect = { x: number; y: number; width: number; height: number };
 export type Collapsed = Group & { zone: Zone; home?: unknown };
 export type ZonedLayout = { version: 2; tree: Tree | null; left: Group; right: Group; bottom: Group;
   hidden: { left: boolean; right: boolean; bottom: boolean }; widths: { left: number; right: number }; bottomHeight: number;
-  collapsed: Collapsed[]; kept: string[]; previews: string[]; activeGroup: string; stageSource?: string };
+  collapsed: Collapsed[]; kept: string[]; previews: string[]; activeGroup: string; stageSource?: string;
+  closedTools?: Record<string, { zone: ToolZone; index: number }> };
 export const group = (id: string, tabs: string[]): Group => ({ kind: 'group', id, tabs, active: tabs[0] ?? '' });
 export const groups = (tree: Tree | null): Group[] => !tree ? [] : tree.kind === 'group' ? [tree] : [...groups(tree.first), ...groups(tree.second)];
 export const allGroups = (layout: ZonedLayout) => [...groups(layout.tree), layout.left, layout.right, layout.bottom, ...layout.collapsed];
@@ -35,7 +37,7 @@ export function normalize(layout: ZonedLayout): ZonedLayout {
   }
   for (const g of groups(layout.tree)) if (!g.tabs.length) layout.tree = removeGroup(layout.tree, g.id);
   layout.collapsed = layout.collapsed.filter(g => g.tabs.length);
-  if (!allGroups(layout).some(g => g.id === layout.activeGroup && g.tabs.length)) layout.activeGroup = groups(layout.tree)[0]?.id ?? 'left';
+  if (!groups(layout.tree).some(g => g.id === layout.activeGroup)) layout.activeGroup = groups(layout.tree)[0]?.id ?? '';
   layout.kept = layout.kept.filter(id => seen.has(id)); layout.previews = layout.previews.filter(id => seen.has(id) && !layout.kept.includes(id));
   return layout;
 }
@@ -59,7 +61,9 @@ export function validLayout(value: unknown): value is ZonedLayout {
     && Array.isArray(v.kept) && v.kept.every(id => typeof id === 'string') && Array.isArray(v.previews) && v.previews.every(id => typeof id === 'string')
     && !!v.hidden && ['left', 'right', 'bottom'].every(z => typeof v.hidden[z as keyof typeof v.hidden] === 'boolean')
     && !!v.widths && v.widths.left >= 240 && v.widths.right >= 240 && Number.isFinite(v.widths.left) && Number.isFinite(v.widths.right)
-    && Number.isFinite(v.bottomHeight) && v.bottomHeight >= 160 && typeof v.activeGroup === 'string';
+    && Number.isFinite(v.bottomHeight) && v.bottomHeight >= 160 && typeof v.activeGroup === 'string'
+    && (v.closedTools === undefined || !!v.closedTools && typeof v.closedTools === 'object' && !Array.isArray(v.closedTools)
+      && Object.values(v.closedTools).every(slot => !!slot && ['left', 'right', 'bottom'].includes(slot.zone) && Number.isSafeInteger(slot.index) && slot.index >= 0));
 }
 export function minimum(tree: Tree, axis: 'x' | 'y', minSize: (id: string) => { width: number; height: number }): number {
   if (tree.kind === 'group') return Math.max(axis === 'x' ? 480 : 240, ...tree.tabs.map(id => minSize(id)[axis === 'x' ? 'width' : 'height']));

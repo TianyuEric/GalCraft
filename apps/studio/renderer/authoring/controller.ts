@@ -14,6 +14,8 @@ export type SceneSource = { sceneId: Id; documentId: Id; revision: number; saved
   lastValidSceneSource?: LastValidSceneSource };
 export type AuthoringSource = { projectDocumentId: Id; projectRevision: number; projectSavedRevision: number; projectDirty: boolean;
   project: Project; scenes: SceneSource[]; characters: Character[]; variables?: (Variable & { declaringSceneId: Id | null })[];
+  characterDocuments?: Record<Id, { documentId: Id; dirty: boolean }>;
+  assetFolders?: readonly (readonly string[])[];
   references?: (Ref & { name: string })[]; documentVersions?: {documentId:Id;revision:number}[]; anyDirty?: boolean; assetIndexDocumentId?: Id; assetIndexRevision?: number };
 export type AssetQuery = { kind: string | null; text: string; offset: number; limit: number;
   typeFields?: Record<string, Json>;
@@ -231,7 +233,7 @@ export class AuthoringController {
   close(): void {
     this.currentParses.clear();
     if (this.resumeTimer) { clearTimeout(this.resumeTimer); this.resumeTimer = null; }
-    this.source = null; this.scene = null; this.selection = null;
+    this.source = null; this.scene = null; this.selection = null; this.workbench = undefined;
     this.booleanOrigins.clear();this.historyLabel='';this.lastOperationDocumentId=null;
     this.lastValid.clear(); this.status = { dirty: false, save: 'idle', savedRevision: 0, preview: 'none', issues: [],
       compilation: { state: 'none', snapshotId: null, documents: [] } };
@@ -615,9 +617,11 @@ export class AuthoringController {
   }
 
   async saveCharacters(drafts: CharacterDraft[]): Promise<Result<EditReceipt>> {
-    if (!this.source) return failed('PROJECT_MISSING', '请先打开作品');
+    const source = this.source;
+    if (!source) return failed('PROJECT_MISSING', '请先打开作品');
     const listed = await this.services.bridge.documents.list(); if (!listed.ok) return listed;
-    try { return await this.commit(characterEdit(this.source, listed.value, drafts)); }
+    if (this.source?.project.projectId !== source.project.projectId) return failed('PROJECT_CHANGED', '作品已切换，请重新选择角色');
+    try { return await this.commit(characterEdit(source, listed.value, drafts)); }
     catch (error) { return failed('CHARACTER_INPUT', error instanceof Error ? error.message : String(error)); }
   }
 
@@ -656,11 +660,11 @@ export class AuthoringController {
   async flushResume(): Promise<Result<void>> {
     if (this.resumeTimer) { clearTimeout(this.resumeTimer); this.resumeTimer = null; }
     const source = this.source; const scene = this.scene;
-    if (!source || !scene) return success(undefined);
+    if (!source || !scene && !this.workbench) return success(undefined);
     const ids = this.parsed()?.parsed.cst.filter(node => node.valid && node.id).map(node => node.id!) ?? [];
     const index = this.selection?.primaryId ? ids.indexOf(this.selection.primaryId) : -1;
-    const record: WorkspaceResume = { schemaVersion: 1, projectId: source.project.projectId, documentId: scene.documentId,
-      sceneId: scene.sceneId, documentRevision: scene.revision, view: this.view,
+    const record: WorkspaceResume = { schemaVersion: 1, projectId: source.project.projectId, documentId: scene?.documentId ?? null,
+      sceneId: scene?.sceneId ?? null, documentRevision: scene?.revision ?? 0, view: this.view,
       caret: this.caret,
       previousStatementId: index > 0 ? ids[index - 1]! : null, nextStatementId: index >= 0 ? ids[index + 1] ?? null : null,
       scroll: this.scroll, updatedAt: new Date().toISOString(), ...(this.workbench ? { workbench: this.workbench } : {}) };

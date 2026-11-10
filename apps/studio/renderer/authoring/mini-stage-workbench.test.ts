@@ -6,15 +6,17 @@ vi.mock('react-dom/client', () => ({ createRoot: () => ({ render: vi.fn(), unmou
 
 class Element {
   children: Element[] = []; parentElement: Element | null = null; dataset: Record<string, string> = {};
-  className = ''; textContent = ''; ariaPressed = ''; onclick?: () => void;
+  className = ''; textContent = ''; ariaPressed = ''; disabled = false; hidden = false; onclick?: () => void;
+  constructor(readonly tag: string) {}
   append(...items: Element[]) { items.forEach(item => { item.parentElement = this; this.children.push(item); }); }
+  querySelectorAll(tag: string): Element[] { return this.children.flatMap(item => [...(item.tag === tag ? [item] : []), ...item.querySelectorAll(tag)]); }
   setAttribute() {}
   remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(item => item !== this); this.parentElement = null; }
   replaceChildren(...items: Element[]) { this.children.forEach(item => { item.parentElement = null; }); this.children = []; this.append(...items); }
 }
 function setup() {
   vi.useFakeTimers();
-  vi.stubGlobal('document', { createElement: () => new Element() });
+  vi.stubGlobal('document', { createElement: (tag: string) => new Element(tag) });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   return new MiniStage({} as ConstructorParameters<typeof MiniStage>[0]);
 }
@@ -37,6 +39,7 @@ test('formal buttons and workbench controls select the same runtime modes withou
   stage.run('current');
   expect(observations.at(-1)?.mode).toBe('current');
   stage.update('hidden', null);
+  expect(controls.children[2]!.disabled).toBe(true);
   stage.run('playtest');
   expect(observations.at(-1)).toMatchObject({ mode: 'inspection', hasTarget: false });
   const count = observations.length;
