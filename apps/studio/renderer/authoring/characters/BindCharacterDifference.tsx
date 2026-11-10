@@ -13,6 +13,7 @@ type BindCharacterDifferenceProps = {
   asset: Asset;
   variantId: Id;
   characters: readonly Pick<Character, 'id' | 'name' | 'initialDifferenceId'>[];
+  suggestedCharacterId?: Id;
   locale: StudioLocale;
   resources?: DifferenceResources;
   close(): void;
@@ -20,9 +21,9 @@ type BindCharacterDifferenceProps = {
   openCharacter?(id: Id): void;
 };
 
-export function BindCharacterDifference({ asset, variantId, characters, locale, resources, close, apply, openCharacter }: BindCharacterDifferenceProps) {
+export function BindCharacterDifference({ asset, variantId, characters, suggestedCharacterId, locale, resources, close, apply, openCharacter }: BindCharacterDifferenceProps) {
   const t = (zh: string, en: string, ja: string) => tr(locale, zh, en, ja);
-  const [characterId, setCharacterId] = useState(() => characters.find(character => character.id === asset.characterId)?.id ?? characters[0]?.id ?? '');
+  const [characterId, setCharacterId] = useState(() => characters.find(character => character.id === (suggestedCharacterId ?? asset.characterId))?.id ?? characters[0]?.id ?? '');
   const [name, setName] = useState(() => asset.name.replace(/\.[^.]+$/, '') || asset.name);
   const [portrait, setPortrait] = useState<'default' | 'image' | 'crop'>('crop');
   const [crop, setCrop] = useState(defaultDifferenceCrop);

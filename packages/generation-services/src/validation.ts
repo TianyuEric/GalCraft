@@ -32,6 +32,13 @@ export function validateInput(input: GenerationInput, capability?: CapabilityRep
 export function workflowSupportsPurpose(binding: { purpose: Purpose | null; imageUsages: WorkflowBinding['imageUsages'] }, purpose: Purpose, imageUsage?: ImageUsage | null): boolean {
   return binding.purpose === purpose && (purpose !== 'image' || !!imageUsage && !!binding.imageUsages?.includes(imageUsage));
 }
+export function workflowMapsMainImage(binding: Pick<WorkflowBinding, 'inputs' | 'uploads'>): boolean {
+  const inputs = binding.inputs.filter(input => input.port === 'references');
+  const input = inputs[0];
+  return inputs.length === 1 && input?.valueType === 'imageFile' &&
+    binding.inputs.filter(other => other.nodeId === input.nodeId && other.input === input.input).length === 1 &&
+    binding.uploads.filter(upload => upload.port === 'references').length === 1;
+}
 export function validateWorkflow(binding: WorkflowBinding, objectInfo?: Record<string, any>): void {
   const diagnostics = workflowDiagnostics(binding);
   if (diagnostics.length) throw new Error(diagnostics.map(item => item.message).join('\n'));
@@ -56,7 +63,7 @@ export function validateWorkflow(binding: WorkflowBinding, objectInfo?: Record<s
     if (objectInfo) {
       const spec = objectInfo[port.classType]?.input, type = spec?.required?.[port.input] ?? spec?.optional?.[port.input];
       if (!type) throw new Error(`The service does not provide the bound field: ${port.classType}.${port.input}`);
-      if (Array.isArray(type[0]) && !type[0].includes(node.inputs[port.input])) throw new Error(`The model or enum is unavailable: ${port.classType}.${port.input}`);
+      if (!port.valueType.endsWith('File') && Array.isArray(type[0]) && !type[0].includes(node.inputs[port.input])) throw new Error(`The model or enum is unavailable: ${port.classType}.${port.input}`);
     }
   }
   for (const upload of binding.uploads) if (upload.method === 'serverPath' && upload.serverRoot !== null && !upload.serverRoot.trim()) throw new Error('The shared server directory must not be empty');

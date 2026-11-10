@@ -96,6 +96,8 @@ export class UIAssetAdoptionCoordinator {
       : sourceVersion ? copiedVariants!.get(sourceVersion.id)! : null;
     const outputFile = suggestedAssetName({ usage: 'ui', sceneName: basename(input.candidate.name, extname(input.candidate.name)), extension: extname(input.candidate.path).slice(1) }, [...index.data.assets.map(asset => asset.name), ...[...this.prepared.values()].map(value => value.name)]);
     const now = new Date().toISOString();
+    const source: Asset['source'] = { kind: 'generation', description: input.candidate.name, usage: 'localReview',
+      taskId: input.candidate.taskId, candidateId: input.candidate.candidateId };
     const variant: Asset['variants'][number] = { id: variantId, parentId, role: 'original',
       files: [{ path: outputFile, bytes: (await stat(input.candidate.path)).size, mime: inspected.value.mime, role: 'entry' }],
       entry: outputFile, metadata: inspected.value.metadata,
@@ -112,12 +114,10 @@ export class UIAssetAdoptionCoordinator {
           processing: value.processing ? { ...value.processing, inputVariantId: copiedVariants!.get(value.processing.inputVariantId)!,
             settings: value.processing.settings.kind === 'mask' ? { ...value.processing.settings,
               maskVariantId: copiedVariants!.get(value.processing.settings.maskVariantId)! } : value.processing.settings } : null })), variant],
-        source: { kind: 'generation', description: input.candidate.name, usage: 'localReview', taskId: input.candidate.taskId },
-        createdAt: now, modifiedAt: now }
+        source, createdAt: now, modifiedAt: now }
       : { id: assetId, revision: 1, name: outputFile, kind: 'image', folder: [], tags: [], locales: [],
         characterId: null, sceneIds: [], groupId: null, originalVariantId: variantId, activeVariantId: variantId,
-        variants: [variant], sourceName: outputFile, source: { kind: 'generation', description: input.candidate.name,
-          usage: 'localReview', taskId: input.candidate.taskId }, createdAt: now, modifiedAt: now };
+        variants: [variant], sourceName: outputFile, source, createdAt: now, modifiedAt: now };
     if (input.use) next.tags = [...new Set([...next.tags, `ui:${input.use}`])];
     try {
       if (copiedVariants && original) {

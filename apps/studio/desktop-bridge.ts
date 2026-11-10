@@ -37,7 +37,7 @@ export type Overview = {
   }[];
   canvas: { width: number; height: number };
   characters: { id: string; name: string; voicePresets?: import('@galcraft/contracts').Character['voicePresets'] }[];
-  pages: { documentId?: string; revision?: number; id: string; key: string; labels?: Record<string, string> }[];
+  pages: { documentId?: string; revision?: number; id: string; key: string; labels?: Record<string, string>; components?: { id: string; name: string }[] }[];
   scenes: {
     id: string;
     documentId?: string; revision?: number;

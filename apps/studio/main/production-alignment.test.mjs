@@ -9,7 +9,7 @@ import { FixtureProject, FixtureScenes, FixtureLock } from '@galcraft/contracts/
 import { compile } from '@galcraft/dsl';
 import { createAssetIndex } from '@galcraft/assets';
 import { createOfficialTemplate, createTemplateDocuments } from '@galcraft/templates';
-import { StudioProduction } from './production-providers.mjs';
+import { StudioProduction } from './production-providers.mts';
 import { StudioCollaboration } from './collaboration-providers.mjs';
 
 let directory, project, production, owner;

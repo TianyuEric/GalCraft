@@ -4,13 +4,16 @@ import { mountAuthoring } from '../authoring/view.js';
 import { studioFixture, type ProductState } from './studio-fixture.js';
 import { componentSceneRequest } from './page-component-fixture.js';
 import { figureId, figureVariantId, productSnapshot } from './product-fixture.js';
-import { FixtureIds } from '@galcraft/contracts/fixtures';
+import { WorkspaceResumeSchema, type StudioBridge, type WorkspaceResume } from '@galcraft/contracts';
+import { FixtureIds, fixtureId } from '@galcraft/contracts/fixtures';
+import type { WorkbenchBridge } from '../pages/Production/bridge.js';
 import { expect, fireEvent, userEvent, waitFor, within } from 'storybook/test';
 
 type Page = 'projects' | 'editor' | 'assets' | 'pages' | 'production' | 'plugins' | 'publish';
 
-function StudioPage({ page, state='normal', locale='zh-CN', theme='light',components=false }: { page: Page; state?:ProductState; locale?:'zh-CN'|'en'|'ja';theme?:'light'|'dark';components?:boolean }) {
+function StudioPage({ page, state='normal', locale='zh-CN', theme='light', components=false, productionResume=false }: { page: Page; state?:ProductState; locale?:'zh-CN'|'en'|'ja';theme?:'light'|'dark';components?:boolean; productionResume?: boolean }) {
   const root = useRef<HTMLDivElement>(null);
+  const reopen = useRef<(() => Promise<void>) | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     setError('');
@@ -20,6 +23,27 @@ function StudioPage({ page, state='normal', locale='zh-CN', theme='light',compon
     const deferredState = ['assets', 'production'].includes(page) && (state === 'failed' || state === 'loading');
     const fixture=studioFixture(deferredState ? 'normal' : state,locale,theme);
     const {services}=fixture;
+    if (productionResume) {
+      let saved: WorkspaceResume | null = null;
+      const preferences: StudioBridge['authoringPreferences'] = services.bridge.authoringPreferences;
+      preferences.readWorkspace = async () => ({ ok: true, value: saved, warnings: [] });
+      preferences.writeWorkspace = async record => {
+        saved = WorkspaceResumeSchema.parse(structuredClone(record));
+        return { ok: true, value: undefined, warnings: [] };
+      };
+      const bridge = services.bridge as unknown as WorkbenchBridge;
+      const overview = bridge.production.overview;
+      bridge.production.overview = async input => {
+        const result = await overview(input);
+        if (!result.ok) return result;
+        const tasks = [...result.value.tasks, ...Array.from({ length: 24 }, (_, index) => ({
+          ...structuredClone(result.value.tasks[2]!),
+          id: fixtureId(0xf00 + index),
+          name: `第 ${index + 1} 项 · 海风穿过灯塔长廊的演出参考与备选片段`,
+        }))];
+        return { ...result, value: { ...result.value, tasks: input ? tasks.filter(task => task.id === (input.taskId ?? tasks.at(-1)?.id)) : tasks, taskSummaries: tasks } };
+      };
+    }
     const container=document.createElement('div');container.id='app';container.dataset.locale=locale;container.dataset.theme=theme;root.current.append(container);
     let portals=document.getElementById('studio-portals');const ownsPortals=!portals;
     if(!portals){portals=document.createElement('div');portals.id='studio-portals';document.body.append(portals);}
@@ -28,6 +52,14 @@ function StudioPage({ page, state='normal', locale='zh-CN', theme='light',compon
     void (async()=>{if(components){const plan=await services.bridge.templates.preparePageEdit(componentSceneRequest(productSnapshot()));if(!plan.ok)throw new Error(plan.error.message);const edit=await services.bridge.documents.planEdit(plan.value.edit);if(!edit.ok)throw new Error(edit.error.message);const applied=await services.bridge.documents.applyEdit(edit.value.planId,plan.value.edit.expected);if(!applied.ok)throw new Error(applied.error.message);}return mountAuthoring(container,services);})().then(async workspace => {
       mounted=workspace;
       if (!active) { workspace.dispose();container.remove();return; }
+      reopen.current = async () => {
+        if (!mounted) return;
+        await mounted.flushInputDrafts();
+        mounted.dispose();
+        container.replaceChildren();
+        mounted = await mountAuthoring(container, services);
+        if (!active) mounted.dispose();
+      };
       if (page !== 'editor') await workspace.navigate(page);
       if(components)await workspace.openDocument({kind:'page',objectId:'component-workspace',title:'基础组件'});
       if (deferredState && active) {
@@ -38,11 +70,12 @@ function StudioPage({ page, state='normal', locale='zh-CN', theme='light',compon
     }).catch(reason => { if (active) setError(String(reason)); });
     return () => {
       active = false;
+      reopen.current = null;
       mounted?.dispose();container.remove();
       if(ownsPortals)portals.remove();else portals.replaceChildren();
     };
-  }, [page,state,locale,theme,components]);
-  return <>{error && <div className="product-story-error" role="alert">{error}</div>}<div ref={root} className="product-story" /></>;
+  }, [page,state,locale,theme,components,productionResume]);
+  return <>{error && <div className="product-story-error" role="alert">{error}</div>}{productionResume && <button type="button" style={{ position: 'fixed', insetBlockEnd: 4, insetInlineEnd: 20, zIndex: 20 }} onClick={() => void reopen.current?.().catch(reason => setError(String(reason)))}>重新打开工作台</button>}<div ref={root} className="product-story" /></>;
 }
 
 const meta = { title: 'Product/Studio/Authoring/Pages', component: StudioPage,args:{state:'normal',locale:'zh-CN',theme:'light'},argTypes:{state:{control:'select',options:['normal','empty','failed','loading']},locale:{control:'select',options:['zh-CN','en','ja']},theme:{control:'select',options:['light','dark']}}, parameters: { layout: 'fullscreen' } } satisfies Meta<typeof StudioPage>;
@@ -188,6 +221,74 @@ export const PageBehaviorBlueprint: Story = {
   },
 };
 export const Production:Story={args:{page:'production'}};
+export const ProductionRecords: Story = {
+  args: { page: 'editor', productionResume: true },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const pane = () => canvasElement.querySelector<HTMLElement>('[data-view="studio-production-directory"]')!;
+    const rail = () => canvas.getByRole('button', { name: /^制作记录$/ });
+    const scene = () => canvasElement.querySelector(`[data-view="scene:${FixtureIds.street}"]`);
+    const production = () => canvasElement.querySelector<HTMLElement>('[data-view="route:production"]')!;
+    await waitFor(() => expect(scene()).toBeVisible());
+    await userEvent.click(rail());
+    await waitFor(() => expect(pane().querySelectorAll('[data-task-id]')).toHaveLength(20));
+    await expect(scene()).toBeVisible();
+    await expect(production()).toBeNull();
+    const list = pane().querySelector<HTMLElement>('.production-directory')!;
+    list.scrollTop = 240;
+    await waitFor(() => expect(list.scrollTop).toBe(240));
+    await userEvent.click(rail());
+    await waitFor(() => expect(pane()).not.toBeVisible());
+    await userEvent.click(rail());
+    await waitFor(() => expect(list.scrollTop).toBe(240));
+    const search = within(pane()).getByRole('textbox', { name: '查找制作记录' });
+    await userEvent.type(search, '雨站');
+    await userEvent.click(within(pane()).getByRole('combobox', { name: '任务状态' }));
+    await userEvent.click(await body.findByRole('option', { name: '进行中' }));
+    rail().focus();
+    await userEvent.keyboard('{Shift>}{F10}{/Shift}');
+    await userEvent.click(await body.findByRole('menuitem', { name: '移到右侧栏' }));
+    await waitFor(() => expect(pane()).toHaveAttribute('data-zone', 'right'));
+    await expect(search).toHaveValue('雨站');
+    await userEvent.click(await within(pane()).findByRole('button', { name: /雨站对白续写/ }));
+    await waitFor(() => expect(production()).toBeVisible());
+    await expect(await within(production()).findByRole('heading', { name: '雨站对白续写' })).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: '重新打开工作台' }));
+    await waitFor(() => expect(production()).toBeVisible());
+    await expect(await within(production()).findByRole('heading', { name: '雨站对白续写' })).toBeVisible();
+    await expect(rail().closest('.gc-dock-zone-rail')).toHaveClass('is-right');
+    if (pane().hidden) await userEvent.click(rail());
+    await waitFor(() => expect(pane()).toHaveAttribute('data-zone', 'right'));
+    await expect(within(pane()).getByRole('textbox', { name: '查找制作记录' })).toHaveValue('雨站');
+    await expect(within(pane()).getByRole('combobox', { name: '任务状态' })).toHaveTextContent('进行中');
+    canvasElement.dataset.productionRecords = 'passed';
+  },
+};
+export const ProductionRecordsDusk: Story = { ...ProductionRecords, args: { ...ProductionRecords.args, theme: 'dark' } };
+export const ProductionSplit: Story = {
+  args: { page: 'production' },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    const task = () => canvasElement.querySelector<HTMLElement>('[data-view="route:production"]')!;
+    const scene = () => canvasElement.querySelector<HTMLElement>(`[data-view="scene:${FixtureIds.street}"]`)!;
+    await userEvent.click(await canvas.findByRole('button', { name: '打开制作记录' }));
+    const record = canvasElement.querySelector<HTMLElement>('[data-view="studio-production-directory"]')!;
+    await userEvent.click(await within(record).findByRole('button', { name: /雨站对白续写/ }));
+    await userEvent.click(canvas.getByRole('button', { name: /^制作记录$/ }));
+    const tab = await canvas.findByRole('tab', { name: /^制作$/ });
+    tab.focus();
+    await userEvent.keyboard('{Shift>}{F10}{/Shift}');
+    await userEvent.click(await body.findByRole('menuitem', { name: '向下分屏' }));
+    await waitFor(() => expect(scene()).toBeVisible());
+    await userEvent.click(within(scene()).getByRole('button', { name: /^写作$/ }));
+    const detail = within(task()).getByRole('button', { name: '制作详情' });
+    await userEvent.click(detail);
+    await expect(detail).toHaveAttribute('aria-expanded', 'true');
+    await expect(scene()).toBeVisible();
+    await expect(within(task()).getByRole('heading', { name: '雨站对白续写' })).toBeVisible();
+    canvasElement.dataset.productionSplit = 'passed';
+  },
+};
 export const Plugins:Story={args:{page:'plugins'}};
 export const PluginFailure:Story={args:{page:'plugins',state:'failed'}};
 export const Publish:Story={args:{page:'publish'}};

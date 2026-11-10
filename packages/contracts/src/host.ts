@@ -114,6 +114,12 @@ export const WorkspaceResumeSchema = z.strictObject({
       sample: z.string(), zoom: z.enum(['fit', '100']), locale: z.string().nullable(), scrollTop: finite.nonnegative(), scrollLeft: finite.nonnegative().optional(), split: z.boolean(),
     })).optional(),
     outline: z.strictObject({ query: z.string(), scrollTop: finite.nonnegative(), selected: z.array(IdSchema) }).optional(),
+    productionDirectory: z.strictObject({
+      query: z.string(), filter: z.enum(['all', 'active', 'review', 'failed']), scrollTop: finite.nonnegative(),
+      taskPage: z.number().int().nonnegative(), draftPage: z.number().int().nonnegative(),
+      taskHistoryOpen: z.boolean(), draftHistoryOpen: z.boolean(),
+      record: z.strictObject({ kind: z.enum(['task', 'draft']), id: IdSchema }).nullable(),
+    }).optional(),
     characterQuery: z.string().optional(),
     stageSource: WorkspaceStatementSourceSchema.extend({ statementId: IdSchema.nullable() }).optional(),
     inspectorSource: WorkspaceStatementSourceSchema.optional(),

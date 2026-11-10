@@ -3,7 +3,7 @@ import type { ConnectionConfig, DocumentView, Purpose, VersionRef } from '@galcr
 import { parse, type CompileInput } from '@galcraft/dsl';
 import type { RecipeLibrary } from '../recipes/library.js';
 import type { FormVariant, GenerationInput, GenerationProviderSnapshot, MediaInput, ProductionFormDraft, TaskItem, TaskPlanInput, WorkflowBinding } from './types.js';
-import { variantOperation, operationPurpose, speechLines, resolveProductionParameters } from './draft.js';
+import { imageUsageFor, variantOperation, operationPurpose, speechLines, resolveProductionParameters } from './draft.js';
 import { baseTextInput, discussionSystem, prepareRecipe, speechPreparationInstruction } from './recipe-preparer.js';
 import { compactContextParts } from './context-identities.js';
 import { inputCapability, confirmInput } from './capabilities.js';
@@ -11,7 +11,7 @@ import type { UIPlanProposal, UIPlanStep } from './ui.js';
 import { ProductionOperationCatalog, operationSupportsConnection } from './operations.js';
 import { resolveVoiceVariant } from './voice-input.js';
 import { validateWorkflow } from './validation.js';
-import { workflowSupportsPurpose, workflowOperationDiagnostics } from '@galcraft/generation-services/validation';
+import { workflowMapsMainImage, workflowSupportsPurpose, workflowOperationDiagnostics } from '@galcraft/generation-services/validation';
 
 const value = <T>(result: import('@galcraft/contracts').Result<T>): T => { if (!result.ok) throw new Error(result.error.message); return result.value; };
 
@@ -53,7 +53,7 @@ export type ProductionPlanningPorts = {
   sources(variant: FormVariant, source: CompileInput): VersionRef[];
   freezeProvider(config: ConnectionConfig, purpose: Purpose): Promise<GenerationProviderSnapshot>;
   resolveOperation?(id: string, frozen?: import('@galcraft/contracts').ProductionOperationSnapshot): Promise<import('@galcraft/contracts').ProductionOperationSnapshot>;
-  resolveMedia?(assetId: string): Promise<MediaInput>;
+  resolveMedia?(assetId: string, variantId?: string): Promise<MediaInput>;
   context?(target: FormVariant['target']): Promise<import('./types.js').ContextPart[]>;
 };
 type PlanningFields = {
@@ -107,7 +107,8 @@ export async function createProductionItem(ports: ProductionPlanningPorts, draft
     const operationSnapshot = ports.resolveOperation ? await ports.resolveOperation(operation, variant.operationSnapshot) : new ProductionOperationCatalog().resolve(operation, variant.operationSnapshot);
     if (!workflow && operationSnapshot.definition.workflow && (!variant.workflowBindingId || variant.workflowBindingId === (operationSnapshot.definition.workflow as { id?: string }).id)) workflow = structuredClone(operationSnapshot.definition.workflow) as unknown as WorkflowBinding;
     if (operationSnapshot.definition.purpose !== purpose) throw new Error('The operation catalog purpose does not match its input');
-    if (!variant.context.length && ports.context && !['speech', 'music'].includes(purpose)) {
+    const wholeFigure = usage === 'difference' && purpose === 'image';
+    if (!variant.context.length && !variant.contextCaptured && ports.context && !wholeFigure && !['speech', 'music'].includes(purpose)) {
       const context = await ports.context(variant.target);
       variant = { ...variant, context: context.map(part => {
         const previous = variant.sourceVersions?.find(version => part.source?.ref.id === version.ref.id);
@@ -126,7 +127,8 @@ export async function createProductionItem(ports: ProductionPlanningPorts, draft
     if (variant.workflowBindingId && workflow?.id !== variant.workflowBindingId) throw new Error('The selected workflow does not match the operation or recipe workflow.');
     if (workflow) {
       if (workflow.operation && workflow.operation !== operation) throw new Error('The workflow is configured for another public operation');
-      if (!workflowSupportsPurpose(workflow, purpose, purpose === 'image' ? usage as import('@galcraft/contracts').ImageUsage : null)) throw new Error('The workflow purpose or image use does not match the selected operation');
+      if (!workflowSupportsPurpose(workflow, purpose, purpose === 'image' ? imageUsageFor(usage) : null)) throw new Error('The workflow purpose or image use does not match the selected operation');
+      if (wholeFigure && config.protocol === 'comfyUI' && !workflowMapsMainImage(workflow)) throw new Error('Choose a workflow that maps and uploads the main reference image');
       for (const upload of workflow.uploads) if (upload.method === 'serverPath' && !upload.serverRoot) upload.serverRoot = config.serverReadRoot ?? config.serverFileRoot;
       validateWorkflow(workflow);
       if (operationSnapshot.provider) {
@@ -164,7 +166,21 @@ export async function createProductionItem(ports: ProductionPlanningPorts, draft
     if (purpose === 'text' && variant.context.some(part => part.included && part.media?.mime.startsWith('image/') && !part.attachment))
       throw new Error('The selected character image cannot enter this text operation as an attachment. Use PNG, JPEG or WebP, or override the context.');
     if (purpose === 'image') f = { ...f, positive: [f.positive, referenceText].filter(Boolean).join('\n\n'), references: f.references ?? referenceMedia };
-    if (purpose === 'difference') f = { ...f, instruction: [f.instruction, referenceText].filter(Boolean).join('\n\n'), reference: f.reference ?? referenceMedia[0] };
+    if (purpose === 'difference') f = { ...f, instruction: [f.instruction, referenceText].filter(Boolean).join('\n\n'), reference: Object.hasOwn(f, 'reference') ? f.reference : referenceMedia[0] };
+    if (wholeFigure) {
+      const references = f.references ?? [];
+      if (references.length !== 1 || !references[0]?.assetId || !references[0].variantId ||
+        !references[0].mime.startsWith('image/') || !references[0].localPath || f.omittedPorts?.includes('references')) {
+        throw new Error('Choose one exact project image version as the main reference');
+      }
+      const { assetId, variantId } = references[0];
+      const resolved = await ports.resolveMedia?.(assetId, variantId);
+      if (!resolved || resolved.assetId !== assetId || resolved.variantId !== variantId ||
+        !resolved.mime.startsWith('image/') || !resolved.localPath) {
+        throw new Error('The exact main reference version is unavailable');
+      }
+      f = { ...f, references: [resolved] };
+    }
     if (operationSnapshot.provider && referenceMedia.length && !Object.hasOwn(f, 'references')) {
       const port = operationSnapshot.definition.inputs.find(port => port.type === 'image');
       if (!port || !port.multiple && referenceMedia.length > 1) throw new Error('The selected operation cannot accept these character reference images. Select a compatible image port or override the context.');
@@ -181,7 +197,7 @@ export async function createProductionItem(ports: ProductionPlanningPorts, draft
         : purpose === "image"
           ? {
               purpose,
-              usage: usage as Extract<GenerationInput, { purpose: 'image' }>['usage'],
+              usage: imageUsageFor(usage),
               positive: f.positive ?? "",
               negative: f.negative ?? "",
               width: f.width ?? 1024,
@@ -329,6 +345,7 @@ export async function planProductionDraft(ports: ProductionPlanningPorts, draft:
         return {
           projectId: draft.projectId,
           name,
+          origin: draft.origin,
           sourceDraftId: draft.id,
           sourceDraftRevision: draft.revision,
           context: variant.promptPreparation || operationPurpose(variantOperation(variant, draft.activeUse)) === 'text' ? variant.context : [],

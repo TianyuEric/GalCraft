@@ -31,6 +31,32 @@ it('discards a response for a task that is no longer selected', async () => {
   finish({ ok: true, value: { ...original, canvas: { width: 800, height: 600 } }, warnings: [] }); await pending;
   expect(session.data).toBe(original); expect(session.taskId).toBe('Task02');
 });
+it('restores the selected task by ID and retains the ID when its details are unavailable', async () => {
+  const overview = vi.fn(async () => ({ ok: true, value: session.data, warnings: [] }));
+  const session = new ProductionSession({ production: { overview } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.restoreRecord({ kind: 'task', id: 'TaskAA' });
+  expect(session.unavailableRecord).toBeNull();
+  await session.refresh();
+  expect(overview).toHaveBeenCalledWith({ taskId: 'TaskAA' });
+  expect(session.unavailableRecord).toEqual({ kind: 'task', id: 'TaskAA' });
+  session.data.tasks = [{ id: 'TaskBB' }] as Overview['tasks'];
+  await session.openTask('TaskBB');
+  expect(session.selectedRecord).toEqual({ kind: 'task', id: 'TaskBB' });
+  expect(session.unavailableRecord).toBeNull();
+});
+it('restores the exact saved draft instead of choosing the first unsubmitted draft', async () => {
+  const overview = vi.fn(async () => ({ ok: true, value: structuredClone(session.data), warnings: [] }));
+  const session = new ProductionSession({ production: { overview } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.newDraft();
+  const other = structuredClone(session.draft!);
+  const desired = { ...other, id: 'DraftB' };
+  session.draft = null;
+  session.data.drafts = [other, desired];
+  session.restoreRecord({ kind: 'draft', id: desired.id });
+  await session.refresh();
+  expect(session.draft).toMatchObject({ id: desired.id });
+  expect(session.unavailableRecord).toBeNull();
+});
 it('keeps a queued source-project save local after stop and resumes its autosave when restored',async()=>{
   vi.useFakeTimers();
   let finish!:(value:unknown)=>void;

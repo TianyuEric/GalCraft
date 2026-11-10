@@ -91,14 +91,15 @@ import { designerPageName } from './designer-labels.js';
 import { createElement, createRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { AuthoringWorkbench, DomRegion, authoringDockTools, openAuthorDocument, type AuthorDocument, type AuthorDocumentRegion, type AuthorSceneCompanion, type AuthoringWorkbenchProps } from './workbench-host.js';
+import { AuthoringWorkbench, DomRegion, authoringDockTools, openAuthorDocument, productionDocumentId, restoredAuthorDocumentId, type AuthorDocument, type AuthorDocumentRegion, type AuthorSceneCompanion, type AuthoringWorkbenchProps } from './workbench-host.js';
 import { allGroups, groups, validLayout } from '../components/workbench/zoned-layout.js';
 import './assets-workbench.css';
 import { createWorkbenchChapter, moveWorkbenchObjects, renameWorkbenchObject } from './workbench-objects.js';
 import type { EditInput, EditReceipt, SavePlan } from '@galcraft/contracts';
 import { Production, tr } from '../pages/Production/Production.js';
-import { ProductionSession } from '../pages/Production/session.js';
-import { workbenchBridge } from '../pages/Production/bridge.js';
+import { ProductionSession, type ProductionDirectoryState } from '../pages/Production/session.js';
+import { initialProductionDirectory } from '../pages/Production/ProductionDirectory.js';
+import { unwrap as unwrapProduction, workbenchBridge } from '../pages/Production/bridge.js';
 import { Plugins } from '../pages/Plugins/Plugins.js';
 import { Publish, type PublishGuiDraft } from '../pages/Publish/Publish.js';
 import './shell.css';
@@ -147,6 +148,16 @@ type PersistentWorkspaceInput = {
 
 type CharacterSessionDraft = CharacterGuiDraft & { views?: Record<Id, Pick<CharacterGuiDraft, 'section' | 'differenceId'>> };
 type Page = 'projects' | 'editor' | 'assets' | 'pages' | 'production' | 'assistant' | 'collaboration' | 'plugins' | 'publish' | `extension:${string}`;
+const restoredAuthorDocuments = (documents: AuthorDocument[]) => {
+  const restored = new Map<string, AuthorDocument>();
+  for (const document of documents) {
+    if (document.id === 'route:assets') continue;
+    const id = restoredAuthorDocumentId(document.id);
+    if (id !== document.id && restored.has(id)) continue;
+    restored.set(id, id === document.id ? document : { ...document, id, objectId: 'production' });
+  }
+  return [...restored.values()];
+};
 type SceneStageSource = { sceneId: Id; documentId: Id; statementId: Id | null; eventId?: Id; projectId?: Id; revision?: number };
 type SceneStatementSource = SceneStageSource & { statementId: Id };
 type PasteSpeaker = { kind: 'character'; id: Id } | { kind: 'narrator' };
@@ -471,7 +482,20 @@ export class AuthoringWorkspace {
   private setProductionReview = (reviewing: boolean) => { if (this.productionReview === reviewing) return; this.productionReview = reviewing; queueMicrotask(() => this.render()); };
   private setProductionUnapplied = (dirty: boolean) => { this.productionUnapplied = dirty;void this.reportAuthoringDrafts(); };
   private productionSubscription: (() => void) | null = null;
-  private productionChanged=()=>{const production=this.production;if(!production)return;this.documents=this.documents.map(document=>document.kind==='route'&&['production','assistant'].includes(document.objectId??'')?{...document,dirty:production.draftDirty||production.draftSaving}:document);this.refreshDocumentTabs();};
+  private productionDirectoryState = initialProductionDirectory();
+  private productionDirectoryRequested = false;
+  private productionChanged = () => {
+    if (!this.production) return;
+    const record = this.production.selectedRecord, previous = this.productionDirectoryState.record;
+    if (record?.id !== previous?.id || record?.kind !== previous?.kind) {
+      this.productionDirectoryState = { ...this.productionDirectoryState, record };
+      this.rememberWorkbench();
+    }
+    const dirty = this.production.draftDirty || this.production.draftSaving;
+    if (!this.documents.some(document => document.id === productionDocumentId && !!document.dirty !== dirty)) return;
+    this.documents = this.documents.map(document => document.id === productionDocumentId ? { ...document, dirty } : document);
+    this.refreshDocumentTabs();
+  };
   private closeSubscription: (() => void) | null = null;
   private studioPlugins: StudioPluginHost | null = null;
   private pluginRenderLocale = '';
@@ -498,7 +522,10 @@ export class AuthoringWorkspace {
   private collaborationExplorer = el('div','collaboration-explorer-mount');
   private collaborationSubscriptions: (()=>void)[] = [];
   private productionInspector = el('div', 'production-inspector-mount');
-  private productionExplorer = el('div', 'production-explorer-mount');
+  private productionDirectory = el('div', 'production-directory-mount');
+  private productionDocument = el('div', 'studio-content workbench-route-host production-document-host');
+  private productionNode = el('div', 'workbench-mount');
+  private productionRoot: Root | null = null;
   private projectsExplorer = el('div', 'projects-explorer-mount');
   private projectsInspector = el('div', 'projects-inspector-mount');
   private pluginsExplorer = el('div', 'plugins-explorer-mount');
@@ -739,7 +766,7 @@ export class AuthoringWorkspace {
         else this.render();
       })();
     }));
-    if(collaborationBridge.onCollaborationNavigate)this.collaborationSubscriptions.push(collaborationBridge.onCollaborationNavigate(input=>{void (async()=>{if(input.projectChanged){await this.refreshCollaborationProject();return;}if(input.documentId){const scene=this.controller.source?.scenes.find(item=>item.documentId===input.documentId);if(scene){await this.openDocument({kind:'scene',objectId:scene.sceneId});return;}}await this.navigate(input.page==='creation'?'editor':input.page==='player-ui'?'pages':input.page as Page);if(input.taskId&&this.production){await this.production.refresh();this.production.taskId=input.taskId;this.production.changed();this.render();}})();}));
+    if(collaborationBridge.onCollaborationNavigate)this.collaborationSubscriptions.push(collaborationBridge.onCollaborationNavigate(input=>{void (async()=>{if(input.projectChanged){await this.refreshCollaborationProject();return;}if(input.documentId){const scene=this.controller.source?.scenes.find(item=>item.documentId===input.documentId);if(scene){await this.openDocument({kind:'scene',objectId:scene.sceneId});return;}}await this.navigate(input.page==='creation'?'editor':input.page==='player-ui'?'pages':input.page as Page);if(input.taskId&&this.activeDocument===productionDocumentId)await this.production?.openTask(input.taskId);})();}));
     this.closeSubscription = this.services.bridge.onCloseRequested?.(() => this.choiceForClose('exit')) ?? null;
     window.addEventListener('keydown', this.commandShortcut, true);
     window.addEventListener('unload', () => this.dispose(), { once: true });
@@ -815,7 +842,7 @@ export class AuthoringWorkspace {
     for (const session of this.scriptSessions.values()) session.editor.dispose(); this.scriptSessions.clear(); this.writingInputs.clear();
     this.resourceProcessorRoot?.unmount(); this.resourceProcessorRoot = null;
     this.disposeCharacterRegions();
-    this.playerNameEditor?.dispose();this.languageRoot?.unmount(); this.startupRoot?.unmount(); this.characterRoot?.unmount(); this.graphRoot?.unmount(); this.projectsRoot?.unmount(); this.workbench?.unmount();
+    this.playerNameEditor?.dispose();this.languageRoot?.unmount(); this.startupRoot?.unmount(); this.characterRoot?.unmount(); this.graphRoot?.unmount(); this.projectsRoot?.unmount(); this.workbench?.unmount(); this.productionRoot?.unmount();
     for (const toolbar of this.sceneToolbars.values()) toolbar.root.unmount();
     this.sceneToolbars.clear();
     this.shellRoot?.unmount(); this.shellRoot = null; this.controller.close(); void this.studioPlugins?.dispose();
@@ -1042,12 +1069,13 @@ export class AuthoringWorkspace {
         this.startupGuiDraft = draft.startup; this.languageGuiDraft = draft.language; this.playerNameGuiDraft = draft.playerName;
         this.productionGuiResume = draft.production; this.projectDraft = draft.projectCreate;
         this.recoveredForms = []; this.retainedInput = retainedWorkspaceInput(draft.retained, source.project);
-        this.documents = draft.documents.filter(document => document.kind !== 'scene' || source.scenes.some(scene => scene.sceneId === document.objectId));
-        this.activeDocument = draft.active; this.page = draft.page;
+        this.documents = restoredAuthorDocuments(draft.documents.filter(document => document.kind !== 'scene' || source.scenes.some(scene => scene.sceneId === document.objectId)));
+        const active = restoredAuthorDocumentId(draft.active), page = draft.page === 'assistant' ? 'production' : draft.page;
+        this.activeDocument = active; this.page = page;
         if (draft.sceneId && source.scenes.some(scene => scene.sceneId === draft.sceneId)) this.controller.selectScene(draft.sceneId);
         this.controller.changeView(draft.view);
         for (const form of [...draft.forms ?? []].sort((a,b)=>Number(!a.id.startsWith('insertion:'))-Number(!b.id.startsWith('insertion:')))) { if (!await this.restoreFormInput(form)) this.recoveredForms.push(form); }
-        if (this.documents.some(document => document.id === draft.active)) { this.activeDocument=draft.active;this.page=draft.page; }
+        if (this.documents.some(document => document.id === active)) { this.activeDocument = active; this.page = page; }
       }
       if ((this.recoveredForms.length || this.retainedInput) && !this.recoveryReviewed) this.openRecoveredInput();
     } finally { this.inputDraftRestoredProject = projectId; const normalized=this.captureInputDraft();if(normalized){const serialized=JSON.stringify(normalized);this.lastInputContent.set(projectId,serialized);if(original&&serialized!==JSON.stringify(original))this.inputDraftStore.schedule(projectId,JSON.parse(serialized) as Json);}this.inputDraftRestoring = false; }
@@ -1191,6 +1219,7 @@ export class AuthoringWorkspace {
     this.productionSubscription?.(); this.productionSubscription = null;
     this.designerProjectRevision = null; this.designerSceneRevisions.clear();
     this.workbench?.unmount(); this.workbench = null;
+    this.productionRoot?.unmount(); this.productionRoot = null;
     for (const session of this.scriptSessions.values()) session.editor.dispose(); this.scriptSessions.clear(); this.scriptMounts.clear(); this.scriptEditor = null;
     this.writingInputs.clear();
     for(const form of this.formDocuments.values())form.dispose?.(); this.formDocuments.clear(); this.productionUnapplied=false; this.insertions.clear(); this.recentObjects=[];this.cardRangeAnchor=null;this.treeCreateEditor=null; this.debugRouteIntent.clear(); this.characterSelected=undefined;this.characterAsset=null;this.characterSearch='';this.characterSectionRequest=null;
@@ -1228,6 +1257,9 @@ export class AuthoringWorkspace {
     this.dockLayout = workbench?.dockLayout;
     this.pageDirectoryRequested = validLayout(this.dockLayout)
       && allGroups(this.dockLayout).some(group => group.tabs.includes(authoringDockTools.pageDirectory));
+    this.productionDirectoryRequested = validLayout(this.dockLayout)
+      && allGroups(this.dockLayout).some(group => group.tabs.includes(authoringDockTools.productionDirectory));
+    this.productionDirectoryState = workbench?.productionDirectory ?? initialProductionDirectory();
     this.documentRegions.clear();
     this.retainedCompanions.clear();
     this.disposeCharacterRegions();
@@ -1253,8 +1285,8 @@ export class AuthoringWorkspace {
   }
   private restoreWorkbenchDocuments(): AuthorDocument | undefined {
     const workbench = this.controller.workbench;
-    this.documents = workbench?.documents.filter(document => document.id !== 'route:assets') ?? [];
-    return this.documents.find(document => document.id === workbench?.active);
+    this.documents = restoredAuthorDocuments(workbench?.documents ?? []);
+    return this.documents.find(document => document.id === restoredAuthorDocumentId(workbench?.active ?? ''));
   }
   private missingDocument(document: Pick<AuthorDocument, 'kind' | 'objectId'> | undefined): boolean {
     const source = this.controller.source;
@@ -1298,6 +1330,7 @@ export class AuthoringWorkspace {
       sceneContexts,
       pageViews: this.designer?.workbenchViews() ?? this.controller.workbench?.pageViews,
       outline: { query: this.outlineQuery, scrollTop: this.outlineScrollTop, selected: this.treeSelected },
+      productionDirectory: this.productionDirectoryState,
       characterQuery: this.characterSearch,
       ...(this.fixedStageSource ? { stageSource: this.fixedStageSource } : {}),
       ...(this.fixedInspectorSource ? { inspectorSource: this.fixedInspectorSource } : {}),
@@ -1599,12 +1632,12 @@ export class AuthoringWorkspace {
     if (id.startsWith('scene:')) return this.activateVisibleScene(id);
     const document = this.documents.find(item => item.id === id);
     const sceneId = this.controller.scene?.sceneId;
-    if (!document || !['asset', 'character'].includes(document.kind) || this.missingDocument(document)
+    if (!document || id !== productionDocumentId && !['asset', 'character'].includes(document.kind) || this.missingDocument(document)
       || this.composingSceneInputs.size || this.writingDrafts.size || sceneId && this.scriptDrafts.has(sceneId)
       || this.production?.draftDirty) return false;
     this.rememberScene(); this.freezeDocumentRegion();
     this.activeDocument = id; this.focusedWorkbenchTool = null;
-    this.page = document.kind === 'asset' ? 'assets' : 'editor';
+    this.page = id === productionDocumentId ? 'production' : document.kind === 'asset' ? 'assets' : 'editor';
     if (document.kind === 'character') { this.characterSelected = document.objectId; this.characterAsset = null; }
     queueMicrotask(() => { if (this.activeDocument === id) this.render(); });
     return true;
@@ -1617,7 +1650,7 @@ export class AuthoringWorkspace {
       if (!ids.has(owner) || !this.splitSceneViews.has(owner.slice('scene:'.length))) this.retainedCompanions.delete(id);
     }
     this.disposeCharacterRegions(ids);
-    if (ids.has(this.activeDocument)) this.documentRegions.set(this.activeDocument, { node, toolbar, interactive: /^(scene|asset|character):/.test(this.activeDocument) });
+    if (ids.has(this.activeDocument)) this.documentRegions.set(this.activeDocument, { node, toolbar, interactive: this.activeDocument === productionDocumentId || /^(scene|asset|character):/.test(this.activeDocument) });
     for (const [id, region] of this.documentRegions) {
       if (id !== this.activeDocument && (region.node === node || node.contains(region.node) || region.node.contains(node))) this.documentRegions.delete(id);
     }
@@ -1626,7 +1659,8 @@ export class AuthoringWorkspace {
     for (const group of groups(layout.tree)) {
       if (group.active === this.activeDocument) continue;
       const document = this.documents.find(item => item.id === group.active);
-      if (document?.kind === 'asset') this.documentRegions.set(document.id, { node: this.renderAssetDocument(document), interactive: true });
+      if (document?.id === productionDocumentId && this.productionRoot) this.documentRegions.set(document.id, { node: this.productionDocument, interactive: true });
+      else if (document?.kind === 'asset') this.documentRegions.set(document.id, { node: this.renderAssetDocument(document), interactive: true });
       else if (document?.kind === 'character' && document.objectId && !this.missingDocument(document)) {
         this.documentRegions.set(document.id, { node: this.characterDocument(document.objectId), interactive: true });
       } else if (document?.kind === 'scene') {
@@ -1637,7 +1671,7 @@ export class AuthoringWorkspace {
   }
   private freezeDocumentRegion(): void {
     const region = this.documentRegions.get(this.activeDocument);
-    if (!region || this.activeDocument.startsWith('asset:')) return;
+    if (!region || this.activeDocument === productionDocumentId || this.activeDocument.startsWith('asset:')) return;
     // The legacy page and character shells reuse a single editor root. The other
     // group may keep its document visible while the focused editor changes owner.
     if (this.activeDocument.startsWith('page:') || this.activeDocument.startsWith('route:') || this.activeDocument === 'characters') {
@@ -1647,6 +1681,8 @@ export class AuthoringWorkspace {
   /** Public document entrypoint for core pages and plugin consumers. */
   async openDocument(document: Omit<AuthorDocument, 'id' | 'title'> & { id?: string; title?: string }): Promise<void> {
     if (document.id === 'route:assets' || document.kind === 'route' && document.objectId === 'assets') return this.openAssetWorkspace();
+    if (document.id === 'route:assistant' || document.kind === 'route' && document.objectId === 'assistant')
+      document = { ...document, id: productionDocumentId, objectId: 'production' };
     if (document.kind === 'asset' && document.objectId) {
       return this.previewAsset(document.objectId, this.assetPreviewVersions.get(document.objectId), { focus: false });
     }
@@ -2020,11 +2056,12 @@ export class AuthoringWorkspace {
     try { await this.navigate(routes[page]);
       if (this.page !== routes[page]) { const error = { code: 'PLUGIN_NAVIGATION_PENDING', severity: 'error' as const, owner: 'M01' as const, message: '请先处理当前草稿或页面错误，再打开目标页面', related: [], actions: [] }; return { ok: false, error, issues: [error] }; }
       if (result && this.production && (result.kind === 'task' || result.kind === 'candidate')) {
-        await this.production.refresh();
+        const session = this.production;
         const candidateIds = result.kind === 'task' ? result.candidateIds ?? [] : [result.candidateId];
-        const taskId = result.kind === 'task' ? result.taskId : result.taskId ?? this.production.data.candidates.find(item => item.candidate.id === result.candidateId)?.candidate.taskId;
-        if (!taskId || !this.production.data.tasks.some(item => item.id === taskId)) { const error = { code: 'PLUGIN_RESULT_MISSING', severity: 'error' as const, owner: 'M01' as const, message: '制作结果已移除或不属于当前作品', related: [], actions: [] }; return { ok: false, error, issues: [error] }; }
-        this.production.taskId = taskId; this.production.selected = new Set(candidateIds); this.production.changed(); this.render();
+        const taskId = result.taskId ?? (result.kind === 'candidate'
+          ? unwrapProduction(await session.bridge.production.overview()).candidates.find(item => item.candidate.id === result.candidateId)?.candidate.taskId : undefined);
+        if (taskId && session === this.production) await session.openTask(taskId, candidateIds);
+        if (!taskId || session !== this.production || session.task?.id !== taskId) { const error = { code: 'PLUGIN_RESULT_MISSING', severity: 'error' as const, owner: 'M01' as const, message: '制作结果已移除或不属于当前作品', related: [], actions: [] }; return { ok: false, error, issues: [error] }; }
       }
       return { ok: true, value: undefined, warnings: [] };
     } catch (e) { const error = { code: 'PLUGIN_NAVIGATION', severity: 'error' as const, owner: 'M01' as const, message: String(e), related: [], actions: [] }; return { ok: false, error, issues: [error] }; }
@@ -2374,6 +2411,7 @@ export class AuthoringWorkspace {
       this.disposeAssetPreview(id);
       this.assetPreviews.set(id, { revision: asset.revision, variantId, locale, view: createAssetWorkbenchPreview(asset, variantId, {
         locale, services: this.services, onBindDifference: (asset, variantId) => this.bindAssetDifference(asset, variantId),
+        onProduceDifference: (assetId, variantId) => void this.openFigureProduction({ assetId, variantId }),
         onFollowActive: () => { void this.previewAsset(asset.id, asset.activeVariantId); },
       }) });
     }
@@ -2908,7 +2946,7 @@ export class AuthoringWorkspace {
   private requestCharacterSection(characterId: Id, section: NonNullable<CharacterManagerProps['sectionRequest']>['section'], differenceId?: Id): void {
     this.characterSectionRequest = { characterId, section, differenceId, request: ++this.characterSectionSequence };
   }
-  private bindAssetDifference(asset: Asset, variantId: Id): void {
+  private bindAssetDifference(asset: Asset, variantId: Id, suggestedCharacterId?: Id): void {
     const source = this.controller.source;
     if (!source || this.closeAssetBindDialog) return;
     const node = el('div'), root = createRoot(node);
@@ -2917,7 +2955,7 @@ export class AuthoringWorkspace {
     this.root.append(node);
     let differenceId: Id | undefined;
     root.render(createElement(BindCharacterDifference, {
-      asset, variantId, characters: source.characters, resources: this.services.runtimeAssets,
+      asset, variantId, suggestedCharacterId, characters: source.characters, resources: this.services.runtimeAssets,
       locale: this.controller.preferences.locale, close,
       apply: async operation => {
         if (this.controller.source?.project.projectId !== source.project.projectId) return {
@@ -3065,7 +3103,7 @@ export class AuthoringWorkspace {
     if (previousContent && this.renderedPage) this.pageScroll.set(this.renderedPage, previousContent.scrollTop);
     const previousPage = this.renderedPage, routeChanged = previousPage !== this.page; this.renderedPage = this.page;
     const assetDocument = this.documents.find(item => item.id === this.activeDocument && item.kind === 'asset');
-    if (this.page !== 'production' && this.page !== 'assistant') for (const media of this.workbenchNode.querySelectorAll<HTMLMediaElement>('audio,video')) { media.pause(); media.currentTime = 0; }
+    if (!['collaboration','plugins','publish'].includes(this.page)) for (const media of this.workbenchNode.querySelectorAll<HTMLMediaElement>('audio,video')) { media.pause(); media.currentTime = 0; }
     if (routeChanged || this.pluginRenderLocale !== this.controller.preferences.locale) this.studioPlugins?.unmountViews();
     this.pluginRenderLocale = this.controller.preferences.locale;
     if (this.designer) this.designerResume = this.designer.capture();
@@ -3078,7 +3116,7 @@ export class AuthoringWorkspace {
     if (!portals) { portals = el('div'); portals.id = 'studio-portals'; document.body.append(portals); installTransientScrollbars(portals); observeFormHints(portals); }
     portals.dataset.theme = this.controller.preferences.theme; portals.lang = locale;
     const routes = [['projects',this.t('projects'),'folder'],['editor',this.t('editor'),'edit'],['assets',this.t('assets'),'image'],['production',tr(locale,'制作','Produce','制作'),'spark'],['collaboration',tr(locale,'协作','Collaborate','連携'),'collaboration'],['pages',designerText('页面',locale),'layout'],['plugins',tr(locale,'插件','Plugins','拡張'),'package'],['publish',tr(locale,'发布','Publish','公開'),'publish']] as const;
-    const railItems: RailItem[] = routes.map(([page,label,icon]) => ({key:page,label,icon,current:this.page===page || page==='pages'&&this.page==='assistant',disabled:page!=='projects'&&!this.controller.source}));
+    const railItems: RailItem[] = routes.map(([page,label,icon]) => ({key:page,label,icon,current:this.page===page,disabled:page!=='projects'&&!this.controller.source}));
     const extensions = this.studioPlugins?.workbenches() ?? [];
     if (this.controller.source && extensions.length) {
       for (const extension of extensions) {
@@ -3086,7 +3124,8 @@ export class AuthoringWorkspace {
         railItems.push({key,label,icon:'package',current:this.page===key,extension:true});
       }
     }
-    const content=el('div','studio-content' + (['production','assistant','collaboration','plugins','publish'].includes(this.page) ? ' workbench-route-host' : '') + (['production','assistant'].includes(this.page) ? ' production-document-host' : '') + (routeChanged ? ' route-enter' : ''));
+    const content = this.page === 'production' ? this.productionDocument
+      : el('div', 'studio-content' + (['collaboration','plugins','publish'].includes(this.page) ? ' workbench-route-host' : '') + (routeChanged ? ' route-enter' : ''));
     if (this.studioPlugins?.loadError) { const error = el('p', 'workbench-error', this.studioPlugins.loadError); error.setAttribute('role', 'alert'); content.append(error); }
     if (this.message && !this.noticeIssue) { const notice = el('div', 'authoring-notice'); notice.dataset.tone = this.messageTone; notice.setAttribute('role', this.messageTone === 'error' ? 'alert' : 'status');
       const dismiss = button('', () => { this.message = ''; this.noticeText=''; this.render(); }); dismiss.ariaLabel = tr(locale, '关闭提示', 'Dismiss notification', '通知を閉じる'); dismiss.append(actionIcon('close'));
@@ -3126,15 +3165,37 @@ export class AuthoringWorkspace {
     } if (this.page === 'pages') content.append(this.designer.root); }
     if (this.designer && this.controller.source) { const source = this.controller.source; refreshDesigner = !startDesigner && (this.designerProjectRevision !== source.projectRevision || source.scenes.some(scene => this.designerSceneRevisions.get(scene.sceneId) !== scene.revision)); this.designerProjectRevision = source.projectRevision; this.designerSceneRevisions = new Map(source.scenes.map(scene => [scene.sceneId, scene.revision])); }
     const source=this.controller.source;
-    this.production?.setVisible(['production','assistant'].includes(this.page));
-    if(source&&(this.workbench||['production','assistant','collaboration','plugins','publish'].includes(this.page))) {
-      this.production ??= new ProductionSession(workbenchBridge(this.services.bridge),source.project.projectId, () => this.controller.preferences.locale);
-      if(this.productionGuiResume){const resume=this.productionGuiResume;this.production.guiDraft=resume.gui;this.production.connectionGuiDraft=resume.connection?{...resume.connection,secret:""}:null;this.production.candidateText=new Map(resume.candidateText);this.productionGuiResume=null;}
-      this.productionSubscription ??= this.production.subscribe(this.productionChanged);
-      this.workbench ??= createRoot(this.workbenchNode);if(['production','assistant','collaboration','plugins','publish'].includes(this.page))content.append(this.workbenchNode);
-      const changed=async(receipt?: EditReceipt)=>{if(receipt)await this.controller.acceptExternalEdit(receipt);else await this.controller.refresh();this.render();};
+    const changed = async (receipt?: EditReceipt) => {
+      if (receipt) await this.controller.acceptExternalEdit(receipt);
+      else await this.controller.refresh();
+      this.render();
+    };
+    if (source && (this.page === 'production' || this.productionRoot || this.productionDirectoryRequested
+      || this.documents.some(document => document.id === productionDocumentId))) {
+      const session = this.ensureProductionSession()!;
+      this.productionSubscription ??= session.subscribe(this.productionChanged);
+      if (!this.productionRoot) {
+        this.productionDocument.append(this.productionNode);
+        this.productionRoot = createRoot(this.productionNode);
+      }
+      this.productionRoot.render(createElement(Production, {
+        productionHost: this.studioPlugins, onUnappliedChange: this.setProductionUnapplied, onReviewChange: this.setProductionReview,
+        session, services: this.services, locale, navigate: page => void this.navigate(page as Page), changed,
+        returnToOrigin: origin => this.returnToProductionOrigin(origin),
+        bindFigure: (asset, variantId, characterId) => this.bindAssetDifference(asset, variantId, characterId),
+        documentActive: this.page === 'production', inspectorContainer: this.productionInspector, revealInspector: () => this.revealInspector(),
+        directory: {
+          container: this.productionDirectory, initial: this.productionDirectoryState,
+          onChange: state => { this.productionDirectoryState = { ...this.productionDirectoryState, ...state }; this.rememberWorkbench(); },
+          open: () => this.dock.current?.open(authoringDockTools.productionDirectory),
+          openDocument: () => this.openProductionWorkbench(),
+          focusDocument: () => this.dock.current?.focusView(productionDocumentId),
+        },
+      }));
+    }
+    if (source && (this.workbench || ['collaboration','plugins','publish'].includes(this.page))) {
+      this.workbench ??= createRoot(this.workbenchNode);if(['collaboration','plugins','publish'].includes(this.page))content.append(this.workbenchNode);
       this.workbench.render(createElement('div',{className:'workbench-pages'},
-        createElement('div',{hidden:!['production','assistant'].includes(this.page)},createElement(Production,{productionHost:this.studioPlugins,onUnappliedChange:this.setProductionUnapplied,onReviewChange:this.setProductionReview,session:this.production,services:this.services,locale,navigate:(page:string)=>void this.navigate(page as Page),changed,documentActive:['production','assistant'].includes(this.page),inspectorContainer:this.productionInspector,explorerContainer:this.productionExplorer,revealInspector:()=>this.revealInspector()})),
         createElement('div',{hidden:this.page!=='collaboration'},createElement(Collaboration,{bridge:(this.services.bridge as import('../../desktop-bridge.js').DesktopBridge).collaboration,locale,active:this.page==='collaboration',explorerContainer:this.collaborationExplorer,inspectorContainer:this.collaborationInspector})),
         createElement('div',{hidden:this.page!=='plugins'},createElement(Plugins,{bridge:workbenchBridge(this.services.bridge),locale,projectId:source.project.projectId,authorHost:this.studioPlugins,explorerContainer:this.pluginsExplorer,inspectorContainer:this.pluginsInspector,documentActive:this.page==='plugins',revealInspector:()=>this.revealInspector(),changed:async()=>{await this.controller.refresh();await this.refreshStudioPlugins();this.render();}})),
         createElement('div',{hidden:this.page!=='publish'},createElement(Publish,{onHistoryReady:this.setPublishHistory,key:this.publishDraftRevision,guiDraft:this.publishGuiDraft,onGuiDraftChange:this.capturePublishGui,services:this.services,source,locale,changed,onUnappliedChange:this.setPublishUnapplied,saveAll:()=>this.save(true),explorerContainer:this.publishExplorer,inspectorContainer:this.publishInspector,documentActive:this.page==='publish',revealInspector:()=>this.revealInspector(),locateSource:target=>{void this.locateIssue(target);}}))));
@@ -3204,7 +3265,13 @@ export class AuthoringWorkspace {
       documentContent = el('section', 'gc-dock-missing-view');
       documentContent.append(el('h2', '', unavailableDocument.title), el('p', '', tr(locale, '此对象暂不可用。恢复原对象，或从目录选择其他对象。', 'This item is unavailable. Restore it or choose another item from the directory.', 'この項目は利用できません。項目を復元するか、一覧から別の項目を選択してください。')));
     } else if (this.page === 'pages' && this.designer) { const regions = this.designer.workbenchRegions(); if (!this.designer.workbenchIsPage(this.activeDocument.slice(5)) && this.designer.hasWorkbenchPage(this.activeDocument.slice(5)) === true) { explorer = regions.tree; inspector = regions.inspector; } if (this.activeDocument === 'startup') { documentContent = this.startupDocument(true); inspector = this.startupInspector; } }
-    else if (this.page !== 'assets') { const title = routes.find(([page]) => page === this.page)?.[1] ?? this.studioPlugins?.workbenches().find(item => `extension:${item.key}` === this.page)?.title ?? this.page;
+    else if (this.page === 'production') {
+      const title = tr(locale, '制作', 'Production', '制作');
+      this.documents = openAuthorDocument(this.documents, { id: productionDocumentId, kind: 'route', objectId: 'production', title });
+      this.activeDocument = productionDocumentId;
+      inspector = el('div', 'production-inspector-host');
+      inspector.append(this.productionInspector);
+    } else if (this.page !== 'assets') { const title = routes.find(([page]) => page === this.page)?.[1] ?? this.studioPlugins?.workbenches().find(item => `extension:${item.key}` === this.page)?.title ?? this.page;
       const document: AuthorDocument = { id: `route:${this.page}`, title: typeof title === 'string' ? title : this.page, kind: 'route', objectId: this.page }; this.documents = openAuthorDocument(this.documents, document); this.activeDocument = document.id;
       explorer = el('div', 'gc-wb-tree-tools'); explorer.append(el('p', '', typeof title === 'string' ? title : this.page)); }
     if (assetDocument) documentContent = this.renderAssetDocument(assetDocument);
@@ -3212,7 +3279,6 @@ export class AuthoringWorkspace {
     if (this.page === 'collaboration') {explorer=this.collaborationExplorer;inspector=this.collaborationInspector;}
     if (this.page === 'plugins') { explorer = this.pluginsExplorer; inspector = el('div', 'plugins-inspector-host'); inspector.append(this.pluginsInspector); }
     if (this.page === 'publish') { explorer = this.publishExplorer; inspector = el('div', 'publish-inspector-host'); inspector.append(this.publishInspector); }
-    if (['production','assistant'].includes(this.page)) { inspector = el('div', 'production-inspector-host'); inspector.append(this.productionInspector); explorer = el('div', 'production-explorer-host'); explorer.append(this.productionExplorer); }
     for (const slot of content.querySelectorAll<HTMLElement>(':scope > .studio-plugin-slot')) {
       inspector ??= el('aside', 'authoring-inspector'); inspector.append(slot);
     }
@@ -3285,6 +3351,12 @@ export class AuthoringWorkspace {
     }
     this.shellProps = { source: source ?? null, characterExplorer: source ? this.characterDirectoryNode : undefined, locale, page: this.page,
       assetDirectory, assetLibrary, assetInspector: assetProperties, openAssets: () => this.openAssetWorkspace(),
+      productionDirectory: source ? this.productionDirectory : undefined,
+      prepareProductionDirectory: () => {
+        if (this.productionRoot || this.productionDirectoryRequested) return;
+        this.productionDirectoryRequested = true;
+        queueMicrotask(() => this.render());
+      },
       documentRegions: this.documentRegions, openCharacterDifference: id => this.openCharacterDifference(id), openWritingStage: id => this.openWritingStage(id),
       activateVisibleDocument: id => this.activateVisibleDocument(id),
       outlineState: { query: this.outlineQuery, scrollTop: this.outlineScrollTop },
@@ -3302,7 +3374,7 @@ export class AuthoringWorkspace {
       dockLayoutChange: layout => {
         this.dockLayout = asJson(JSON.parse(JSON.stringify(layout))); this.rememberWorkbench();
         requestAnimationFrame(() => {
-          if (groups(layout.tree).some(group => group.active.startsWith('asset:') && !this.documentRegions.has(group.active))) this.render();
+          if (groups(layout.tree).some(group => (group.active.startsWith('asset:') || group.active === productionDocumentId) && !this.documentRegions.has(group.active))) this.render();
           this.syncAssetPreviews();
           this.restoreAssetLibraryScroll();
           this.refreshCommandTarget();
@@ -3576,7 +3648,8 @@ export class AuthoringWorkspace {
       ...(this.retainedInput||this.recoveredForms.length?[{id:'recovered-input',label:t('查看保留输入','Review retained input','保持した入力を確認'),group:t('文档','Documents','文書'),run:()=>this.openRecoveredInput()}]:[]),
       ...([['save',this.t('save'),'Ctrl+S'],['saveAll',t('保存全部','Save all','すべて保存'),'Ctrl+Shift+S'],['undo',this.t('undo'),'Ctrl+Z'],['redo',this.t('redo'),'Ctrl+Shift+Z'],['preferences',t('工作台偏好','Workbench preferences','ワークスペース設定'),''],['publish',t('检查与发行','Check and publish','検証と公開'),''],['cards',this.t('cards'),''],['writing',this.t('writing'),''],['script',this.t('script'),'']] as const).map(([id,label,shortcut]) => ({id,label,shortcut,detail: ['save', 'undo', 'redo'].includes(id) ? targetLabel : undefined,group:t('应用命令','Application commands','アプリのコマンド'),disabled:projectReason ?? (id === 'undo' || id === 'redo' ? historyUnavailable : undefined),run:()=>this.shellAction(id)})),
       {id:'project-settings',label:t('作品设置','Project settings','作品設定'),group:t('应用命令','Application commands','アプリのコマンド'),disabled:projectReason,run:()=>this.openDocument({kind:'project',title:t('作品设置','Project settings','作品設定')})},
-      {id:'new-production',label:t('新建制作','New production','新しい制作'),group:t('制作','Production','制作'),disabled:projectReason,run:async()=>{await this.navigate('production');await this.production?.startQuick('script');this.render();}},
+      {id:'new-production',label:t('新建制作','New production','新しい制作'),group:t('制作','Production','制作'),disabled:projectReason,run:async()=>{if(await this.openProductionWorkbench(true))await this.production?.startQuick('script');}},
+      {id:'produce-dialogue',label:t('为所选对白制作配音','Produce voice for selected dialogue','選択した台詞の音声を制作'),group:t('制作','Production','制作'),disabled:projectReason ?? (this.page === 'editor' && this.controller.selection?.statementIds.length ? undefined : t('请先选择对白','Select dialogue first','先に台詞を選択')),run:()=>this.createWithAi('voice')},
       ...(['entry','scene','statement'] as const).map((from,index)=>({id:`playtest-${from}`,label:[t('从头试玩','Playtest from start','最初から試遊'),t('从当前场景试玩','Playtest this scene','現在の場面から試遊'),t('从此句试玩','Playtest from here','この文から試遊')][index]!,group:t('试玩','Playtest','試遊'),disabled:projectReason??(this.page!=='editor'||this.documents.find(d=>d.id===this.activeDocument)?.kind!=='scene'?t('请打开场景文档','Open a scene document','場面の文書を開いてください'):from==='statement'&&!this.controller.selection?.primaryId?t('请先选择语句','Select a statement first','文を選択してください'):undefined),run:()=>this.runPlaytest(from)})),
       {id:'delete-assets',label:t('删除所选素材','Delete selected assets','選択した素材を削除'),group:t('素材','Assets','素材'),disabled:!this.selectedAssets.size?t('请先选择素材','Select assets first','素材を選択してください'):undefined,run:()=>this.removeSelected()},
       ...([-1,1] as const).map(direction=>({id:`move-tab-${direction}`,label:direction<0?t('文档标签向左移动','Move document tab left','文書タブを左へ'):t('文档标签向右移动','Move document tab right','文書タブを右へ'),group:t('文档','Documents','文書'),disabled:!this.activeDocument||this.documents.findIndex(d=>d.id===this.activeDocument)+direction<0||this.documents.findIndex(d=>d.id===this.activeDocument)+direction>=this.documents.length?t('已在边缘或没有文档','No document or already at the edge','文書がないか端にあります'):undefined,run:()=>{const ids=this.documents.map(d=>d.id),at=ids.indexOf(this.activeDocument);[ids[at],ids[at+direction]]=[ids[at+direction]!,ids[at]!];this.shellProps?.reorder(ids);}})),
@@ -3592,7 +3665,7 @@ export class AuthoringWorkspace {
       const [assets,docs,drafts]=await Promise.all([this.services.queryAssets({kind:null,text:query,offset:0,limit:100}),this.services.bridge.documents.list(),workbenchBridge(this.services.bridge).production.overview()]);
       if(assets.ok)objects.push(...assets.value.items.map(asset=>({id:`asset:${asset.id}`,label:asset.name,group:t('素材','Assets','素材'),run:()=>this.previewAsset(asset.id,this.assetPreviewVersions.get(asset.id)??asset.activeVariantId)})));
       if(docs.ok){const template=readTemplateDocuments(docs.value);objects.push(...template.pages.map(page=>({id:`page:${page.key}`,label:template.locales[locale]?.[`page.${page.key}`]??page.key,group:t('页面','Pages','ページ'),run:()=>this.openDocument({kind:'page',objectId:page.key,title:template.locales[locale]?.[`page.${page.key}`]??page.key})})));}
-      if(drafts.ok)objects.push(...drafts.value.drafts.map(draft=>({id:`draft:${draft.id}`,label:draft.name??t('制作草稿','Production draft','制作下書き'),group:t('制作草稿','Production drafts','制作下書き'),run:async()=>{await this.navigate('production');await this.production?.openDraft(draft.id);this.render();}})));
+      if(drafts.ok)objects.push(...drafts.value.drafts.map(draft=>({id:`draft:${draft.id}`,label:draft.name??t('制作草稿','Production draft','制作下書き'),group:t('制作草稿','Production drafts','制作下書き'),run:async()=>{if(!await this.openProductionWorkbench())return;const session=this.production!;await session.refresh();if(session===this.production)await session.openDraft(draft.id);}})));
       return match(objects).sort((a,b)=>(this.recentObjects.includes(a.id)?this.recentObjects.indexOf(a.id):Infinity)-(this.recentObjects.includes(b.id)?this.recentObjects.indexOf(b.id):Infinity)).map(item=>({...item,run:async()=>{await item.run();this.recentObjects=[item.id,...this.recentObjects.filter(id=>id!==item.id)].slice(0,50);}}));
     }});
   }
@@ -3722,8 +3795,37 @@ export class AuthoringWorkspace {
     bar.replaceChildren(el('span',dirty?'authoring-dirty':'',status.save==='failed'?this.t('failed'):dirty?this.t('dirty'):this.t('saved')),
       el('span','authoring-spacer'),el('span','',tr(locale,'预览','Preview','プレビュー')+' · '+({none:tr(locale,'未打开','Not open','未表示'),synced:tr(locale,'已同步','Synced','同期済み'),updateAvailable:tr(locale,'有更新可用','Update available','更新あり'),restartRequired:tr(locale,'需重启','Restart required','再起動が必要'),lastValid:tr(locale,'上次有效版本','Last valid version','前回の有効版')}[status.preview])),el('span','','Web / Windows'));
   }
+  private ensureProductionSession(): ProductionSession | null {
+    const source = this.controller.source;
+    if (!source) return null;
+    if (!this.production) {
+      this.production = new ProductionSession(workbenchBridge(this.services.bridge), source.project.projectId, () => this.controller.preferences.locale);
+      this.production.restoreRecord(this.productionDirectoryState.record);
+    }
+    if (this.productionGuiResume) {
+      const resume = this.productionGuiResume;
+      this.production.guiDraft = resume.gui;
+      this.production.connectionGuiDraft = resume.connection ? { ...resume.connection, secret: '' } : null;
+      this.production.candidateText = new Map(resume.candidateText);
+      this.productionGuiResume = null;
+    }
+    return this.production;
+  }
+  private async openProductionWorkbench(captureOrigin = false): Promise<boolean> {
+    const session = this.ensureProductionSession();
+    if (!session) return false;
+    if (this.activeDocument === productionDocumentId) return true;
+    const locale = this.controller.preferences.locale;
+    const origin = { page: this.page, sceneId: this.controller.scene?.sceneId ?? null,
+      statementId: this.controller.selection?.primaryId ?? null, pageIds: [], componentIds: [] };
+    await this.openDocument({ id: productionDocumentId, kind: 'route', objectId: 'production', title: tr(locale, '制作', 'Production', '制作') });
+    if (this.activeDocument !== productionDocumentId || session !== this.production) return false;
+    if (captureOrigin && !session.draft) session.origin = origin;
+    return true;
+  }
   async navigate(page:Page) {
     if (page === 'assets') return this.openAssetWorkspace();
+    if (page === 'production' || page === 'assistant') { await this.openProductionWorkbench(true); return; }
     if (page === 'editor' && this.controller.source) {
       const scene = this.controller.scene ?? this.controller.source.scenes[0];
       if (scene) { await this.openDocument({ kind: 'scene', objectId: scene.sceneId }); return; }
@@ -3735,36 +3837,97 @@ export class AuthoringWorkspace {
     await this.controller.flushResume();
     if(page!=='projects'&&!this.controller.source)return;
     if (page !== 'pages') this.designer?.stopBehaviorPreview();
-    if(page==='production'&&!['assistant','production'].includes(this.page)) { this.production ??=new ProductionSession(workbenchBridge(this.services.bridge),this.controller.source!.project.projectId, () => this.controller.preferences.locale);
-      await this.production.refresh();
-      this.production.origin={page:this.page,sceneId:this.controller.scene?.sceneId??null,statementId:this.controller.selection?.primaryId??null,pageIds:[],componentIds:[]}; }
     this.page=page;this.render();
     if (page === 'pages') this.dock.current?.openCombination([authoringDockTools.pageDirectory, authoringDockTools.pageOutline]);
   }
   private async openPageUiAssets(scope: { pageIds: string[]; componentIds: string[] }) {
-    this.production ??=new ProductionSession(workbenchBridge(this.services.bridge),this.controller.source!.project.projectId, () => this.controller.preferences.locale);
-    await this.production.startQuick('ui-assets', scope);
-    this.page='production';this.render();
+    const session = this.ensureProductionSession();
+    if (!session) return;
+    await session.startQuick('ui-assets', scope);
+    if (session === this.production) await this.openProductionWorkbench();
   }
-  private async createWithAi(intent: 'script' | 'stage') {
+  private async openFigureProduction(reference: { assetId: Id; variantId: Id }, characterId?: Id, differenceId?: Id) {
+    const session = this.ensureProductionSession();
+    if (!session) return;
+    try {
+      await session.startQuick('difference', {
+        reference, characterId,
+        origin: characterId ? { page: 'characters', characterId, differenceId } : { page: 'assets', asset: reference },
+      });
+      if (session === this.production) await this.openProductionWorkbench();
+    } catch (reason) {
+      this.message = String(reason);
+      this.messageTone = 'warning';
+      this.render();
+    }
+  }
+  private async returnToProductionOrigin(origin: import('@galcraft/authoring/production/draft').ProductionOrigin) {
+    const source = this.controller.source;
+    if (!source) return;
+    const unavailable = () => { throw new Error(tr(this.controller.preferences.locale,
+      '原制作对象已失效。制作记录与候选仍可继续查看。', 'The original object is unavailable. The production record and candidates are still available.', '元の対象を利用できません。制作履歴と候補は引き続き確認できます。')); };
+    if (origin.characterId) {
+      const character = source.characters.find(item => item.id === origin.characterId);
+      if (!character || origin.differenceId && !character.differences?.some(item => item.id === origin.differenceId)) return unavailable();
+      this.requestCharacterSection(character.id, 'figures', origin.differenceId);
+      await this.openDocument({ kind: 'character', objectId: character.id, title: character.name });
+      this.dock.current?.activate(`character:${character.id}`);
+    } else if (origin.asset) {
+      const asset = await this.services.getAsset?.(origin.asset.assetId);
+      if (!asset?.ok || !asset.value?.variants.some(item => item.id === origin.asset!.variantId)) return unavailable();
+      await this.previewAsset(origin.asset.assetId, origin.asset.variantId);
+      this.dock.current?.activate(`asset:${origin.asset.assetId}`);
+    } else if (origin.pageIds[0]) {
+      const page = this.production?.data.pages.find(item => item.id === origin.pageIds[0]);
+      if (!page || this.designer?.hasWorkbenchPage(page.key) === false ||
+        page.components && origin.componentIds.some(id => !page.components!.some(item => item.id === id))) return unavailable();
+      await this.openDocument({ kind: 'page', objectId: page.key });
+      const designer = this.designer;
+      if (!designer) return unavailable();
+      await designer.openPage(page.key);
+      if (designer !== this.designer || this.activeDocument !== `page:${page.key}`) return;
+      designer.selectComponents(origin.componentIds);
+      this.refreshDesignerWorkbench();
+      this.dock.current?.activate(`page:${page.key}`);
+    } else if (origin.sceneId) {
+      const scene = source.scenes.find(item => item.sceneId === origin.sceneId);
+      if (!scene || origin.statementId && !parse({ documentId: scene.documentId, revision: scene.revision, text: scene.text }).cst.some(item => item.id === origin.statementId)) return unavailable();
+      await this.openDocument({ kind: 'scene', objectId: scene.sceneId });
+      this.dock.current?.activate(`scene:${scene.sceneId}`);
+      if (origin.statementId) {
+        this.controller.select(origin.statementIds?.length ? origin.statementIds : [origin.statementId], origin.statementId);
+        this.render();
+      }
+    } else await this.navigate(origin.page as Page);
+  }
+  private async createWithAi(intent: 'script' | 'stage' | 'voice') {
     if (!await this.flushScript() || !this.controller.source) return;
-    this.production ??=new ProductionSession(workbenchBridge(this.services.bridge),this.controller.source.project.projectId, () => this.controller.preferences.locale);
-    await this.production.startQuick(intent, { sceneId: this.controller.scene?.sceneId, statementId: this.controller.selection?.primaryId,
-      statementIds: this.controller.selection?.statementIds, textRange: this.controller.selection?.textRange });
-    this.page='production';this.render();
+    const session = this.ensureProductionSession()!;
+    const scene = this.controller.scene, selection = this.controller.selection;
+    const voiceIds = intent === 'voice' && scene ? parse({ documentId: scene.documentId, revision: scene.revision, text: scene.text }).cst
+      .flatMap(node => node.id && node.command === 'say' && selection?.statementIds.includes(node.id) ? [node.id] : []) : null;
+    if (intent === 'voice' && !voiceIds?.length) throw new Error(tr(this.controller.preferences.locale, '请选择要制作配音的对白。', 'Select the dialogue you want to voice.', '音声を制作する台詞を選択してください。'));
+    await session.startQuick(intent, { sceneId: scene?.sceneId, statementId: voiceIds?.[0] ?? selection?.primaryId,
+      statementIds: voiceIds ?? selection?.statementIds, textRange: selection?.textRange });
+    if (session === this.production) await this.openProductionWorkbench();
   }
   private async createAnimationWithAi(request: import('@galcraft/contracts').AnimationGenerationRequest, scope: { sceneId?: string; statementId?: string | null } = {}) {
     if (!await this.flushScript() || !this.controller.source) return;
     AnimationGenerationRequestSchema.parse(request);
-    this.production ??= new ProductionSession(workbenchBridge(this.services.bridge), this.controller.source.project.projectId, () => this.controller.preferences.locale);
+    this.ensureProductionSession();
+    if (!this.production) return;
     await this.production.refresh();
     const operations = this.production.data.operations?.filter(operation => operation.definition.outputs.some(output => output.type === 'animation' && output.typeVersion === 1) && operation.definition.connection?.purpose === 'text') ?? [];
     if (operations.length !== 1) throw new Error(tr(this.controller.preferences.locale, operations.length ? '请在制作工位选择要使用的动画操作。' : '请先为此作品启用 GCA 动画制作插件。', operations.length ? 'Choose an animation operation in Production.' : 'Enable the GCA animation production plugin for this project.', operations.length ? '制作画面でアニメーション操作を選択してください。' : '作品で GCA アニメーション制作プラグインを有効にしてください。'));
     await this.production.openOperation(operations[0]!);
+    const origin = { page: 'editor', sceneId: scope.sceneId ?? null, statementId: scope.statementId ?? null, pageIds: [], componentIds: [] };
+    this.production.origin = origin;
+    this.production.draft!.origin = origin;
     const target = this.production.variant!.target;
     this.production.update({ fields: request as unknown as Record<string, Json>, target: { ...target, sceneId: scope.sceneId ?? null, statementId: scope.statementId ?? null },
       sourceVersions: request.assetId && this.controller.source.assetIndexDocumentId ? [{ ref: { kind: 'document', id: this.controller.source.assetIndexDocumentId }, revision: this.controller.source.assetIndexRevision ?? 0 }] : [] });
-    await this.production.saveDraft(true); this.page = 'production'; this.activeDocument = ''; this.render();
+    await this.production.saveDraft(true);
+    await this.openProductionWorkbench();
   }
   private async preference(update: (value: StudioPreferences) => StudioPreferences): Promise<void> {
     const result = await this.controller.setPreference(update); if (this.notice(result)) this.render();
@@ -3957,6 +4120,7 @@ export class AuthoringWorkspace {
         purpose:tr(this.controller.preferences.locale,'角色默认阅读头像','Default reading portrait','標準会話アバター'),mode:'compact',scope:characterNode,
         onApply:async selected=>{this.assetCache.set(selected.asset.id,selected.asset);return {ok:true,value:undefined,warnings:[]};}});return choice?.assetId;},
       previewAsset: (id, variantId) => { void this.previewAsset(id, variantId); },
+      produceDifference: (characterId, differenceId, assetId, variantId) => void this.openFigureProduction({ assetId, variantId }, characterId, differenceId),
       pendingChanged: dirty => {
         this.characterDraft = dirty || Object.keys(this.characterGuiDraft?.drafts ?? {}).some(id => id !== objectId);
         this.documents = this.documents.map(document => document.id === tabId ? { ...document, dirty: dirty || !!(objectId && this.controller.source?.characterDocuments?.[objectId]?.dirty) } : document);

@@ -23,7 +23,7 @@ import {
 } from "@galcraft/templates";
 import { createAssetIndex, decodeSVG, assetFilePath } from "@galcraft/assets";
 import { ImportCoordinator } from '@galcraft/assets';
-import { StudioProduction } from "./production-providers.mjs";
+import { StudioProduction } from "./production-providers.mts";
 import { pluginServiceContext } from './plugin-service-ports.mjs';
 
 const sharp = createRequire(

@@ -114,6 +114,34 @@ describe('M10 planning independent of the desktop host', () => {
     expect(planned.items[0]!.input).toMatchObject({ positive: 'frame' });
     expect(planned).toMatchObject({ sourceDraftId: 'Draft1', sourceDraftRevision: 2, context: [], expected: [] });
   });
+  it('uses the frozen project version for a whole-figure edit after its adoption character changes', async () => {
+    const value = variant(), form: ProductionFormDraft = { ...draft(value), activeUse: 'difference', variants: { difference: value } };
+    const media = { assetId: 'Asset1', variantId: 'Var001', candidateId: null, artifactIndex: null, localPath: 'exact.png', mime: 'image/png' };
+    value.fields.references = [{ ...media, localPath: 'stale-path.png' }];
+    value.target = { ...value.target, usage: 'difference', characterId: 'Other1' };
+    const planning = ports();
+    planning.context = async () => { throw new Error('Adoption target must not populate the send input'); };
+    planning.resolveMedia = async (assetId, variantId) => {
+      expect({ assetId, variantId }).toEqual({ assetId: media.assetId, variantId: media.variantId });
+      return media;
+    };
+    expect(await createProductionItem(planning, form, value)).toMatchObject({
+      target: { characterId: 'Other1', usage: 'difference' },
+      input: { purpose: 'image', usage: 'figure', positive: 'frame', references: [media] },
+    });
+    planning.resolveMedia = async () => ({ ...media, variantId: 'Var002' });
+    await expect(createProductionItem(planning, form, value)).rejects.toThrow('exact main reference version');
+    value.fields.references = [];
+    await expect(createProductionItem(planning, form, value)).rejects.toThrow('Choose one exact project image version');
+  });
+  it('keeps an explicitly empty send context after an adoption-only edit', async () => {
+    const value = { ...variant(), contextCaptured: true };
+    const planning = ports();
+    planning.context = async () => { throw new Error('An empty capture must stay empty'); };
+    expect(await createProductionItem(planning, draft(value), value)).toMatchObject({
+      input: { purpose: 'image', positive: 'frame', references: [] },
+    });
+  });
   it('preserves the text-preparation to media DAG and prompt selection', async () => {
     const form = draft(), prompt = OfficialRecipes.find(recipe => recipe.purposes.includes('imagePrompt') && recipe.uses.includes('ui'))!;
     form.variants.ui!.promptPreparation = { recipeId: prompt.id, scope: prompt.scope, purpose: 'imagePrompt', usage: 'ui', parameterValues: {} };

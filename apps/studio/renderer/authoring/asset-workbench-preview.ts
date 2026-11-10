@@ -9,6 +9,7 @@ export function createAssetWorkbenchPreview(asset: Asset, variantId: Id | null, 
   locale: string;
   services: AuthoringServices;
   onBindDifference?(asset: Asset, variantId: Id): void;
+  onProduceDifference?(assetId: Id, variantId: Id): void;
   onFollowActive?(): void;
 }) {
   const t = (zh: string, en: string, ja: string) => options.locale === 'en' ? en : options.locale === 'ja' ? ja : zh;
@@ -54,6 +55,10 @@ export function createAssetWorkbenchPreview(asset: Asset, variantId: Id | null, 
       bind.prepend(actionIcon('person-standing'));
       actions.append(bind);
     }
+    if (options.onProduceDifference) actions.append(domButton(
+      t('制作整图差分', 'Create figure variation', '全身差分を制作'),
+      () => options.onProduceDifference?.(asset.id, variant.id),
+    ));
   }
   heading.append(identity, actions);
   node.append(heading, canvas);

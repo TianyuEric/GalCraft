@@ -45,6 +45,7 @@ import {
   Image,
   Music2,
   Trash2,
+  ListTree,
 } from "lucide-react";
 import type {
   Candidate,
@@ -53,7 +54,7 @@ import type {
   UIPlanProposal,
 } from "@galcraft/authoring/production";
 import type { CreationRecipe } from "@galcraft/authoring/recipes";
-import type { EditPlan, DocumentView } from "@galcraft/contracts";
+import type { Asset, EditPlan, DocumentView } from "@galcraft/contracts";
 import type { UIComposition } from "@galcraft/templates";
 import {
   Button,
@@ -64,7 +65,7 @@ import {
   Badge,
 } from "../../components/controls.js";
 import { unwrap } from "./bridge.js";
-import { ProductionSession } from "./session.js";
+import { ProductionSession, type ProductionDirectoryState, type ProductionRecord } from "./session.js";
 import "./production.css";
 import { UIPlanEditor } from "./UIPlanEditor.js";
 import { CompositionReview } from "./CompositionReview.js";
@@ -75,9 +76,13 @@ import { TaskExecutionStatus } from './TaskExecutionStatus.js';
 import { DraftWorkstation } from './DraftWorkstation.js';
 import type { ProductionEditorHost } from './ExtensionOperationForm.js';
 import { CandidateMediaPreview } from './CandidateMediaPreview.js';
+import { WholeFigureComparison } from './WholeFigureComparison.js';
+import type { GenerationInput } from '@galcraft/authoring/production';
+import type { ProductionOrigin } from '@galcraft/authoring/production/draft';
 import { OutlineEditor } from './OutlineEditor.js';
 import { openAssetPicker } from '../../authoring/asset-picker.js';
 import { ScriptCandidatePreview } from './ScriptCandidatePreview.js';
+import { ProductionDirectory, taskRunning } from './ProductionDirectory.js';
 import * as monaco from 'monaco-editor';
 import { languageId, monarchLanguage } from '@galcraft/dsl';
 
@@ -113,11 +118,14 @@ export function Production({
   locale,
   page = "production",
   navigate,
+  returnToOrigin,
+  bindFigure,
   changed,
   services,
-  documentActive = true,
+  documentActive: activeDocument = true,
   inspectorContainer,
   explorerContainer,
+  directory,
   revealInspector,
   onUnappliedChange,
   onReviewChange,
@@ -127,11 +135,21 @@ export function Production({
   locale: string;
   page?: string;
   navigate(page: string): void;
+  returnToOrigin?(origin: ProductionOrigin): Promise<void>;
+  bindFigure?(asset: Asset, variantId: string, characterId?: string): void;
   changed(receipt?: EditReceipt): Promise<void>;
   services: AuthoringServices;
   documentActive?: boolean;
   inspectorContainer?: HTMLElement;
   explorerContainer?: HTMLElement;
+  directory?: {
+    container: HTMLElement;
+    initial: ProductionDirectoryState;
+    onChange(state: Partial<ProductionDirectoryState>): void;
+    open(): void;
+    openDocument(): Promise<boolean>;
+    focusDocument(): void;
+  };
   revealInspector?(): void;
   onUnappliedChange?(dirty: boolean): void;
   onReviewChange?(reviewing: boolean): void;
@@ -140,13 +158,20 @@ export function Production({
   s.displayLocale = () => locale;
   useSyncExternalStore(s.subscribe, s.snapshot);
   const t = (zh: string, en: string, ja: string) => tr(locale, zh, en, ja);
-  const mediaRoot = useRef<HTMLElement>(null), taskSidebar = useRef<HTMLElement>(null);
+  const goToOrigin = async () => {
+    const origin = s.recordOrigin;
+    if (origin && returnToOrigin) await returnToOrigin(origin);
+    else navigate(origin?.page ?? 'editor');
+  };
+  const mediaRoot = useRef<HTMLElement>(null);
+  const [surfaceVisible, setSurfaceVisible] = useState(activeDocument);
+  const documentActive = directory ? surfaceVisible : activeDocument;
   const changeSection = (value: string) => {
     for (const element of mediaRoot.current?.querySelectorAll<HTMLMediaElement>('audio,video') ?? []) { element.pause(); element.currentTime = 0; }
     setActiveReview('');
     setTab(value);
   };
-  const [searches, setSearches] = useState<Record<string, string>>({ tasks: '', recipes: '', connections: '' }), [taskFilter, setTaskFilter] = useState('all');
+  const [searches, setSearches] = useState<Record<string, string>>({ recipes: '', connections: '' });
   const [recipeCategory, setRecipeCategory] = useState('all'), [recipeScope, setRecipeScope] = useState('all');
   const [librarySelection, setLibrarySelection] = useState<string[]>([]);
   const [workflowDocuments, setWorkflowDocuments] = useState<NonNullable<ProductionSession['guiDraft']>['workflowDocuments']>(s.guiDraft?.workflowDocuments??[]);
@@ -169,10 +194,28 @@ export function Production({
     [modal, setModal] = useModalState(""),
     [busy, setBusy] = useState(false);
   const [stepsOpen, setStepsOpen] = useState(false);
-  const [taskPage, setTaskPage] = useState(0), [draftPage, setDraftPage] = useState(0), [candidatePage, setCandidatePage] = useState(0);
-  const [taskDetailsOpen, setTaskDetailsOpen] = useState(false), [taskHistoryOpen, setTaskHistoryOpen] = useState(true), [draftHistoryOpen, setDraftHistoryOpen] = useState(true);
-  useEffect(() => { s.setVisible(documentActive); }, [s, documentActive]);
-  useEffect(() => { setTaskPage(0); setDraftPage(0); setTaskHistoryOpen(true); if (searches.tasks) setDraftHistoryOpen(true); }, [searches.tasks, taskFilter]);
+  const [candidatePage, setCandidatePage] = useState(0);
+  const [taskDetailsOpen, setTaskDetailsOpen] = useState(false);
+  const directoryContainer = directory?.container;
+  useEffect(() => {
+    if (!directoryContainer) s.setVisible(activeDocument);
+  }, [s, activeDocument, directoryContainer]);
+  useEffect(() => {
+    if (!directoryContainer) return;
+    const visible = new Map<Element, boolean>();
+    const workface = mediaRoot.current;
+    s.setVisible([workface, directoryContainer].some(node => node?.isConnected && !node.closest('[hidden]')));
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) visible.set(entry.target, entry.isIntersecting);
+      const central = Boolean(workface && visible.get(workface));
+      setSurfaceVisible(central);
+      if (!central) for (const element of workface?.querySelectorAll<HTMLMediaElement>('audio,video') ?? []) { element.pause(); element.currentTime = 0; }
+      s.setVisible([...visible.values()].some(Boolean));
+    });
+    if (workface) observer.observe(workface);
+    observer.observe(directoryContainer);
+    return () => observer.disconnect();
+  }, [s, directoryContainer]);
   useEffect(() => { setCandidatePage(0); setTaskDetailsOpen(false); }, [s.taskId]);
 
   const [retryPlan,setRetryPlan]=useState<import('@galcraft/authoring/production').TaskPlan|null>(null);
@@ -321,6 +364,15 @@ export function Production({
   const useRecipe = async (r: CreationRecipe) => { await s.openRecipe(r, r.uses.includes(recipeCategory as CreationRecipe['uses'][number]) ? recipeCategory as CreationRecipe['uses'][number] : r.uses[0]); setTab('tasks'); setModal(''); };
   const begin = () => void run(() => s.startQuick(page === 'pages' ? 'page' : 'script'));
   const active = s.task;
+  const unavailableRecord = s.unavailableRecord;
+  const openRecord = (record: ProductionRecord) => void run(async () => {
+    if (directory && !await directory.openDocument()) return;
+    if (record.kind === 'task') await s.openTask(record.id);
+    else await s.openDraft(record.id);
+    changeSection('tasks');
+    setModal('');
+    directory?.focusDocument();
+  }, false);
   const candidates = s.candidates();
   const currentCandidatePage = Math.min(candidatePage, Math.max(0, Math.ceil(candidates.length / 12) - 1));
   const pageCandidates = candidates.slice(currentCandidatePage * 12, (currentCandidatePage + 1) * 12);
@@ -357,19 +409,18 @@ export function Production({
   const recipeKind = (item: CreationRecipe) => item.parameterPreset ? 'parameters' : item.production ? 'scheme' : 'promptRule';
   const recipeKindLabel = (kind: string) => kind === 'parameters' ? t('参数预设', 'Parameter presets', 'パラメータプリセット') : kind === 'scheme' ? t('制作方案', 'Production schemes', '制作方法') : t('提示规则', 'Prompt rules', 'プロンプトルール');
   const filteredRecipes = s.data.recipes.map(item => localizeRecipe(item, locale)).filter(item => item.name.toLocaleLowerCase().includes(searches.recipes!.toLocaleLowerCase()) && (recipeScope === 'all' || item.scope === recipeScope) && (recipeCategory === 'all' || recipeCategory === 'promptRule' ? recipeCategory !== 'promptRule' || recipeKind(item) === 'promptRule' : item.uses.includes(recipeCategory as CreationRecipe['uses'][number])));
-  const visibleTasks = [...s.tasks].reverse().filter(task => task.name.toLocaleLowerCase().includes(searches.tasks!.toLocaleLowerCase()) && (taskFilter === 'all' || task.items.some(item => taskFilter === 'active' ? ['queued','submitting','running','fetching','blocked'].includes(item.state) : taskFilter === 'review' ? item.state === 'review' : ['failed','interrupted'].includes(item.state))));
-  const visibleDrafts = s.data.drafts.filter(draft => !draft.submittedTaskId && (draft.name ?? draft.activeUse).toLocaleLowerCase().includes(searches.tasks!.toLocaleLowerCase()));
-  const currentTaskPage = Math.min(taskPage, Math.max(0, Math.ceil(visibleTasks.length / 20) - 1));
-  const currentDraftPage = Math.min(draftPage, Math.max(0, Math.ceil(visibleDrafts.length / 20) - 1));
-  useEffect(() => { const index = visibleTasks.findIndex(task => task.id === s.taskId); if (index >= 0) setTaskPage(Math.floor(index / 20)); }, [s.taskId]);
+  const records = <ProductionDirectory tasks={s.tasks} drafts={s.data.drafts} record={s.selectedRecord}
+    locale={locale} status={status} loaded={s.overviewLoaded} busy={busy} initial={directory?.initial} onChange={directory?.onChange}
+    hidden={!directory && (!documentActive || tab !== 'tasks' || !!activeReview)} error={(!s.overviewLoaded || !documentActive) && s.error ? s.error : undefined} onOpen={openRecord}/>;
   const showExecutionSteps = () => { setStepsOpen(true); requestAnimationFrame(() => { const destination = mediaRoot.current?.querySelector<HTMLElement>('[data-production-sources] summary'); destination?.scrollIntoView({block:'start'}); destination?.focus({preventScroll:true}); }); };
   return (
-    <Tabs className="production-page" data-review-active={!!activeReview} data-inspector-external={!!inspectorContainer} data-explorer-external={!!explorerContainer} render={<main ref={mediaRoot}/>} variant="underline" value={tab} onValueChange={value => changeSection(String(value))}>
-      {placeExplorer(<nav className="production-explorer-sections" hidden={!documentActive} aria-label={t('制作分区','Production sections','制作の区分')}>
+    <Tabs className="production-page" data-review-active={!!activeReview} data-inspector-external={!!inspectorContainer} data-explorer-external={!!explorerContainer} data-directory-docked={!!directory} render={<main ref={mediaRoot}/>} variant="underline" value={tab} onValueChange={value => changeSection(String(value))}>
+      {directory && createPortal(records, directory.container)}
+      {!directory && placeExplorer(<nav className="production-explorer-sections" hidden={!documentActive} aria-label={t('制作分区','Production sections','制作の区分')}>
         <TabsList className="workbench-tabs" aria-label={t('制作工作台分区', 'Production sections', '制作ワークスペースの区分')}>
           {[['tasks', t('制作与候选', 'Production & candidates', '制作と候補')], ['recipes', t('方案库', 'Scheme library', '制作方法ライブラリ')], ['connections', t('连接与工具', 'Connections & tools', '接続とツール')]].map(([id, label]) => <TabsTrigger key={id} value={id}>{id==='tasks'?<WandSparkles size={15}/>:id==='recipes'?<Layers size={15}/>:<SlidersHorizontal size={15}/>} {label}</TabsTrigger>)}
         </TabsList>
-        <Input className="production-global-search" aria-label={t('搜索当前制作分区', 'Search the current production section', '現在の制作区分を検索')} placeholder={t('搜索当前分区…', 'Search this section…', 'この区分を検索…')} value={taskSearch} onChange={e => setTaskSearch(e.target.value)}/>
+        {tab !== 'tasks' && <Input className="production-global-search" aria-label={t('搜索当前制作分区', 'Search the current production section', '現在の制作区分を検索')} placeholder={t('搜索当前分区…', 'Search this section…', 'この区分を検索…')} value={taskSearch} onChange={e => setTaskSearch(e.target.value)}/>}
       </nav>)}
       {(adoption || recipeImport || uiProposal || savePinned) && <div className="production-review-navigation"><DocumentTabs active={activeReview || 'overview'} documents={[
         { id: 'overview', title: t('制作工作台', 'Production workspace', '制作ワークスペース'), icon: <Layers size={15}/>, closable: false },
@@ -384,6 +435,9 @@ export function Production({
           ...(s.data.operations ?? []).filter(operation => operation.provider).map(operation => ({ id:operation.id, label:operationTitle(operation, locale), group:t('插件制作','Plugin production','プラグイン制作'), detail:operationDescription(operation, locale), run:() => { setTab('tasks'); setActiveReview(''); void run(() => s.openOperation(operation, locale)); } })),
         ]}/>
         {tab==='tasks'&&<Button tone="quiet" onClick={() => setModal(modal === 'outline' ? '' : 'outline')}><FileText size={15}/>{t('作品大纲', 'Project outline', '作品のあらすじ')}</Button>}
+        {directory && tab === 'tasks' && <Button tone="quiet" onClick={directory.open}><ListTree size={15}/>{t('打开制作记录', 'Open production records', '制作履歴を開く')}</Button>}
+        {directory && tab !== 'tasks' && <Input className="production-global-search" aria-label={t('搜索当前制作分区', 'Search the current production section', '現在の制作区分を検索')} placeholder={t('搜索当前分区…', 'Search this section…', 'この区分を検索…')} value={taskSearch} onChange={event => setTaskSearch(event.target.value)}/>}
+        {tab === 'tasks' && !active && !unavailableRecord && draft && !draft.submittedTaskId && <Button tone="quiet" disabled={busy} onClick={() => setRemoveDraft({ id: draft.id, name: draft.name || t('未命名草稿', 'Untitled draft', '無題の下書き') })}><Trash2 size={14}/>{t('删除草稿', 'Delete draft', '下書きを削除')}</Button>}
       </header>
       {!!s.data.migrationIssues?.length && <Disclosure><span>{t('制作数据需要处理','Production data needs attention','制作データの確認が必要です')} ({s.data.migrationIssues.length})</span><ul>{s.data.migrationIssues.map((message,index)=><li key={index}>{message}</li>)}</ul></Disclosure>}
       {s.error && (
@@ -396,67 +450,13 @@ export function Production({
         </div>
       )}
       <TabsContent keepMounted value="tasks" className="production-layout" data-section-active={tab === 'tasks'}>
-          {placeExplorer(<aside ref={taskSidebar} className="task-sidebar" hidden={!documentActive || tab !== 'tasks' || activeReview === 'ui-plan'}>
-            <div className="task-list-title">
-              <h2>{t("制作任务", "Production tasks", "制作タスク")}</h2>
-              <Badge>{s.tasks.length}</Badge>
-            </div>
-            {!s.tasks.length && !s.data.drafts.length && <p className="task-empty">{t('任务会保留在这里，你可以随时回来继续。', 'Your tasks stay here, ready to continue.', 'タスクはここに保存され、いつでも再開できます。')}</p>}
-            <div className="task-filters">
-            <Choice label={t("任务状态","Task status","タスクの状態")} value={taskFilter} options={[{value:'all',label:t("全部任务","All tasks","すべてのタスク")},{value:'active',label:t("进行中","In progress","進行中")},{value:'review',label:t("待审阅","Ready for review","レビュー待ち")},{value:'failed',label:t("失败或中断","Failed or interrupted","失敗・中断")}]} onChange={setTaskFilter}/>
-            </div>
-            {!visibleTasks.length && !visibleDrafts.length && (!!searches.tasks || taskFilter !== 'all') && <p className="task-empty">{t('没有匹配的任务或草稿。清除搜索或切换状态可查看其他记录。','No matching tasks or drafts. Clear search or change status to see other records.','一致するタスクや下書きがありません。検索をクリアするか状態を変更してください。')}<Button tone="quiet" onClick={() => { setTaskSearch(''); setTaskFilter('all'); }}>{t('显示全部任务','Show all tasks','すべてのタスクを表示')}</Button></p>}
-            <Disclosure open={taskHistoryOpen} onOpenChange={setTaskHistoryOpen}><span>{t('制作记录','Production history','制作履歴')} · {visibleTasks.length}</span>
-            <Pagination total={visibleTasks.length} page={currentTaskPage} pageSize={20} onPageChange={page=>{setTaskPage(page);taskSidebar.current?.scrollIntoView({block:'start'});}} locale={locale} label={t('制作记录分页','Production history pages','制作履歴のページ')}/>
-            {visibleTasks.slice(currentTaskPage * 20, (currentTaskPage + 1) * 20).map((task) => (
-              <div key={task.id} className="draft-row"><button
-                key={task.id}
-                data-task-id={task.id}
-                className={`task-row ${s.taskId === task.id ? "selected" : ""}`}
-                onClick={() => {
-                  setActiveReview(''); s.taskId = task.id;
-                  s.selected.clear();
-                  s.changed(); void run(() => s.refresh(), false);
-                }}
-              >
-                <span>
-                  <Layers size={15} />
-                  <strong title={task.name}>{task.name.length > 40 ? `${task.name.slice(0, 40)}…` : task.name}</strong>
-                </span>
-                <small>
-                  {task.items.length} {t("个步骤", "steps", "ステップ")} ·{" "}
-                  {new Date(task.createdAt).toLocaleDateString(locale)}
-                </small>
-                <Badge>{status(task.items.at(-1)?.state ?? "draft")}</Badge>
-              </button><Button tone="quiet" className="task-remove" aria-label={t('移除记录', 'Remove record', '記録を削除')} disabled={task.items.some(item => ['queued','submitting','running','fetching','blocked'].includes(item.state))} title={t('移除记录，保留已采用内容和来源文件', 'Remove the record; keep adopted content and source files', '記録を削除し、採用した内容と元ファイルを保持')} onClick={() => setRemoveTask({id:task.id,name:task.name})}><Trash2 size={14}/></Button></div>
-            ))}
-            </Disclosure>
-            <Disclosure open={draftHistoryOpen} onOpenChange={setDraftHistoryOpen}><span>{t('制作草稿','Drafts','下書き')} · {visibleDrafts.length}</span>
-            <Pagination total={visibleDrafts.length} page={currentDraftPage} pageSize={20} onPageChange={setDraftPage} locale={locale} label={t('制作草稿分页','Draft pages','下書きのページ')}/>
-            {visibleDrafts.slice(currentDraftPage * 20, (currentDraftPage + 1) * 20)
-              .map((d) => (
-                <div key={d.id} className="draft-row"><button
-                  key={d.id}
-                  data-draft-id={d.id}
-                  className="task-row"
-                  onClick={() => {
-                    void run(() => s.openDraft(d.id));
-                    setModal("");
-                  }}
-                >
-                  <FileText size={15} />
-                  {d.name ?? uses.find((u) => u[0] === d.activeUse)?.[
-                      locale === "en" ? 2 : locale === "ja" ? 3 : 1
-                    ]
-                  }
-                  <small>{new Date(d.updatedAt).toLocaleString(locale)}</small>
-                </button><Button tone="quiet" className="task-remove" aria-label={t('删除草稿', 'Delete draft', '下書きを削除')} title={t('删除草稿', 'Delete draft', '下書きを削除')} onClick={() => setRemoveDraft({ id: d.id, name: d.name || t('未命名草稿', 'Untitled draft', '無題の下書き') })}><Trash2 size={14}/></Button></div>
-              ))}
-            </Disclosure>
-          </aside>)}
+          {!directory && placeExplorer(records)}
           <section className="task-detail">
-            {draft && v && !draft.submittedTaskId && <div className="production-draft-view" hidden={!!active || modal === 'outline'}><DraftWorkstation productionHost={productionHost} key={draft.id} session={s} locale={locale} services={services} busy={busy} run={run} generated={() => setModal('')} navigate={navigate} active={documentActive && !activeReview && tab === 'tasks' && !active && modal !== 'outline'} inspectorContainer={inspectorContainer} revealInspector={revealInspector}/></div>}
-            {modal === 'outline' ? <OutlineEditor inline session={s} locale={locale} changed={changed} close={() => setModal('')}/> : !active && draft && v && !draft.submittedTaskId ? null : !active ? (
+            {draft && v && !draft.submittedTaskId && <div className="production-draft-view" hidden={!!active || !!unavailableRecord || modal === 'outline'}><DraftWorkstation productionHost={productionHost} key={draft.id} session={s} locale={locale} services={services} busy={busy} run={run} generated={() => setModal('')} navigate={navigate} returnToOrigin={() => void run(goToOrigin, false)} active={documentActive && !activeReview && tab === 'tasks' && !active && !unavailableRecord && modal !== 'outline'} inspectorContainer={inspectorContainer} revealInspector={revealInspector}/></div>}
+            {modal === 'outline' ? <OutlineEditor inline session={s} locale={locale} changed={changed} close={() => setModal('')}/> : unavailableRecord ? (
+              <Empty title={t('原制作记录暂不可用', 'Previous production record is unavailable', '以前の制作履歴を利用できません')}
+                detail={t(`记录 ${unavailableRecord.id} 暂不可用。可从制作记录打开其他任务或草稿。`, `Record ${unavailableRecord.id} is unavailable. Choose another task or draft from Production records.`, `記録 ${unavailableRecord.id} を利用できません。制作履歴から別のタスクか下書きを選択してください。`)}/>
+            ) : !active && draft && v && !draft.submittedTaskId ? null : !active ? (
               <Empty
                 title={t(
                   "开始下一项制作",
@@ -479,9 +479,13 @@ export function Production({
                 <div className="task-detail-heading">
                   <div>
                     <h2>{active.name}</h2>
+                    {s.recordOrigin && <Button tone="quiet" disabled={busy} onClick={() => void run(goToOrigin, false)}><ArrowLeft size={14}/>{t('返回来源', 'Return to source', '元の場所に戻る')}</Button>}
                     <Disclosure open={taskDetailsOpen} onOpenChange={setTaskDetailsOpen}><span>{t('制作详情', 'Production details', '制作の詳細')}</span>{taskDetailsOpen&&<CodeBlock code={JSON.stringify({ taskId: active.id, name: active.name, steps: active.items.map(item => ({ id: item.id, requestId: item.remote?.id ?? null, service: item.configSnapshot?.name ?? null, model: item.configSnapshot?.model ?? null, input: item.input })) }, null, 2)} language="json" locale={locale}/>}</Disclosure>
                   </div>
                   <div className="gc-actions">
+                    <Button tone="quiet" disabled={busy || taskRunning(active)} onClick={() => setRemoveTask({ id: active.id, name: active.name })}>
+                      <Trash2 size={14}/>{t('移除记录', 'Remove record', '記録を削除')}
+                    </Button>
                     <Button
                       disabled={busy}
                       onClick={() =>
@@ -586,8 +590,16 @@ export function Production({
                   <div className="candidate-page">
                   <Pagination total={candidates.length} page={currentCandidatePage} pageSize={12} onPageChange={setCandidatePage} locale={locale} label={t('候选分页','Candidate pages','候補のページ')}/>
                   <div className="candidate-grid">
-                    {pageCandidates.map((c) => (
-                      <article
+                    {pageCandidates.map((c) => {
+                      const item = active.items.find(value => value.id === c.itemId);
+                      const input = item?.input as GenerationInput | undefined;
+                      const comparison = item?.target.usage === 'difference' && input?.purpose === 'image' ? input : null;
+                      const adoptedAsset = comparison && s.data.candidates.find(entry => entry.candidate.id === c.id)?.adoption !== 'unadopted'
+                        ? s.data.assets.find(asset => asset.source?.taskId === c.taskId && asset.source?.candidateId === c.id && asset.kind === 'image')
+                        : undefined;
+                      const media = documentActive && tab === 'tasks' && !activeReview && content[c.id]?.media.length
+                        ? content[c.id]!.media.map((m, index) => <CandidateMediaPreview key={m.uri} candidate={c} index={index} media={content[c.id]!.media} services={services} locale={locale} editAnimation={async animation => { unwrap(await s.bridge.production.editCandidate({ id: c.id, text: JSON.stringify(animation) })); await s.refresh(); }} label={t('生成候选', 'Generated candidate', '生成候補')}/>) : null;
+                      return <article
                         className={`candidate-card ${s.selected.has(c.id) ? "selected" : ""}`}
                         key={c.id}
                         data-candidate-id={c.id}
@@ -610,7 +622,9 @@ export function Production({
                             )}
                           </Badge>
                         </button>
-                        {documentActive && tab === 'tasks' && !activeReview && content[c.id]?.media.map((m, index) => <CandidateMediaPreview key={m.uri} candidate={c} index={index} media={content[c.id]!.media} services={services} locale={locale} editAnimation={async animation => { unwrap(await s.bridge.production.editCandidate({ id: c.id, text: JSON.stringify(animation) })); await s.refresh(); }} label={t("生成候选", "Generated candidate", "生成候補")}/>)}
+                        {comparison && media ? <WholeFigureComparison input={comparison} asset={s.data.assets.find(asset => asset.id === comparison.references[0]?.assetId)}
+                          output={c.artifacts.find(artifact => artifact.kind === 'image' && artifact.role === 'primary')} resources={services.runtimeAssets} locale={locale}>{media}</WholeFigureComparison> : media}
+                        {adoptedAsset && bindFigure && <Button onClick={() => bindFigure(adoptedAsset, adoptedAsset.originalVariantId, item?.target.characterId ?? undefined)}>{t('绑定采用版本为共同差分', 'Bind adopted version as a shared difference', '採用したバージョンを共通差分に割り当て')}</Button>}
                         {c.artifacts.some(
                           (a) => a.kind !== "text" && a.role === "primary",
                         ) && (
@@ -1029,8 +1043,8 @@ export function Production({
                             </Button>
                           )}
                         </div>
-                      </article>
-                    ))}
+                      </article>;
+                    })}
                   </div>
                   </div>
                 )}
@@ -1115,10 +1129,6 @@ export function Production({
                 </Disclosure></div>
                 <ConversationPanel key={active.id} session={s} task={active} view={s.continuationView(active.id)} locale={locale}/>
                 <footer className="production-footer">
-                  <Button onClick={() => navigate(s.origin?.page ?? "editor")}>
-                    <ArrowLeft size={14} />
-                    {t("返回来源", "Return to source", "元の場所に戻る")}
-                  </Button>
                   <Button
                     onClick={() =>
                       void run(async () => {

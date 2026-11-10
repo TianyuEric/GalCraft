@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { CircleAlert, FileText, Folder, Images, Layers, ListTree, MonitorPlay, Plus, Search, Settings, SlidersHorizontal, UsersRound, Network } from 'lucide-react';
+import { CircleAlert, FileText, Folder, Images, Layers, ListTree, MonitorPlay, Plus, Search, Settings, SlidersHorizontal, UsersRound, Network, ClipboardList, WandSparkles } from 'lucide-react';
 import { TooltipProvider } from '../components/ui/tooltip.js';
 import { Button } from '../components/controls.js';
 import { Input } from '../components/ui/input.js';
@@ -32,6 +32,8 @@ export type AuthorSceneCompanion = { node: HTMLElement; title: string; activate(
 export type AuthoringWorkbenchProps = {
   source: AuthoringSource | null; characterExplorer?: HTMLElement; locale?: string; page: string; chrome: StudioChromeProps;
   assetDirectory?: HTMLElement | null; assetLibrary?: HTMLElement | null; assetInspector?: HTMLElement | null;
+  productionDirectory?: HTMLElement;
+  prepareProductionDirectory?(): void;
   openAssets?(): void | Promise<void>;
   openCharacterDifference?(id: string): Promise<void>;
   openWritingStage?(id: string): Promise<void>;
@@ -75,7 +77,10 @@ export const authoringDockTools = {
   stage: 'studio-stage', empty: 'studio-empty', assetDirectory: 'studio-asset-directory',
   assetInspector: 'studio-asset-inspector', assets: 'studio-assets', characters: 'studio-character-directory',
   pageDirectory: 'studio-page-directory', pageOutline: 'studio-page-outline',
+  productionDirectory: 'studio-production-directory',
 } as const;
+export const productionDocumentId = 'route:production';
+export const restoredAuthorDocumentId = (id: string) => id === 'route:assistant' ? productionDocumentId : id;
 const dockTools = authoringDockTools;
 const sceneCompanionId = (documentId: string) => `studio-beside:${documentId}`;
 const editorZones = ['center'] as const;
@@ -184,6 +189,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     [dockTools.characters]: { title: t('角色目录','Character directory','キャラクター一覧'), icon: <UsersRound/>, zone: 'left', allowedZones: sidebarZones, content: <DomRegion node={props.characterExplorer}/> },
     [dockTools.pageDirectory]: { title: t('页面目录','Page directory','ページ一覧'), icon: <Layers/>, zone: 'left', allowedZones: sidebarZones, content: pageDirectory },
     [dockTools.pageOutline]: { title: t('页面大纲','Page outline','ページ構成'), icon: <ListTree/>, zone: 'right', allowedZones: sidebarZones, content: pageOutline },
+    [dockTools.productionDirectory]: { title: t('制作记录','Production records','制作履歴'), icon: <ClipboardList/>, zone: 'left', allowedZones: sidebarZones, content: <DomRegion node={props.productionDirectory} className="gc-production-directory-dock"/> },
   } satisfies Record<string, { title: string; icon: ReactNode; zone: Zone; allowedZones: readonly Zone[]; content: ReactNode }>;
   const tool = (id: string) => tools[id as keyof typeof tools];
   const active = centralViewId(props.active);
@@ -191,7 +197,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
   const companionView = (id: string) => id === besideId ? props.beside : props.retainedCompanions?.get(id);
   const retainStowedView = (id: string) => Boolean(companionView(id)) || props.documents.some(doc => doc.kind === 'scene' && doc.id !== active && sceneCompanionId(doc.id) === id);
   const documentViews = props.documents.some(doc => doc.id === active) ? props.documents : [...props.documents, { id: active }];
-  const projectTools: readonly string[] = [dockTools.search, dockTools.assetDirectory, dockTools.assetInspector, dockTools.assets, dockTools.characters, dockTools.pageDirectory, dockTools.pageOutline];
+  const projectTools: readonly string[] = [dockTools.search, dockTools.assetDirectory, dockTools.assetInspector, dockTools.assets, dockTools.characters, dockTools.pageDirectory, dockTools.pageOutline, dockTools.productionDirectory];
   const viewIds = [...new Set([...documentViews.map(doc => doc.id), ...Object.keys(tools).filter(id => source || !projectTools.includes(id)), ...(props.retainedCompanions?.keys() ?? []), ...(besideId ? [besideId] : [])])];
   const otherDocuments = documentViews.filter(doc => doc.id !== active).map(doc => doc.id);
   const toPresetView = (id: string, restoring: boolean) => {
@@ -209,8 +215,12 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
   const prune = (layout: ZonedLayout) => {
     const next = structuredClone(layout);
     const transient = new Set(next.previews);
-    for (const pane of allGroups(next)) pane.tabs = pane.tabs.map(id => id === 'empty' ? dockTools.empty : id)
-      .filter(id => id !== 'route:assets' && !transient.has(id));
+    for (const pane of allGroups(next)) {
+      pane.tabs = pane.tabs.filter(id => id !== 'route:assets' && !transient.has(id))
+        .map(id => id === 'empty' ? dockTools.empty : restoredAuthorDocumentId(id));
+      pane.active = restoredAuthorDocumentId(pane.active);
+    }
+    next.kept = next.kept.map(restoredAuthorDocumentId);
     next.previews = [];
     return normalize(next);
   };
@@ -249,6 +259,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     { id: 'show-characters', label: t('显示角色目录','Show character directory','キャラクター一覧を表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.characters) },
     { id: 'show-page-directory', label: t('显示页面目录','Show page directory','ページ一覧を表示'), disabled: !source, run: () => { props.preparePageDirectory?.(); props.dock.current?.open(dockTools.pageDirectory); } },
     { id: 'show-page-outline', label: t('显示页面大纲','Show page outline','ページ構成を表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.pageOutline) },
+    { id: 'show-production-directory', label: t('显示制作记录','Show production records','制作履歴を表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.productionDirectory) },
     { id: 'save-layout', label: t('保存命名布局…','Save named layout…','レイアウトに名前を付けて保存…'), disabled: !source, separatorBefore: true, run: () => { setLayoutName(''); setNamingLayout(true); } },
     ...Object.keys(namedLayouts).flatMap(name => [
       { id: `layout:${name}`, label: name, disabled: !source, run: () => props.dock.current?.restorePreset(name) },
@@ -272,18 +283,19 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
           const document = props.documents.find(item => item.id === id);
           return tool(id)?.title ?? companionView(id)?.title ?? (document ? documentTitle(document) : id);
         }}
-        icon={id => tool(id)?.icon ?? (props.documents.find(document => document.id === id)?.kind === 'page' ? <Layers/> : <FileText/>)}
+        icon={id => tool(id)?.icon ?? (id === productionDocumentId ? <WandSparkles/> : props.documents.find(document => document.id === id)?.kind === 'page' ? <Layers/> : <FileText/>)}
         zone={id => tool(id)?.zone ?? 'center'}
         allowedZones={id => tool(id)?.allowedZones ?? editorZones}
         minSize={id => ({ width: /^(studio-beside:)?page:/.test(id) ? 360 : 480, height: 240 })}
         canCloseView={id => id !== dockTools.empty}
-        canSplitView={id => Boolean(companionView(id)) || id === dockTools.stage || props.documents.some(document => document.id === id && ['scene', 'asset', 'character'].includes(document.kind))}
+        canSplitView={id => Boolean(companionView(id)) || id === dockTools.stage || id === productionDocumentId || props.documents.some(document => document.id === id && ['scene', 'asset', 'character'].includes(document.kind))}
         isPlaceholder={id => id === dockTools.empty}
         onViewFocus={props.onViewFocus}
         status={id => ({ dirty: props.documents.find(document => document.id === id)?.dirty })}
         onActivate={(id, reason) => {
           if (id === dockTools.inspector) props.inspectorShown?.();
           if (id === dockTools.pageDirectory && !props.pageNodes) props.preparePageDirectory?.();
+          if (id === dockTools.productionDirectory) props.prepareProductionDirectory?.();
           companionView(id)?.activate();
           if (id === active && reason === 'tab') props.activateScenePane?.();
           const document = props.documents.find(item => item.id === id);

@@ -1,23 +1,25 @@
 import { operationTitle } from '@galcraft/plugins/contracts';
-import { defaultOperation, variantOperation, operationPurpose, normalizeProductionDraft, resolveProductionFields } from '@galcraft/authoring/production/draft';
+import { defaultOperation, imageUsageFor, variantOperation, operationPurpose, normalizeProductionDraft, resolveProductionFields, type ProductionOrigin } from '@galcraft/authoring/production/draft';
 import type { ProductionOperation, SpeechLine } from '@galcraft/authoring/production';
 import type { CreationRecipe } from '@galcraft/authoring/recipes';
 import { createId, reserveIds, issueFromError, type Issue } from '@galcraft/contracts';
-import { workflowSupportsPurpose } from '@galcraft/generation-services/validation';
+import { workflowMapsMainImage, workflowSupportsPurpose } from '@galcraft/generation-services/validation';
 import type {
   ProductionFormDraft,
   FormVariant,
   TaskPlan,
   Candidate,
 } from "@galcraft/authoring/production";
-import type { EditPlan } from "@galcraft/contracts";
+import type { EditPlan, WorkspaceResume } from "@galcraft/contracts";
 import type { WorkbenchBridge, Overview } from "./bridge.js";
 import { unwrap } from "./bridge.js";
 import { validateOperationInput, operationSupportsConnection } from '@galcraft/authoring/production/operations';
 import type { ProductionFieldEditorContext } from '@galcraft/plugins/contracts';
 export type QuickIntent = 'script' | 'stage' | 'background' | 'figure' | 'page' | 'ui-assets' | 'voice' | 'music' | 'cg' | 'difference';
-export type QuickScope = { sceneId?: string | null; statementId?: string | null; statementIds?: string[]; textRange?: { start: number; end: number } | null; pageIds?: string[]; componentIds?: string[] };
+export type QuickScope = { sceneId?: string | null; statementId?: string | null; statementIds?: string[]; textRange?: { start: number; end: number } | null; pageIds?: string[]; componentIds?: string[]; characterId?: string; origin?: Pick<ProductionOrigin, 'page' | 'characterId' | 'differenceId' | 'asset'>; reference?: NonNullable<ProductionOrigin['asset']> };
 export type ContinuationView = { sourceId: string; mode: 'write' | 'performance' | 'discuss'; instruction: string; summary: string };
+export type ProductionDirectoryState = NonNullable<NonNullable<WorkspaceResume['workbench']>['productionDirectory']>;
+export type ProductionRecord = NonNullable<ProductionDirectoryState['record']>;
 export type ProductionGuiDraft = {
   workflowDocuments: {id:string;text:string;importText?:string;baseline?:string;paste?:string;title:string;dirty:boolean;draftRevision?:number|null;expectedRevision:number|null;closeRequest:number}[];
   activeWorkflow:string; tab:string; recipe:CreationRecipe|null; recipeBaseline:string;
@@ -46,18 +48,19 @@ export class ProductionSession {
   connectionGuiDraft:{edit:import('@galcraft/contracts').ConnectionConfig|null;provider:string;secret:string;advanced:string|null;baseline:string;selection:string[]}|null=null;
   connectionDirty=false;
   taskId: string | null = null;
+  overviewLoaded = false;
+  private overviewTaskId: string | null = null;
+  private restoringDraftId: string | null = null;
   selected = new Set<string>();
   candidateText = new Map<string, string>();
   private continuationViews = new Map<string, ContinuationView>();
   plan: TaskPlan | null = null;
   adoption: EditPlan | null = null;
-  origin: {
-    page: string;
-    sceneId: string | null;
-    statementId: string | null;
-    pageIds: string[];
-    componentIds: string[];
-  } | null = null;
+  origin: ProductionOrigin | null = null;
+  get recordOrigin() {
+    const task = this.task;
+    return task ? task.origin ?? this.data.drafts.find(draft => draft.id === task.sourceDraftId)?.origin ?? null : this.origin;
+  }
   error = "";
   diagnostic: Issue | null = null;
   quickIntent: QuickIntent | null = null;
@@ -91,6 +94,29 @@ export class ProductionSession {
     this.revision++;
     this.listeners.forEach((l) => l());
   }
+  restoreRecord(record: ProductionRecord | null) {
+    if (record?.kind === 'task') this.taskId = record.id;
+    if (record?.kind === 'draft') this.restoringDraftId = record.id;
+  }
+  get selectedRecord(): ProductionRecord | null {
+    if (this.taskId) return { kind: 'task', id: this.taskId };
+    const draftId = this.restoringDraftId ?? (this.draft?.submittedTaskId ? null : this.draft?.id);
+    return draftId ? { kind: 'draft', id: draftId } : null;
+  }
+  get unavailableRecord() {
+    if (!this.overviewLoaded) return null;
+    if (this.taskId && this.overviewTaskId === this.taskId && !this.task) return this.selectedRecord;
+    return this.restoringDraftId ? this.selectedRecord : null;
+  }
+  async openTask(id: string, candidateIds?: readonly string[]) {
+    if (id !== this.taskId && this.draftDirty) await this.saveDraft(true);
+    if (candidateIds || id !== this.taskId) this.selected = new Set(candidateIds);
+    this.restoringDraftId = null;
+    this.taskId = id;
+    this.quickOpen = true;
+    this.changed();
+    await this.refresh();
+  }
   private refreshRequest = 0;
   private completedRefresh = 0;
   async refresh() {
@@ -103,18 +129,21 @@ export class ProductionSession {
     const data = unwrap(response);
     this.completedRefresh = request;
     this.data = data;
+    this.overviewLoaded = true;
+    this.overviewTaskId = taskId;
     reserveIds(this.data);
     this.data.drafts.forEach(normalizeProductionDraft);
     if (!this.draft) {
-      const draft = this.data.drafts.find((d) => !d.submittedTaskId);
+      const draft = this.data.drafts.find(d => !d.submittedTaskId && (!this.restoringDraftId || d.id === this.restoringDraftId));
       this.draft = draft ? structuredClone(draft) : null;
       this.savedDraft = this.draft ? structuredClone(this.draft) : null;
       if (this.draft?.origin) this.origin = this.draft.origin;
+      if (this.draft) this.restoringDraftId = null;
     } else {
       const saved = this.data.drafts.find(d => d.id === this.draft!.id);
       if (saved && (!this.savedDraft || saved.revision > this.savedDraft.revision)) this.savedDraft = structuredClone(saved);
     }
-    if (!this.taskId && !this.draft) this.taskId = this.data.tasks.at(-1)?.id ?? null;
+    if (!this.taskId && !this.draft && !this.restoringDraftId) this.taskId = this.data.tasks.at(-1)?.id ?? null;
     this.changed();
   }
   start() {
@@ -171,19 +200,23 @@ export class ProductionSession {
   async openProductionDraft(intent: QuickIntent, scope: QuickScope = {}, recipe?: CreationRecipe) {
     if (this.draftDirty && this.draft && !this.draft.submittedTaskId) await this.saveDraft(true);
     await this.refresh();
+    const reference = scope.reference ? unwrap(await this.bridge.production.mediaInput(scope.reference)) : null;
     this.quickIntent = intent;
     const script = intent === 'script' || intent === 'stage';
     this.origin = { page: intent === 'page' || intent === 'ui-assets' ? 'pages' : 'editor', sceneId: scope.sceneId ?? (script ? this.origin?.sceneId : null) ?? null,
-      statementId: scope.statementId ?? null, pageIds: scope.pageIds ?? (intent === 'page' ? this.origin?.pageIds : []) ?? [], componentIds: scope.componentIds ?? [] };
+      statementId: scope.statementId ?? null, pageIds: scope.pageIds ?? (intent === 'page' ? this.origin?.pageIds : []) ?? [], componentIds: scope.componentIds ?? [], ...scope.origin };
     const usage = intent === 'page' || intent === 'ui-assets' ? 'ui' : intent === 'music' ? 'bgm' : intent === 'stage' ? 'script' : intent;
     this.newDraft(usage);
     const variant = this.variant!;
     variant.fields.creationMode = intent === 'stage' ? 'performance' : 'write';
-    variant.operation = intent === 'stage' ? 'performance' : intent === 'page' ? 'uiPatch' : defaultOperation(usage);
+    const wholeFigure = intent === 'difference' && !!reference;
+    variant.operation = wholeFigure ? 'image' : intent === 'stage' ? 'performance' : intent === 'page' ? 'uiPatch' : defaultOperation(usage);
+    variant.target.characterId = scope.characterId ?? null;
+    if (variant.target.uiScope) variant.target.uiScope = { pageIds: [...this.origin.pageIds], componentIds: [...this.origin.componentIds] };
     this.configureQuickScope(scope);
     const purpose = intent === 'page' ? 'uiPatch' : 'script';
     const official = this.data.recipes.filter(item => !item.production && !item.parameterPreset && item.scope === 'official' && item.uses.includes(usage));
-    const chosen = recipe ?? this.data.recipes.find(item => item.id === this.data.defaults?.recipes[intent])
+    const chosen = recipe ?? (!wholeFigure ? this.data.recipes.find(item => item.id === this.data.defaults?.recipes[intent]) : undefined)
       ?? (script || intent === 'page' ? official.find(item => item.purposes.includes(purpose) && (intent === 'stage' ? item.scriptMode === 'performance' : item.scriptMode !== 'performance')) : undefined);
     if (chosen) {
       if (chosen.production) {
@@ -201,9 +234,14 @@ export class ProductionSession {
       }
     }
     this.applyDefaults();
-    if (intent !== 'voice' && intent !== 'music') {
-      variant.context = unwrap(await this.bridge.production.context({ ...this.origin, characterId: variant.target.characterId, statementIds: scope.statementIds, textRange: scope.textRange, usage, performance: variant.operation === 'performance' }));
+    if (intent !== 'voice' && intent !== 'music' && !wholeFigure) {
+      const { sceneId, statementId, pageIds, componentIds } = this.origin;
+      variant.context = unwrap(await this.bridge.production.context({ sceneId, statementId, pageIds, componentIds, characterId: variant.target.characterId, statementIds: scope.statementIds, textRange: scope.textRange, usage, performance: variant.operation === 'performance' }));
       this.applyContextDefaults();
+    }
+    if (reference) {
+      variant.fields.reference = reference;
+      variant.fields.references = [reference];
     }
     if (intent === 'voice') {
       const ids = scope.statementIds ?? (scope.statementId ? [scope.statementId] : []);
@@ -217,9 +255,10 @@ export class ProductionSession {
     this.draft!.origin = { ...this.origin, statementIds: scope.statementIds };
     this.draft!.name = `${chosen?.name ?? ({ script: '写剧情', stage: '配演出', background: '背景', figure: '立绘', cg: 'CG', difference: '差分', voice: '配音', music: '音乐', page: '页面', 'ui-assets': 'UI 素材' } as const)[intent]} · ${this.data.scenes.find(scene => scene.id === scope.sceneId)?.name ?? '新制作'}`;
     this.taskId = null;
+    this.restoringDraftId = null;
     this.quickOpen = true;
     this.draftDirty = false;
-    if (variant.operationSnapshot?.provider) {
+    if (variant.operationSnapshot?.provider || wholeFigure || scope.pageIds?.length) {
       this.quickIntent = null;
       this.update({});
       await this.saveDraft(true);
@@ -245,24 +284,24 @@ export class ProductionSession {
     this.draft = normalizeProductionDraft(structuredClone(draft));
     this.savedDraft = structuredClone(this.draft);
     this.origin = draft.origin ?? null;
-    this.quickIntent = null; this.taskId = null; this.plan = null; this.draftDirty = false; this.changed();
+    this.quickIntent = null; this.taskId = null; this.restoringDraftId = null; this.plan = null; this.draftDirty = false; this.quickOpen = true; this.changed();
   }
   private configureQuickScope(scope: QuickScope = {}) {
     if (!this.variant) return;
     const target = this.variant.target;
     target.statementId = scope.statementId ?? null;
     target.replaceStatementIds = scope.statementIds?.length ? [...scope.statementIds] : scope.statementId ? [scope.statementId] : [];
-    if ((this.quickIntent === 'script' || this.quickIntent === 'stage') && !target.replaceStatementIds.length) {
+    if ((this.operation === 'script' || this.operation === 'performance') && !target.replaceStatementIds.length) {
       const statements = this.data.scenes.find(scene => scene.id === target.sceneId)?.statements ?? [];
-      if (this.quickIntent === 'stage') target.replaceStatementIds = statements.map(statement => statement.id);
+      if (this.operation === 'performance') target.replaceStatementIds = statements.map(statement => statement.id);
       else if (['end', 'changeScene', 'jumpLabel', 'return'].includes(statements.at(-1)?.command ?? '')) target.statementId = statements.at(-1)!.id;
     }
   }
-  async setQuickScene(sceneId: string | null) {
+  async setQuickScene(sceneId: string | null, capture = true) {
     if (!this.variant) return;
     this.update({ target: { ...this.variant.target, sceneId } });
     this.configureQuickScope();
-    await this.captureContext();
+    if (capture) await this.captureContext();
   }
   private selection(recipe: import('@galcraft/authoring/recipes').CreationRecipe, purpose: import('@galcraft/authoring/production').RecipeSelection['purpose']) {
     return { recipeId: recipe.id, scope: recipe.scope, purpose, usage: this.draft!.activeUse, parameterValues: Object.fromEntries(recipe.parameters.map(parameter => [parameter.key, parameter.defaultValue])) };
@@ -325,12 +364,15 @@ export class ProductionSession {
     this.update({ operation }); this.applyDefaults(); this.changed();
   }
   matchingWorkflows() {
-    return this.data.workflows.filter(workflow => (!workflow.operation || workflow.operation === this.variant?.operation) && workflowSupportsPurpose(workflow, this.purpose, this.draft!.activeUse as import('@galcraft/contracts').ImageUsage));
+    const usage = this.purpose === 'image' ? imageUsageFor(this.draft!.activeUse) : null;
+    const wholeFigure = this.purpose === 'image' && this.draft?.activeUse === 'difference';
+    return this.data.workflows.filter(workflow => (!workflow.operation || workflow.operation === this.variant?.operation) &&
+      workflowSupportsPurpose(workflow, this.purpose, usage) && (!wholeFigure || workflowMapsMainImage(workflow)));
   }
   applyDefaults() {
     const variant = this.variant;
     if (!variant || !this.draft) return;
-    const route = this.purpose === 'image' ? this.data.imageRoutes?.[this.draft.activeUse as 'background' | 'figure' | 'cg' | 'ui'] : null;
+    const route = this.purpose === 'image' ? this.data.imageRoutes?.[imageUsageFor(this.draft.activeUse)] : null;
     const scheme = this.data.recipes.find(recipe => recipe.id === variant.productionRecipeId)?.production;
     const connections = this.data.connections.filter(connection => operationSupportsConnection(this.operationDefinition, connection, this.purpose) && (!scheme?.protocol || connection.protocol === scheme.protocol));
     const connection = connections.find(connection => connection.id === route?.connectionId)
@@ -348,13 +390,14 @@ export class ProductionSession {
   }
   async rememberImageRoute() {
     if (!this.variant?.connectionId || this.purpose !== 'image') return;
-    this.data.imageRoutes = unwrap(await this.bridge.production.saveImageRoutes({ ...this.data.imageRoutes, [this.draft!.activeUse]: { connectionId: this.variant.connectionId, workflowBindingId: this.variant.workflowBindingId, model: this.variant.model ?? '' } }));
+    this.data.imageRoutes = unwrap(await this.bridge.production.saveImageRoutes({ ...this.data.imageRoutes, [imageUsageFor(this.draft!.activeUse)]: { connectionId: this.variant.connectionId, workflowBindingId: this.variant.workflowBindingId, model: this.variant.model ?? '' } }));
     this.changed();
   }
   newDraft(usage: ProductionFormDraft["activeUse"] = "script", operation?: ProductionOperation) {
     if (this.autosave) clearTimeout(this.autosave);
     this.autosave = null;
     this.savedDraft = null;
+    this.restoringDraftId = null;
     this.draft = {
       schemaVersion: 1,
       id: createId(this.data),
@@ -425,6 +468,7 @@ export class ProductionSession {
         durationSec: 30,
       },
       context: [],
+      contextCaptured: true,
       connectionId: null,
       workflowBindingId: null,
       model: null,
@@ -486,6 +530,7 @@ export class ProductionSession {
   update(patch: Partial<FormVariant>) {
     this.draftDirty = true; this.draftEdit++;
     Object.assign(this.variant!, patch);
+    if (patch.context !== undefined || patch.target !== undefined) this.variant!.contextCaptured = true;
     this.captureDraftSources(!!patch.target);
     this.plan = null;
     this.scheduleSave();

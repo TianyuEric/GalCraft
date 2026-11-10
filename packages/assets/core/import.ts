@@ -53,11 +53,20 @@ export async function inspectFile(path: string, toolDirectory: string, signal?: 
       const image = sharp(await readFile(path), { animated: true }), metadata = await image.metadata();
       const format = spec.mime === 'image/gif' ? 'gif' : 'webp';
       if (metadata.format !== format || !metadata.width || !metadata.height) return fail('MEDIA_SIGNATURE', `${basename(path)} 的文件内容与扩展名不符`);
-      await image.raw().toBuffer();
+      const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
+      let hasTransparency = false;
+      if (metadata.hasAlpha) {
+        for (let offset = info.channels - 1; offset < data.length; offset += info.channels) {
+          if (data[offset]! < 255) {
+            hasTransparency = true;
+            break;
+          }
+        }
+      }
       const frames = metadata.pages ?? 1;
       const delays = Array.from({ length: frames }, (_, index) => Math.max(1, metadata.delay?.[index] || 100));
       return ok({ ...spec, metadata: { width: metadata.width, height: metadata.pageHeight ?? metadata.height,
-        hasAlpha: metadata.hasAlpha, ...(frames > 1 ? { durationSec: delays.reduce((sum, value) => sum + value, 0) / 1000,
+        hasAlpha: metadata.hasAlpha, hasTransparency, ...(frames > 1 ? { durationSec: delays.reduce((sum, value) => sum + value, 0) / 1000,
           imageAnimation: { format, frameDurationsMs: delays, sourceLoopCount: metadata.loop ?? null } } : {}) },
         targets: { web: 'direct', windows: 'direct' } });
     } catch (error) { return fail('IMAGE_DECODE_FAILED', `${basename(path)}: ${String(error)}`, ['locate']); }

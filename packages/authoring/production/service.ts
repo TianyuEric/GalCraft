@@ -226,7 +226,7 @@ export class ProductionService {
       if (!this.versionsMatch(expected)) return fail('TASK_SOURCE_CHANGED', '任务来源已变化');
       if(input.externalCallId) { const previous=[...this.tasks.values()].find(task=>task.externalCallId===input.externalCallId);if(previous) { const saved=await this.store.read<TaskPlan>(this.store.path('external-plans',`${encodeURIComponent(input.externalCallId)}.json`));if(saved)return ok(saved); } }
       const now = new Date().toISOString(), task: Task = { schemaVersion: 1, id: createId([this.tasks, this.candidates, this.removedTasks, this.options.project.documents]), projectId: input.projectId, revision: 1, name: input.name, createdAt: now, updatedAt: now,
-        stagePolicy: input.stagePolicy ?? 'interactive', collaboration: structuredClone(input.collaboration), externalCallId:input.externalCallId, previousTaskId:input.previousTaskId, previousItemId:input.previousItemId, presetId: null, sourceDraftId: input.sourceDraftId ?? null, context: structuredClone(input.context.filter(part => part.included)), items, policy: input.policy, selectionRule: input.selectionRule };
+        origin: structuredClone(input.origin), stagePolicy: input.stagePolicy ?? 'interactive', collaboration: structuredClone(input.collaboration), externalCallId:input.externalCallId, previousTaskId:input.previousTaskId, previousItemId:input.previousItemId, presetId: null, sourceDraftId: input.sourceDraftId ?? null, context: structuredClone(input.context.filter(part => part.included)), items, policy: input.policy, selectionRule: input.selectionRule };
       const plan: TaskPlan = { sourceDraftRevision: input.sourceDraftRevision, planId: createId([this.tasks, this.candidates, this.removedTasks, this.options.project.documents]), expected, task, issues: [], sendSummary: items.filter(item => item.configSnapshot).map(item => ({ itemId: item.id,
         destination: item.configSnapshot!.baseUrl, model: item.configSnapshot!.model, textCharacters: inputTextSummary(item.input as GenerationInput).textCharacters,
         media: this.mediaPaths(item.input), requests: 1, price: null })) };
@@ -648,7 +648,8 @@ export class ProductionService {
       delete item.remoteError;delete item.resourceRelease;delete item.resourceWait;item.progress={phase:'',completed:null,total:null};
       item.attempts=[];item.candidateIds=[];item.selectedCandidateId=null;item.issues=[];item.needsReview=false;
       item.dependencies=[];item.sourceVersions=item.sourceVersions.map(value=>({...value,revision:this.options.project.readDocument(value.ref.id)?.revision??value.revision}));
-      return this.planTask({projectId:task.projectId,name:`${task.name} · 新请求`,context:task.context,items:[item],policy:'waitForSelection',selectionRule:null,previousTaskId:task.id,previousItemId:original.id,stagePolicy:task.stagePolicy,collaboration:task.collaboration});
+      const origin = task.origin ?? (task.sourceDraftId ? (await this.store.loadDraft(task.sourceDraftId))?.origin : undefined);
+      return this.planTask({projectId:task.projectId,name:`${task.name} · 新请求`,origin,context:task.context,items:[item],policy:'waitForSelection',selectionRule:null,previousTaskId:task.id,previousItemId:original.id,stagePolicy:task.stagePolicy,collaboration:task.collaboration});
     }catch(error){return fail('TASK_REPREPARE',String(error));}
   }
   async cancel(taskId: Id): Promise<Result<CancelResult>> {

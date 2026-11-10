@@ -10,7 +10,7 @@ import { assetFilePath } from '@galcraft/assets';
 import { compileCollaborationProject } from './collaboration-compile.mjs';
 import { DialoguePreviewTargetSchema, PreviewRouteFields, resolvePreviewEventSource } from './collaboration-preview-target.ts';
 import { awaitPreviewCapture } from './preview-capture-protocol.ts';
-import type { StudioProduction } from './production-providers.mjs';
+import type { StudioProduction } from './production-providers.mts';
 import type { StudioPluginPackages } from './plugin-packages.mjs';
 import type { CompilationState } from '@galcraft/dsl';
 import { z } from 'zod';

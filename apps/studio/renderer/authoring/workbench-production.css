@@ -15,6 +15,7 @@
 .gc-studio-workbench .authoring-stage-region .studio-mini-player { width:min(100%,calc(max(100px,100cqh - 144px) * var(--studio-stage-aspect,1.77778))); margin-inline:auto; }
 
 .gc-workbench .gc-wb-dom-region { min-width:0; min-height:0; }
+.gc-production-directory-dock, .production-directory-mount { height: 100%; }
 .gc-workbench .gc-wb-document-content { height:100%; }
 .gc-workbench .gc-wb-document-content > .studio-content:has(> .page-designer) { height:100%; min-height:0; overflow:hidden; }
 .gc-workbench .gc-wb-production-header { flex:none; background:var(--workbench-explorer); }

@@ -1,14 +1,15 @@
 import { HttpGenerationAdapter } from '@galcraft/generation-services';
 import {migrateConnection} from '@galcraft/generation-services/catalog';
-import { workflowSupportsPurpose, workflowOperationDiagnostics } from '@galcraft/generation-services/validation';
-import { createId, DiagnosticError, DialogueContentSchema, dialoguePlainText } from '@galcraft/contracts';
-import { productionContext } from './production-context.mjs';
-import { ProductionMediaImporter } from './production-media-importer.mjs';
+import { workflowMapsMainImage, workflowSupportsPurpose, workflowOperationDiagnostics } from '@galcraft/generation-services/validation';
+import { createId, DiagnosticError, DialogueContentSchema, dialoguePlainText, ImageUsageSchema, PurposeSchema, ProductionOperationDefinitionSchema } from '@galcraft/contracts';
+import { productionContext } from './production-context.mts';
+import { components } from '@galcraft/templates';
+import { ProductionMediaImporter } from './production-media-importer.mts';
 import {
   backgroundReferences,
   selectedReferencePatches,
 } from "./asset-providers.mjs";
-import { parse, createCommandRegistry } from "@galcraft/dsl";
+import { parse, type CompileInput } from "@galcraft/dsl";
 
 import { isDeepStrictEqual } from "node:util";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -19,17 +20,21 @@ import {
   ProductionOperationCatalog,
   productionSources, createProductionItem, planProductionDraft, reviewProductionCandidates, validateProductionCandidate, prepareCompositionRecord, createUIPlanItem,
   UIProductionService,
+  type CandidateAdoptionChoice, type ContextPart, type FormVariant, type GenerationAdapterLease,
+  type GenerationProviderSnapshot, type ImageGenerationRoutes, type ProductionFormDraft, type ProductionOptions,
+  type ProductionPlanningPorts, type RecipeSelection, type Target, type TaskItem, type TaskPlan, type UIAuthoringPlan,
+  type WorkflowBinding, ProductionTargetSchema,
   GenerationConnections,
   candidateText,
   prepareSVGCandidate,
   previewScript,
   continueConversation,
-  frozenProductionTask, effectiveProductionDefaults,
+  frozenProductionTask, effectiveProductionDefaults, imageUsageFor,
 } from "@galcraft/authoring/production";
-import {migrateProductionStores} from './production-migration.mjs';
-import { RecipeLibrary } from "@galcraft/authoring/recipes";
+import {migrateProductionStores} from './production-migration.mts';
+import { RecipeLibrary, RecipeUsageSchema, type CreationRecipe } from "@galcraft/authoring/recipes";
 import {
-  UIAssetAdoptionCoordinator,
+  UIAssetAdoptionCoordinator, type AssetIndex, type UIReplacementRef,
   inspectFile,
   rasterizeSVG,
   assetFilePath,
@@ -38,68 +43,162 @@ import {
   readTemplateDocuments,
   compositionClosure,
   prepareComposition,
-  styleMatchKey,
+  styleMatchKey, type StyleMatchResolver, type StyleMatchRequest, type StyleTarget, type UIComposition,
 } from "@galcraft/templates";
 import { fail, ok } from "./result.mjs";
 import { validatePluginData } from '@galcraft/plugins/contracts';
 import { operationSupportsConnection } from '@galcraft/authoring/production/operations';
-import { inspectLocalCommit } from './production-resource-diagnostics.mjs';
+import { inspectLocalCommit } from './production-resource-diagnostics.mts';
 import { prepareAuthoringEdit } from '@galcraft/documents/authoring';
+import type {
+  CollaborationContext, ConnectionConfig, ConnectionSelection, EditInput, GenerationAdapter, IpcArgs, IpcReturn, Issue,
+  Json, ProductionOperationSnapshot, Purpose, ResolvedAsset, Result, VersionRef,
+} from '@galcraft/contracts';
+import type { ProjectSession } from '@galcraft/documents';
+import type { ResourceRegistry } from '@galcraft/media-tools/resources';
+import type { GenerationProviderContribution } from '@galcraft/plugins/contracts';
+import type { Overview, StudioIpc } from '../desktop-bridge.js';
+import type { MattingOutput, MattingPort } from '@galcraft/assets/processing';
+import type { StudioHandlerContext } from './ipc-context.js';
 
-const value = (result) => {
+type ProviderIdentity = Omit<GenerationProviderSnapshot, 'capability'>;
+type CatalogOptions = { onIssue?(issue: Issue): void };
+type GenerationPorts = {
+  list?(project: ProjectSession, options?: CatalogOptions): Promise<NonNullable<Overview['providers']>>;
+  operations?(project: ProjectSession | null, options?: CatalogOptions): Promise<ProductionOperationSnapshot[]>;
+  describe(key: string, project: ProjectSession | null): Promise<ProviderIdentity>;
+  acquire(identity: ProviderIdentity, project: ProjectSession | null): Promise<{
+    provider: GenerationProviderContribution; packageVersion: string; release(): void | Promise<void>;
+  }>;
+  acquireTextPreparation?(key: string, project: ProjectSession, version?: string): ReturnType<NonNullable<ProductionOptions['acquireTextPreparation']>>;
+  prepareAuthorDocument?(metadata: Json, project: ProjectSession): Promise<Result<EditInput>>;
+};
+type StudioProductionOptions = {
+  userData: string;
+  projects: { readonly currentSession: ProjectSession | null; readonly currentRoot: string | null };
+  assets: ConstructorParameters<typeof ProductionMediaImporter>[0]['assets'] & {
+    referenceRecords?(project: ProjectSession, assetId: string): Promise<(UIReplacementRef & { label: string })[]>;
+  };
+  connections: {
+    read(id: string): Promise<{ config: ConnectionConfig } | null>;
+    list(): Promise<ConnectionConfig[]>;
+    credential(id: string): Promise<string | null>;
+    remove(id: string): Promise<unknown>;
+  };
+  resources: Pick<ResourceRegistry, 'register'>;
+  language?: { currentInput(projectId: string): CompileInput | null | undefined };
+  beforeSend?: ConstructorParameters<typeof HttpGenerationAdapter>[0]['beforeSend'];
+  generationProviders?: GenerationPorts;
+};
+type AdoptionState = { choices: Record<string, CandidateAdoptionChoice>; pending: string[]; plans: Map<string, string[]> };
+type PreviewReview = {
+  compositionId: string; revision: number; keys: string[]; substitutions: Record<string, string>;
+  substitutionVariants: Record<string, { assetId: string; variantId: string }>;
+  versions: VersionRef[]; pending: StyleMatchRequest[]; matches: Map<string, StyleTarget[]> | null;
+};
+type ProductionContext = {
+  project: ProjectSession; root: string; migrationIssues: string[]; index(): AssetIndex;
+  service: ProductionService; ui: UIProductionService; importer: ProductionMediaImporter;
+  adoption: AdoptionState; previewReviews: Map<string, PreviewReview>; recipes: RecipeLibrary;
+};
+type ConnectionDefaults = NonNullable<Overview['defaults']>;
+type ProductionInvocation = StudioIpc['production'];
+type OperationInput = {
+  operation: string; name?: string; connectionId: string; model?: string | null; workflowId?: string | null;
+  usage?: string; target?: Partial<Target> | Record<string, Json>; fields?: Record<string, Json>; context?: ContextPart[];
+  recipe?: Omit<RecipeSelection, 'recipeId' | 'usage'> & { id: string; revision: number };
+  productionRecipe?: Pick<CreationRecipe, 'id' | 'scope' | 'revision'>;
+  parameterPreset?: Pick<CreationRecipe, 'id' | 'scope' | 'revision'>;
+  parameterOverrides?: Record<string, Json>; sourceVersions?: VersionRef[];
+};
+type WithCollaboration = { collaboration?: CollaborationContext };
+type CallArguments = {
+  [M in keyof ProductionInvocation]: Parameters<ProductionInvocation[M]>;
+};
+type HostArguments = Omit<CallArguments, 'apply' | 'plan' | 'planContinuation' | 'planOperation' | 'resume' | 'select' | 'submit' | 'submitContinuation' | 'waitForTask'> & {
+  apply: [CallArguments['apply'][0] & WithCollaboration];
+  defaults: [Pick<Parameters<typeof effectiveProductionDefaults>[0], 'usage' | 'operation'>];
+  frozen: [{ taskId: string; itemId?: string }];
+  listDrafts: [];
+  plan: [CallArguments['plan'][0] & WithCollaboration];
+  planContinuation: [CallArguments['planContinuation'][0] & WithCollaboration];
+  planOperation: [OperationInput];
+  readDraft: [{ draftId: string }];
+  resume: [string | ({ taskId: string } & WithCollaboration)];
+  select: [CallArguments['select'][0] & WithCollaboration];
+  submit: [string | ({ planId: string } & WithCollaboration)];
+  submitContinuation: [CallArguments['submitContinuation'][0] & WithCollaboration];
+  waitForTask: [CallArguments['waitForTask'][0] & { signal?: AbortSignal }];
+};
+type HostMethod = keyof HostArguments;
+type HostReturn<M extends HostMethod> =
+  M extends keyof ProductionInvocation ? ReturnType<ProductionInvocation[M]> :
+  M extends 'readDraft' ? ReturnType<ProductionService['loadFormDraft']> :
+  M extends 'listDrafts' ? Promise<Result<ProductionFormDraft[]>> :
+  M extends 'defaults' ? Promise<Result<ReturnType<typeof effectiveProductionDefaults>>> :
+  Promise<Result<Json>>;
+type Invocation = { [M in HostMethod]: [method: M, ...args: HostArguments[M]] }[HostMethod];
+
+const value = <T,>(result: Result<T>): T => {
   if (!result.ok) throw new Error(result.error.message);
   return result.value;
 };
-const versions = (session) =>
+// Public operation definitions carry their installed workflow as JSON.
+const operationWorkflow = (operation?: ProductionOperationSnapshot): WorkflowBinding | null =>
+  (operation?.definition.workflow ?? null) as WorkflowBinding | null;
+// The shared M04 adapter exposes these existing reference records through JS.
+const legacyBackgroundReferences = backgroundReferences as unknown as
+  (project: ProjectSession, assetId: string) => (UIReplacementRef & { label: string })[];
+
+const versions = (session: ProjectSession): VersionRef[] =>
   [...session.documents.values()].map((d) => ({
     ref: { kind: "document", id: d.documentId },
     revision: d.revision,
   }));
-const files = async (path) => {
+const files = async (path: string) => {
   try {
     return await readdir(path);
   } catch (error) {
-    if (error.code === "ENOENT") return [];
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
 };
 
 /** M10 owns personal drafts and candidates; M02 owns every project change. */
-export class StudioProduction {
-  constructor({
-    userData,
-    projects,
-    assets,
-    connections,
-    resources,
-    language,
-    beforeSend,
-    generationProviders,
-  }) {
-    Object.assign(this, {
-      userData,
-      projects,
-      assets,
-      connections,
-      resources,
-      language,
-      generationProviders,
-    });
-    this.sessions = new WeakMap();
-    this.opening = new Set();
-    this.activeServices = new Set();
-    this.mediaImporters = new Map();
-    this.leases = new Map();
+export class StudioProduction implements NonNullable<StudioHandlerContext['production']> {
+  readonly userData: string;
+  readonly projects: StudioProductionOptions['projects'];
+  readonly assets: StudioProductionOptions['assets'];
+  readonly connections: StudioProductionOptions['connections'];
+  readonly resources: StudioProductionOptions['resources'];
+  readonly language?: StudioProductionOptions['language'];
+  readonly generationProviders?: GenerationPorts;
+  readonly sessions = new WeakMap<ProjectSession, Promise<ProductionContext>>();
+  readonly opening = new Set<Promise<ProductionContext>>();
+  readonly activeServices = new Set<ProductionService>();
+  readonly mediaImporters = new Map<string, ProductionMediaImporter>();
+  readonly leases = new Map<string, ReturnType<ResourceRegistry['register']>[]>();
+  readonly adapter: HttpGenerationAdapter;
+  readonly connectionService: GenerationConnections;
+  stopping?: Promise<void>;
+  authorize?: ProductionOptions['authorize'];
+
+  constructor({ userData, projects, assets, connections, resources, language, beforeSend, generationProviders }: StudioProductionOptions) {
+    this.userData = userData;
+    this.projects = projects;
+    this.assets = assets;
+    this.connections = connections;
+    this.resources = resources;
+    this.language = language;
+    this.generationProviders = generationProviders;
     this.adapter = new HttpGenerationAdapter({
       credential: (id) => connections.credential(id),
       beforeSend,
-      probe: async (path, mime) => {
+      probe: async (path) => {
         const inspected = value(
           await inspectFile(
             path,
             assets.toolDirectory,
-            undefined,
-            assets.svgDecoder,
           ),
         );
         return {
@@ -116,7 +215,7 @@ export class StudioProduction {
       return this.acquireAdapter(config, description, project);
     }, async id => (await this.connections.read(id))?.config ?? null);
   }
-  async testConnection(selection) {
+  async testConnection(selection: ConnectionSelection) {
     const result = await this.connectionService.testConnection(selection);
     return result.ok ? ok(result.value.report) : result;
   }
@@ -124,27 +223,35 @@ export class StudioProduction {
     if (this.stopping) throw new Error('制作服务已关闭');
     const project = this.projects.currentSession;
     if (!project) throw new Error("请先打开作品");
-    if (!this.sessions.has(project)) {
-      const opening = this.open(project, this.projects.currentRoot);
-      this.sessions.set(project, opening); this.opening.add(opening);
-      opening.then(() => this.opening.delete(opening), () => this.opening.delete(opening));
+    let opening = this.sessions.get(project);
+    if (!opening) {
+      const root = this.projects.currentRoot;
+      if (!root) throw new Error("请先打开作品");
+      const pending = this.open(project, root);
+      opening = pending;
+      this.sessions.set(project, pending);
+      this.opening.add(pending);
+      pending.then(() => this.opening.delete(pending), () => this.opening.delete(pending));
     }
-    const context=await this.sessions.get(project);await context.service.reconcileAdoptions();return context;
+    const context = await opening;
+    await context.service.reconcileAdoptions();
+    return context;
   }
-  async acquireAdapter(config, snapshot, project = this.projects.currentSession) {
+  async acquireAdapter(config: ConnectionConfig, snapshot: ProviderIdentity | null | undefined, project = this.projects.currentSession): Promise<GenerationAdapterLease> {
     if (!config.providerKey) return { adapter: this.adapter, release() {} };
     if (!this.generationProviders || !snapshot) throw new Error(`请补齐生成提供者 ${config.providerKey}${snapshot ? `@${snapshot.packageVersion}` : ''}`);
     const lease = await this.generationProviders.acquire(snapshot, project);
     try {
       if (lease.provider.key !== snapshot.providerKey || lease.packageVersion !== snapshot.packageVersion) throw new Error('生成提供者精确版本不匹配');
       const adapter = await lease.provider.create(structuredClone(config), snapshot.runtime), provider = lease.provider;
-      const check = (schema, data, requestId) => {
+      const check = (schema: Json, data: Json, requestId: string) => {
         const result = validatePluginData(schema, data);
         if (!result.ok) throw new Error(`${provider.key}@${snapshot.packageVersion} · ${requestId}: ${result.issues.map(issue => issue.message).join('；')}`);
       };
-      const guarded = {
-        ...(adapter.validateInput?{validateInput:input=>{check(provider.inputSchema,input,'prepare');return adapter.validateInput(input);}}:{}),
-        ...(adapter.freeze ? { freeze: () => adapter.freeze() } : {}),
+      const { validateInput, freeze, inspectResources, releaseResources } = adapter;
+      const guarded: GenerationAdapter = {
+        ...(validateInput ? { validateInput: (input: Parameters<NonNullable<GenerationAdapter['validateInput']>>[0]) => { check(provider.inputSchema, input, 'prepare'); return validateInput.call(adapter, input); } }:{}),
+        ...(freeze ? { freeze: () => freeze.call(adapter) } : {}),
         inspect: (config, purpose) => adapter.inspect(config, purpose),
         query: (ref, context) => adapter.query(ref, context),
         fetch: async (ref, output, context) => {
@@ -153,8 +260,8 @@ export class StudioProduction {
           return result;
         },
         cancel: (ref, context) => adapter.cancel(ref, context),
-        ...(adapter.inspectResources ? { inspectResources: context => adapter.inspectResources(context) } : {}),
-        ...(adapter.releaseResources ? { releaseResources: context => adapter.releaseResources(context) } : {}),
+        ...(inspectResources ? { inspectResources: (context: Parameters<NonNullable<GenerationAdapter['inspectResources']>>[0]) => inspectResources.call(adapter, context) } : {}),
+        ...(releaseResources ? { releaseResources: (context: Parameters<NonNullable<GenerationAdapter['releaseResources']>>[0]) => releaseResources.call(adapter, context) } : {}),
         async *submit(input, context) {
           if (!provider.purposes.includes(input.purpose) && !(provider.protocols?.includes('comfyUI') && context.workflow?.purpose===input.purpose)) throw new Error(`${provider.key} 不支持 ${input.purpose}`);
           check(provider.inputSchema, input, context.requestId);
@@ -167,13 +274,12 @@ export class StudioProduction {
       return { adapter: guarded, release: () => lease.release() };
     } catch (error) { await lease.release(); throw error; }
   }
-  async freezeProvider(config, input, project = this.projects.currentSession) {
-    if (!this.generationProviders) throw new Error(`请补齐生成提供者 ${config.providerKey}`);
+  async freezeProvider(config: ConnectionConfig, input: { purpose: Purpose }, project = this.projects.currentSession): Promise<GenerationProviderSnapshot> {
+    if (!this.generationProviders || !config.providerKey) throw new Error(`请补齐生成提供者 ${config.providerKey}`);
     const description = await this.generationProviders.describe(config.providerKey, project);
-    const snapshot = { ...description };
-    const lease = await this.acquireAdapter(config, snapshot, project);
+    const lease = await this.acquireAdapter(config, description, project);
     try {
-      snapshot.capability = await lease.adapter.inspect(structuredClone(config), input.purpose);
+      const snapshot: GenerationProviderSnapshot = { ...description, capability: await lease.adapter.inspect(structuredClone(config), input.purpose) };
       if (snapshot.capability.status === 'unavailable') throw new Error(snapshot.capability.issues.map(issue => issue.message).join('；') || '生成提供者不可用');
       if (lease.adapter.freeze) snapshot.runtime = await lease.adapter.freeze();
       return snapshot;
@@ -185,18 +291,19 @@ export class StudioProduction {
       await Promise.all([...this.activeServices].map(service => service.close()));
     })();
   }
-  async closeProject(projectId) {
+  async closeProject(projectId: string) {
     for (const service of this.activeServices) if (service.store.projectId === projectId) {
       await service.close(); this.activeServices.delete(service);
     }
     for (const [key, leases] of this.leases) { leases.forEach(lease => lease.release()); this.leases.delete(key); }
     await this.mediaImporters.get(projectId)?.close(); this.mediaImporters.delete(projectId);
   }
-  async open(project, root) {
-    const index = () => {
+  async open(project: ProjectSession, root: string): Promise<ProductionContext> {
+    const index = (): AssetIndex => {
       const d = [...project.documents.values()].find(
         (d) => d.files["assets/index.json"],
       );
+      if (!d) throw new Error("素材索引不存在");
       return {
         ...JSON.parse(d.files["assets/index.json"]),
         revision: d.revision,
@@ -204,7 +311,7 @@ export class StudioProduction {
     };
     const importer = new ProductionMediaImporter({ root, assets: this.assets, project, index });
     this.mediaImporters.set(project.projectId, importer);
-    const adoption = { choices: {}, pending: [], plans: new Map() };
+    const adoption: AdoptionState = { choices: {}, pending: [], plans: new Map() };
     const migrationIssues=await migrateProductionStores(this.userData,project,await this.generationProviders?.operations?.(project)??[]);
     const service = new ProductionService({
       userData: this.userData,
@@ -214,7 +321,7 @@ export class StudioProduction {
       acquireAdapter: (config, snapshot) => this.acquireAdapter(config, snapshot, project),
       acquireRecoveryAdapter: async (config,snapshot) => {
         if(config.providerKey==='org.galcraft.voice-comfy/comfy' && snapshot?.packageVersion==='0.1.0') {
-          const mapped=migrateConnection(config),identity={...snapshot,providerKey:mapped.providerKey};
+          const mapped=migrateConnection(config),identity={...snapshot,providerKey:mapped.providerKey ?? snapshot.providerKey};
           const lease=await this.acquireAdapter(mapped,identity,project),original=lease.adapter;
           return {release:()=>lease.release(),adapter:{...original,query:(ref,ctx)=>original.query(ref,{...ctx,config:mapped}),fetch:(ref,output,ctx)=>original.fetch(ref,output,{...ctx,config:mapped}),cancel:(ref,ctx)=>original.cancel(ref,{...ctx,config:mapped})}};
         }
@@ -222,12 +329,12 @@ export class StudioProduction {
       },
       refreshItem: async item => {
         if(item.configSnapshot){const current=await this.connections.read(item.configSnapshot.id);if(!current)throw new Error('原连接已移除，请在制作工作区选择当前连接');item.configSnapshot=current.config;}
-        if(item.operationSnapshot?.provider){const operations=await this.generationProviders.operations(project);item.operationSnapshot=new ProductionOperationCatalog(operations.filter(operation=>operation.provider)).resolve(item.operationSnapshot.id);}
-        if(item.workflowSnapshot){const current=await service.store.read(join(this.userData,'connections/workflows',`${item.workflowSnapshot.id}.json`));item.workflowSnapshot=current??item.operationSnapshot?.definition.workflow;if(!item.workflowSnapshot)throw new Error('原工作流已移除，请选择当前工作流');}
+        if(item.operationSnapshot?.provider){const operations=await this.generationProviders?.operations?.(project) ?? [];item.operationSnapshot=new ProductionOperationCatalog(operations.filter(operation=>operation.provider)).resolve(item.operationSnapshot.id);}
+        if(item.workflowSnapshot){const current=await service.store.read<WorkflowBinding>(join(this.userData,'connections/workflows',`${item.workflowSnapshot.id}.json`));item.workflowSnapshot=current??operationWorkflow(item.operationSnapshot)??null;if(!item.workflowSnapshot)throw new Error('原工作流已移除，请选择当前工作流');}
         return item;
       },
       acquireTextPreparation: (key,version) => { if(!this.generationProviders?.acquireTextPreparation)throw new Error(`文字准备能力缺失 ${key}`);return this.generationProviders.acquireTextPreparation(key,project,version); },
-      authorize: (task,item,consume) => this.authorize?.(task,item,consume),
+      authorize: async (task,item,consume) => this.authorize?.(task,item,consume),
       inspectHostCommit: config => inspectLocalCommit(config.baseUrl),
       resolveOperation: async (id, frozen) => {
         const operations = await this.generationProviders?.operations?.(project);
@@ -279,7 +386,8 @@ export class StudioProduction {
         documents: () => [...project.documents.values()],
         validateAsset: (id, variantId) => index().data.assets.some(asset => asset.id === id && (!variantId || asset.variants.some(variant => variant.id === variantId))),
         prepareSVG: candidate => prepareSVGCandidate(candidate,
-          service.store.candidatePath(candidate.taskId, candidate.itemId, candidate.id), this.assets.svgDecoder),
+          service.store.candidatePath(candidate.taskId, candidate.itemId, candidate.id),
+          this.assets.svgDecoder ?? (() => Promise.resolve(fail('SVG_DECODER_UNAVAILABLE', 'SVG 解码器尚未就绪', 'M10')))),
       }),
     });
     await service.open();
@@ -288,7 +396,7 @@ export class StudioProduction {
       root,
       this.assets.toolDirectory,
       index,
-      (id) => this.assets.referenceRecords ? this.assets.referenceRecords(project, id) : backgroundReferences(project, id),
+      (id) => this.assets.referenceRecords ? this.assets.referenceRecords(project, id) : legacyBackgroundReferences(project, id),
       () => versions(project),
       this.assets.svgDecoder,
     );
@@ -314,7 +422,7 @@ export class StudioProduction {
         return ok({
           label: "采用 UI 素材版本",
           origin: "candidate",
-          patches: patches.value,
+          patches: patches.value as EditInput['patches'],
           expected: prepared.expected,
           preparedAssets: [prepared.assetId],
           requiredRefs: prepared.requiredRefs,
@@ -335,7 +443,7 @@ export class StudioProduction {
         await this.generationProviders?.operations?.(project) ?? []),
     };
   }
-  scriptCompileInput(project) {
+  scriptCompileInput(project: ProjectSession): CompileInput {
     const current = this.compileInput(project);
     if (!current.lock?.plugins.length) return current;
     const compiled = this.language?.currentInput(project.projectId);
@@ -354,28 +462,30 @@ export class StudioProduction {
       pluginConditions: compiled.pluginConditions,
     };
   }
-  compileInput(project, overview = false) {
+  compileInput(project: ProjectSession, overview = false): CompileInput {
     const documents = [...project.documents.values()],
-      data = (path) => {
+      data = <T,>(path: string): T | null => {
         const d = documents.find((d) => d.files[path]);
         return d ? JSON.parse(d.files[path]).data : null;
       };
-    const projectData = data("project.json");
-    const entities = (prefix) =>
+    const projectData = data<CompileInput["project"]>("project.json");
+    if (!projectData) throw new Error("作品元数据不存在");
+    const entities = <T,>(prefix: string): T[] =>
       documents.flatMap((d) =>
         Object.entries(d.files)
           .filter(([p]) => p.startsWith(prefix) && p.endsWith(".json"))
           .map(([, raw]) => JSON.parse(raw).data),
       );
-    const scenes = entities("scenes/");
+    const scenes = entities<CompileInput["scenes"][number]>("scenes/");
+    const lock = data<CompileInput["lock"]>("dependencies.lock.json");
     return {
       projectId: project.projectId,
       engineVersion: projectData.engineVersion,
       project: projectData,
-      lock: data("dependencies.lock.json"),
+      lock: lock!,
       pluginDocuments: Object.fromEntries(
-        (data("dependencies.lock.json")?.plugins ?? []).flatMap((plugin) => {
-          const config = data(`plugins/${plugin.id}/documents/config.json`);
+        (lock?.plugins ?? []).flatMap((plugin) => {
+          const config = data<Json>(`plugins/${plugin.id}/documents/config.json`);
           return config === null ? [] : [[plugin.id, config]];
         }),
       ),
@@ -385,7 +495,7 @@ export class StudioProduction {
         .flatMap((d) => {
           const script = Object.entries(d.files).find(([p]) => p.endsWith('/script.gal'));
           const scenePath = script?.[0].replace(/script\.gal$/, 'scene.json');
-          const scene = scenePath ? data(scenePath) : null;
+          const scene = scenePath ? data<CompileInput["scenes"][number]>(scenePath) : null;
           if (!script || !scene) { if (overview) return []; throw new Error('场景脚本缺少对应的场景信息，请在创作页检查并保存该场景'); }
           return ({
           documentId: d.documentId,
@@ -400,81 +510,114 @@ export class StudioProduction {
       flows: entities("flows/"),
       debugScenarios: documents.flatMap(document => Object.entries(document.files).filter(([path]) => path.startsWith('authoring/debug/') && path.endsWith('.json'))
         .map(([, raw]) => ({ documentId: document.documentId, revision: document.revision, data: JSON.parse(raw).data }))),
-      assets: data("assets/index.json").assets,
+      assets: data<AssetIndex["data"]>("assets/index.json")!.assets,
       template: readTemplateDocuments(documents),
       cancelOperationId: createId(),
     };
   }
-  planningPorts(ctx) {
+  planningPorts(ctx: ProductionContext): ProductionPlanningPorts & Pick<ProductionOptions, "acquireTextPreparation" | "authorize"> {
     return {
-      readConnection: id => this.connections.read(id),
-      resolveMedia: async assetId => value(await this.call('mediaInput', { assetId })),
+      readConnection: id => id === null ? Promise.resolve(null) : this.connections.read(id),
+      resolveMedia: async (assetId: string, variantId?: string) => this.mediaInput(ctx, { assetId, variantId }),
       context: target => this.contextParts(ctx, target),
       listConnections: () => this.connections.list(),
-      readWorkflow: id => ctx.service.store.read(join(this.userData, 'connections/workflows', `${IdSchema.parse(id)}.json`)),
+      readWorkflow: id => ctx.service.store.read<WorkflowBinding>(join(this.userData, 'connections/workflows', `${IdSchema.parse(id)}.json`)),
       recipes: ctx.recipes,
       source: () => this.scriptCompileInput(ctx.project),
       sources: (variant, source) => productionSources([...ctx.project.documents.values()], variant, source),
       freezeProvider: (config, purpose) => this.freezeProvider(config, { purpose }, ctx.project),
       acquireTextPreparation: (key,version) => { if(!this.generationProviders?.acquireTextPreparation)throw new Error(`文字准备能力缺失 ${key}`);return this.generationProviders.acquireTextPreparation(key,ctx.project,version); },
-      authorize: (task,item,consume) => this.authorize?.(task,item,consume),
+      authorize: async (task,item,consume) => this.authorize?.(task,item,consume),
       resolveOperation: async (id, frozen) => {
         const operations = await this.generationProviders?.operations?.(ctx.project);
         return new ProductionOperationCatalog((operations ?? []).filter(operation => operation.provider)).resolve(id, frozen);
       },
     };
   }
-  productionSources(ctx, variant, source = this.scriptCompileInput(ctx.project)) {
+  productionSources(ctx: ProductionContext, variant: FormVariant, source = this.scriptCompileInput(ctx.project)) {
     return productionSources([...ctx.project.documents.values()], variant, source);
   }
-  createItem(ctx, draft, variant, purposeOverride) {
+  createItem(ctx: ProductionContext, draft: ProductionFormDraft, variant: FormVariant, purposeOverride?: Purpose) {
     return createProductionItem(this.planningPorts(ctx), draft, variant, purposeOverride);
   }
-  async contextParts(ctx, input) {
+  private mediaInput(ctx: ProductionContext, input: CallArguments['mediaInput'][0]): import('@galcraft/contracts').MediaInput {
+    if (this.projects.currentSession !== ctx.project) throw new Error('The project changed while resolving media. Reopen the current production draft.');
+    const asset = ctx
+        .index()
+        .data.assets.find((a) => a.id === input.assetId),
+      variant = asset?.variants.find(
+        (v) => v.id === (input.variantId ?? asset.activeVariantId),
+      );
+    if (!asset || !variant) throw new Error("参考素材不存在");
+    const file = variant.files.find((f) => f.path === variant.entry);
+    if (!file) throw new Error("参考素材入口文件不存在");
+    return {
+      assetId: asset.id,
+      variantId: variant.id,
+      candidateId: null,
+      artifactIndex: null,
+      kind: asset.kind, typeVersion: variant.typeData?.typeVersion ?? 1,
+      localPath: join(
+        ctx.root,
+        ...assetFilePath(asset.id, variant.id, variant.entry).split("/"),
+      ),
+      mime: file.mime,
+    };
+  }
+  async contextParts(ctx: ProductionContext, input: Parameters<typeof productionContext>[2]) {
     const parts = productionContext(ctx.project, this.scriptCompileInput(ctx.project), input);
     for (const part of parts) if (part.media?.assetId) {
       if (this.projects.currentSession !== ctx.project) throw new Error('The project changed while reading character references. Reopen the current production draft.');
-      part.media = value(await this.call('mediaInput', { assetId: part.media.assetId, variantId: part.media.variantId }));
+      part.media = this.mediaInput(ctx, { assetId: part.media.assetId, variantId: part.media.variantId ?? undefined });
       if (['image/png', 'image/jpeg', 'image/webp'].includes(part.media.mime)) part.attachment = { ...value(await this.call('attachment', part.media.localPath)), source: part.source };
       else if (input.usage === 'script') throw new Error(`The selected character image ${part.label} is not supported as a text attachment (${part.media.mime}). Use PNG, JPEG or WebP, or override the context.`);
     }
     if (this.projects.currentSession !== ctx.project) throw new Error('The project changed while reading character references. Reopen the current production draft.');
     return parts;
   }
-  async prepareComfyMatting(request,choice,collaboration,signal) {
+  async prepareComfyMatting(request: Parameters<MattingPort>[0], choice: { connectionId: string; workflowBindingId: string }, collaboration?: CollaborationContext, signal?: AbortSignal): Promise<Result<MattingOutput>> {
     try {
       const ctx=await this.current(),config=(await this.connections.read(choice.connectionId))?.config;
       if(!config||config.protocol!=='comfyUI')throw new Error('请连接ComfyUI抠图服务');
-      const workflow=await ctx.service.store.read(join(this.userData,'connections/workflows',`${IdSchema.parse(choice.workflowBindingId)}.json`));
+      const workflow=await ctx.service.store.read<WorkflowBinding>(join(this.userData,'connections/workflows',`${IdSchema.parse(choice.workflowBindingId)}.json`));
       if(!workflow||!workflowSupportsPurpose(workflow,'matting'))throw new Error('缺少已保存的抠图用途工作流');
-      const input={purpose:'matting',reference:{assetId:null,variantId:null,candidateId:null,artifactIndex:null,localPath:request.inputPath,mime:'image/png'}};
-      const item={id:createId(),purpose:'matting',target:{sceneId:null,statementId:null,characterId:null,locale:null,usage:'figure',uiScope:null},backgroundRemoval:null,backgroundPreview:null,dependencies:[],input,sourceVersions:[],
-        configSnapshot:{...config,purposes:[...new Set([...config.purposes,'matting'])]},workflowSnapshot:workflow,recipeSnapshot:null,state:'draft',remote:null,progress:{phase:'',completed:null,total:null},attempts:[],candidateIds:[],selectedCandidateId:null,needsReview:false,issues:[]};
+      const input={purpose:'matting' as const,reference:{assetId:null,variantId:null,candidateId:null,artifactIndex:null,localPath:request.inputPath,mime:'image/png'}};
+      const item: TaskItem={id:createId(),purpose:'matting',target:{sceneId:null,statementId:null,characterId:null,locale:null,usage:'figure',uiScope:null},backgroundRemoval:null,backgroundPreview:null,dependencies:[],input,sourceVersions:[],
+        configSnapshot:{...config,purposes:[...new Set<Purpose>([...config.purposes,'matting'])]},workflowSnapshot:workflow,recipeSnapshot:null,state:'draft',remote:null,progress:{phase:'',completed:null,total:null},attempts:[],candidateIds:[],selectedCandidateId:null,needsReview:false,issues:[]};
       const plan=value(await ctx.service.planTask({projectId:ctx.project.projectId,name:'ComfyUI抠图',context:[],items:[item],policy:'waitForSelection',selectionRule:null,stagePolicy:collaboration?'external':'interactive',collaboration}));
       const task=value(await ctx.service.submit(plan.planId));const abort=()=>{void ctx.service.cancel(task.id);};signal?.addEventListener('abort',abort,{once:true});
-      try {await ctx.service.drain();const finished=ctx.service.listTasks().find(current=>current.id===task.id).items[0];const candidate=ctx.service.getCandidate(finished.candidateIds.at(-1));
+      try {await ctx.service.drain();const finished=ctx.service.getTask(task.id)?.items[0];
+        if (!finished) throw new Error('抠图任务不存在');
+        const candidateId = finished.candidateIds.at(-1);
+        const candidate = candidateId ? ctx.service.getCandidate(candidateId) : null;
         if(!candidate||candidate.partial||candidate.checks.some(issue=>issue.severity==='error'))throw new Error(finished.issues.map(issue=>issue.message).join('；')||'抠图没有完整可用的候选');
         const image=candidate.artifacts.find(artifact=>artifact.kind==='image'&&artifact.role==='primary'),mask=candidate.artifacts.find(artifact=>artifact.role==='mask');
-        if(!image)throw new Error('抠图输出缺少主图');return ok({imagePath:image.localPath,maskPath:mask?.localPath??null,width:image.metadata.width,height:image.metadata.height,result:image.background,provider:'comfy',providerVersion:finished.providerSnapshot?.packageVersion??'0.1.0',modelVersion:null});
+        if(!image || image.kind !== 'image')throw new Error('抠图输出缺少主图');
+        const metadata = image.metadata;
+        if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata) ||
+          typeof metadata.width !== 'number' || typeof metadata.height !== 'number' || !image.background) {
+          throw new Error('抠图输出缺少主图尺寸或背景状态');
+        }
+        return ok({imagePath:image.localPath,maskPath:mask?.localPath??null,width:metadata.width,height:metadata.height,result:image.background,provider:'comfy',providerVersion:finished.providerSnapshot?.packageVersion??'0.1.0',modelVersion:null});
       } finally {signal?.removeEventListener('abort',abort);}
-    } catch(error){return fail('COMFY_MATTING',error.message,'M10');}
+    } catch(error){return fail('COMFY_MATTING',error instanceof Error ? error.message : String(error),'M10');}
   }
-  async prepareOperation(input, collaboration) {
-    const ctx=await this.current(), usage=input.usage??'script';
-    const chosen={};
-    for(const key of ['recipe','productionRecipe','parameterPreset'])if(input[key]){
+  async prepareOperation(input: OperationInput, collaboration?: CollaborationContext) {
+    const ctx=await this.current(), usage=RecipeUsageSchema.parse(input.usage??'script');
+    const chosen: Partial<Record<'recipe' | 'productionRecipe' | 'parameterPreset', CreationRecipe>> = {};
+    for(const key of ['recipe','productionRecipe','parameterPreset'] as const)if(input[key]){
       const selected=input[key],recipe=await ctx.recipes.getRecipe(selected.id,selected.scope);
       if(!recipe||recipe.revision!==selected.revision)throw new Error('The selected recipe revision changed. Read the recipe catalog and prepare a new plan.');
       if(!recipe.uses.includes(usage))throw new Error('The selected recipe does not support this usage.');
-      if(key==='recipe'&&(recipe.production||recipe.parameterPreset||!recipe.purposes.includes(selected.purpose)||selected.purpose!==input.operation))throw new Error('Choose a text recipe for this exact operation and purpose.');
+      if(key==='recipe'&&(recipe.production||recipe.parameterPreset||!input.recipe || !recipe.purposes.includes(input.recipe.purpose)||input.recipe.purpose!==input.operation))throw new Error('Choose a text recipe for this exact operation and purpose.');
       if(key==='productionRecipe'&&(!recipe.production||recipe.production.operation!==input.operation))throw new Error('Choose a production recipe for this exact operation.');
       if(key==='parameterPreset'&&!recipe.parameterPreset)throw new Error('Choose an actual parameter preset.');
       chosen[key]=recipe;
     }
-    const target={sceneId:null,statementId:null,characterId:null,locale:null,uiScope:null,usage,...input.target};
-    const variant={operation:input.operation,target,fields:input.fields??{},explicitFields:Object.keys(input.fields??{}),context:input.context??[],connectionId:input.connectionId,workflowBindingId:input.workflowId??null,model:input.model??null,
+    const target=ProductionTargetSchema.parse({sceneId:null,statementId:null,characterId:null,locale:null,uiScope:null,usage,...input.target});
+    const variant: FormVariant={operation:ProductionOperationDefinitionSchema.shape.id.parse(input.operation),target,fields:input.fields??{},explicitFields:Object.keys(input.fields??{}),context:input.context??[],connectionId:input.connectionId,workflowBindingId:input.workflowId??null,model:input.model??null,
       recipe:input.recipe?{recipeId:input.recipe.id,scope:input.recipe.scope,purpose:input.recipe.purpose,usage,parameterValues:input.recipe.parameterValues}:null,productionRecipeId:input.productionRecipe?.id??null,parameterPresetId:input.parameterPreset?.id??null,parameterOverrides:input.parameterOverrides??{},promptPreparation:null,backgroundRemoval:null,backgroundPreview:null,sourceVersions:[]};
-    const draft={schemaVersion:1,id:createId(),projectId:ctx.project.projectId,revision:1,activeUse:usage,variants:{[usage]:variant},updatedAt:new Date().toISOString(),submittedTaskId:null};
+    const draft: ProductionFormDraft={schemaVersion:1,id:createId(),projectId:ctx.project.projectId,revision:1,activeUse:usage,variants:{[usage]:variant},updatedAt:new Date().toISOString(),submittedTaskId:null};
     const item=await this.createItem(ctx,draft,variant);
     if(input.sourceVersions) {
       const versions = new Map(item.sourceVersions.map(version => [version.ref.id, version]));
@@ -493,25 +636,33 @@ export class StudioProduction {
     return ctx.service.planTask({projectId:ctx.project.projectId,name:input.name??'制作',context:variant.context,items:[item],policy:'waitForSelection',selectionRule:null,
       stagePolicy:collaboration?'external':'interactive',collaboration,externalCallId:collaboration?`${collaboration.sessionId}-${collaboration.callId}`:undefined});
   }
-  async inspectOperationConnection(input) {
-    const project=this.projects.currentSession,operation=new ProductionOperationCatalog((await this.generationProviders.operations(project)).filter(operation=>operation.provider)).resolve(input.operation);
+  async inspectOperationConnection(input: Pick<OperationInput, 'operation' | 'connectionId' | 'workflowId' | 'usage'>) {
+    const project=this.projects.currentSession,operation=new ProductionOperationCatalog((await this.generationProviders?.operations?.(project) ?? []).filter(operation=>operation.provider)).resolve(input.operation);
     const stored=await this.connections.read(input.connectionId);if(!stored)return fail('CONNECTION_MISSING','Select an existing connection.','M10');
-    const config=structuredClone(stored.config),purpose=operation.definition.purpose;
+    const config=structuredClone(stored.config),purpose=PurposeSchema.parse(operation.definition.purpose);
     if(!operationSupportsConnection(operation,config,purpose))return fail('PURPOSE_UNSUPPORTED','The selected connection does not support this operation.','M10');
     config.purposes=[...new Set([...config.purposes,purpose])];
-    let workflow=operation.definition.workflow??null;
+    let workflow=operationWorkflow(operation);
     if(input.workflowId){
-      const saved=await readFile(join(this.userData,'connections/workflows',`${IdSchema.parse(input.workflowId)}.json`),'utf8').then(JSON.parse).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+      const saved=await readFile(join(this.userData,'connections/workflows',`${IdSchema.parse(input.workflowId)}.json`),'utf8').then(raw => JSON.parse(raw) as WorkflowBinding).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
       workflow=saved??(workflow?.id===input.workflowId?workflow:null);
     }
     config.workflowBindingId=workflow?.id??null;
-    const description=config.providerKey?await this.generationProviders.describe(config.providerKey,project):null,lease=await this.acquireAdapter(config,description,project);
+    const description=config.providerKey?await this.generationProviders?.describe(config.providerKey,project):null,lease=await this.acquireAdapter(config,description,project);
     let report;try{report=await lease.adapter.inspect(config,purpose);}finally{await lease.release();}
-    let mapping=ok(undefined);
-    if(config.protocol==='comfyUI')mapping=!workflow?fail('WORKFLOW_MISSING','Select a saved workflow or an operation template.','M10'):!workflowSupportsPurpose(workflow,purpose,input.usage)?fail('WORKFLOW_PURPOSE','The workflow does not support the selected purpose or image use.','M10'):await this.adapter.checkWorkflow(config,workflow);
+    const imageUsage = input.usage === 'difference' ? imageUsageFor(input.usage) : ImageUsageSchema.safeParse(input.usage).data;
+    let mapping: Result<void> = ok(undefined);
+    if (config.protocol === 'comfyUI') {
+      if (!workflow) mapping = fail('WORKFLOW_MISSING', 'Select a saved workflow or an operation template.', 'M10');
+      else if (!workflowSupportsPurpose(workflow, purpose, imageUsage)) mapping = fail('WORKFLOW_PURPOSE', 'The workflow does not support the selected purpose or image use.', 'M10');
+      else if (purpose === 'image' && input.usage === 'difference' && !workflowMapsMainImage(workflow)) mapping = fail('WORKFLOW_REFERENCE_REQUIRED', 'Choose a workflow that maps and uploads the main reference image.', 'M10');
+      else mapping = await this.adapter.checkWorkflow(config, workflow);
+    }
     return ok({connection:{id:config.id,name:config.name,revision:config.revision},workflow:workflow?{id:workflow.id,revision:workflow.revision}:null,reachable:report.status==='unavailable'?'failed':'passed',mapping:mapping.ok?'passed':'failed',checkedAt:report.checkedAt,capabilities:report,issues:[...report.issues,...(mapping.ok?[]:mapping.issues)],trial:'notRun'});
   }
-  async call(method, input) {
+  call<M extends keyof ProductionInvocation>(method: M, ...args: IpcArgs<ProductionInvocation[M]>): IpcReturn<ProductionInvocation[M]>;
+  call<M extends HostMethod>(method: M, ...args: HostArguments[M]): HostReturn<M>;
+  async call(...[method, input]: Invocation): Promise<Result<unknown>> {
     const ctx = await this.current(),
       { service, project, recipes, ui } = ctx;
     switch (method) {
@@ -526,14 +677,14 @@ export class StudioProduction {
       case 'frozen': {
         const task = service.listTasks().find(task => task.id === input.taskId);
         if (!task) return fail('TASK_MISSING', 'The production task does not exist in the current project.', 'M10');
-        return ok(frozenProductionTask(task, input.itemId, task.items.flatMap(item => item.candidateIds.map(id => service.getCandidate(id))).filter(Boolean)));
+        return ok(frozenProductionTask(task, input.itemId, task.items.flatMap(item => item.candidateIds.map(id => service.getCandidate(id))).filter(candidate => candidate !== null)));
       }
       case 'defaults': {
         const workflows = [];
-        for (const file of await files(join(this.userData, 'connections/workflows'))) if (file.endsWith('.json')) workflows.push(await service.store.read(join(this.userData, 'connections/workflows', file)));
-        return ok(effectiveProductionDefaults({ ...input, connections: await this.connections.list(), workflows: workflows.filter(Boolean), recipes: await recipes.listRecipes(),
-          imageRoutes: await service.store.read(join(this.userData, 'connections/image-routes.json')) ?? {},
-          defaults: await service.store.read(join(this.userData, 'connections/usage-defaults.json')) ?? {} }));
+        for (const file of await files(join(this.userData, 'connections/workflows'))) if (file.endsWith('.json')) workflows.push(await service.store.read<WorkflowBinding>(join(this.userData, 'connections/workflows', file)));
+        return ok(effectiveProductionDefaults({ ...input, connections: await this.connections.list(), workflows: workflows.filter(workflow => workflow !== null), recipes: await recipes.listRecipes(),
+          imageRoutes: await service.store.read<ImageGenerationRoutes>(join(this.userData, 'connections/image-routes.json')) ?? {},
+          defaults: await service.store.read<Parameters<typeof effectiveProductionDefaults>[0]['defaults']>(join(this.userData, 'connections/usage-defaults.json')) ?? {} }));
       }
       case 'planOperation': return this.prepareOperation(input);
       case 'authorizeStage': return service.authorizeStage(input.taskId,input.itemId);
@@ -554,8 +705,8 @@ export class StudioProduction {
       case 'connections':
         return ok(await this.connections.list());
       case 'providers': {
-        const warnings = [], providers = await this.generationProviders?.list?.(project, { onIssue: issue => warnings.push(issue) }) ?? [];
-        return { ...ok(providers), warnings };
+        const warnings: Issue[] = [], providers = await this.generationProviders?.list?.(project, { onIssue: issue => warnings.push(issue) }) ?? [];
+        return { ok: true, value: providers, warnings };
       }
       case 'connectionCapabilities': {
         const config = (await this.connections.read(input.connectionId))?.config;
@@ -566,7 +717,7 @@ export class StudioProduction {
       case 'saveDefaults': {
         const connections = await this.connections.list();
         for (const [purpose, id] of Object.entries(input.connections ?? {})) {
-          if (!['text', 'speech', 'music', 'difference', 'matting'].includes(purpose) || !connections.some(connection => connection.id === id && connection.purposes.includes(purpose))) throw new Error('默认连接与用途不匹配');
+          if (!['text', 'speech', 'music', 'difference', 'matting'].includes(purpose) || !connections.some(connection => connection.id === id && connection.purposes.some(value => value === purpose))) throw new Error('默认连接与用途不匹配');
         }
         await service.store.write(join(this.userData, 'connections/usage-defaults.json'), input);
         return ok(input);
@@ -576,18 +727,26 @@ export class StudioProduction {
           return fail('CONNECTION_ACTIVE', '请先完成或取消使用此连接的制作任务，再删除连接');
         await this.connections.remove(input);
         for (const name of ['image-routes.json', 'usage-defaults.json']) {
-          const path = join(this.userData, 'connections', name), stored = await service.store.read(path);
-          if (!stored) continue;
-          if (name === 'image-routes.json') { for (const [usage, route] of Object.entries(stored)) if (route.connectionId === input) delete stored[usage]; }
-          else { for (const [purpose, id] of Object.entries(stored.connections ?? {})) if (id === input) delete stored.connections[purpose]; }
-          await service.store.write(path, stored);
+          const path = join(this.userData, 'connections', name);
+          if (name === 'image-routes.json') {
+            const stored = await service.store.read<ImageGenerationRoutes>(path);
+            if (!stored) continue;
+            for (const usage of ImageUsageSchema.options) if (stored[usage]?.connectionId === input) delete stored[usage];
+            await service.store.write(path, stored);
+          } else {
+            const stored = await service.store.read<ConnectionDefaults>(path);
+            if (!stored) continue;
+            for (const [purpose, id] of Object.entries(stored.connections ?? {})) if (id === input) delete stored.connections[purpose as Purpose];
+            await service.store.write(path, stored);
+          }
         }
         for (const projectId of await files(join(this.userData, 'task-drafts'))) for (const file of await files(join(this.userData, 'task-drafts', projectId))) {
           if (!file.endsWith('.json')) continue;
-          const path = join(this.userData, 'task-drafts', projectId, file), draft = await service.store.read(path);
+          const path = join(this.userData, 'task-drafts', projectId, file), draft = await service.store.read<ProductionFormDraft>(path);
           if (!draft || draft.submittedTaskId) continue;
           let changed = false;
           for (const variant of Object.values(draft.variants)) {
+            if (!variant) continue;
             if (variant.connectionId === input) { variant.connectionId = null; changed = true; }
             if (variant.fields.promptConnectionId === input) { variant.fields.promptConnectionId = null; changed = true; }
           }
@@ -602,6 +761,7 @@ export class StudioProduction {
         if (task.items.some(item => ['queued', 'blocked', 'submitting', 'running', 'fetching'].includes(item.state))) throw new Error('请等待当前轮完成后继续');
         const text = await candidateText(candidate);
         const item = continueConversation(original, candidate, text, input);
+        if (!item.configSnapshot || !original.configSnapshot) throw new Error('原任务没有可继续的连接');
         const connection = await this.connections.read(item.configSnapshot.id);
         if (!connection) throw new Error('原连接已删除，请为新制作选择连接');
         item.configSnapshot = { ...connection.config, model: original.configSnapshot.model };
@@ -609,8 +769,11 @@ export class StudioProduction {
           const current = this.scriptCompileInput(project), document = current.documents.find(document => document.sceneId === item.target.sceneId);
           if (!document) throw new Error('目标场景不存在');
           const present = new Map(parse(document).cst.filter(node => node.id).map(node => [node.id, node]));
-          const originalNodes = parse({ documentId: document.documentId, revision: document.revision, text }).cst.filter(node => node.id);
-          if (originalNodes.some(node => !present.has(node.id) || present.get(node.id).command !== node.command || !isDeepStrictEqual(present.get(node.id).object?.value, node.object?.value))) throw new Error('已采用剧情已在编辑器中修改，请从当前场景新建制作以带入最新内容');
+          const originalNodes = parse({ documentId: document.documentId, revision: document.revision, text }).cst.flatMap(node => node.id ? [{ ...node, id: node.id }] : []);
+          if (originalNodes.some(node => {
+            const current = present.get(node.id);
+            return !current || current.command !== node.command || !isDeepStrictEqual(current.object?.value, node.object?.value);
+          })) throw new Error('已采用剧情已在编辑器中修改，请从当前场景新建制作以带入最新内容');
           const adopted = originalNodes.map(node => node.id);
           if (!adopted.length) throw new Error('已采用内容的位置发生变化，请从当前场景新建制作');
           item.target.replaceStatementIds = adopted;
@@ -645,21 +808,23 @@ export class StudioProduction {
       case 'saveImageRoutes': {
         const routes = input;
         for (const [usage, route] of Object.entries(routes)) {
-          if (!['background', 'figure', 'cg', 'ui'].includes(usage) || !route || typeof route.model !== 'string') throw new Error('图像默认用途配置无效');
+          const imageUsage = ImageUsageSchema.safeParse(usage);
+          if (!imageUsage.success || !route || typeof route.model !== 'string') throw new Error('图像默认用途配置无效');
           const connection = (await this.connections.list()).find(config => config.id === IdSchema.parse(route.connectionId));
           if (!connection?.purposes.includes('image')) throw new Error('图像默认连接不支持图像生成');
           if (connection.protocol === 'comfyUI') {
-            const binding = route.workflowBindingId && await service.store.read(join(this.userData, 'connections/workflows', `${IdSchema.parse(route.workflowBindingId)}.json`));
-            if (!binding || !workflowSupportsPurpose(binding, 'image', usage)) throw new Error('默认工作流与图像用途不匹配');
+            const binding = route.workflowBindingId && await service.store.read<WorkflowBinding>(join(this.userData, 'connections/workflows', `${IdSchema.parse(route.workflowBindingId)}.json`));
+            if (!binding || !workflowSupportsPurpose(binding, 'image', imageUsage.data)) throw new Error('默认工作流与图像用途不匹配');
           }
         }
         await service.store.write(join(this.userData, 'connections/image-routes.json'), routes);
         return ok(routes);
       }
       case "overview": {
-        const warnings = [], catalogOptions = { onIssue: issue => warnings.push(issue) };
+        const warnings: Issue[] = [], catalogOptions: CatalogOptions = { onIssue: issue => warnings.push(issue) };
         const taskSummaries = input ? service.listTaskSummaries() : undefined;
-        const selectedTask = input ? service.getTask(input.taskId ?? taskSummaries.at(-1)?.id) : null;
+        const selectedTaskId = input ? input.taskId ?? taskSummaries?.at(-1)?.id : undefined;
+        const selectedTask = selectedTaskId ? service.getTask(selectedTaskId) : null;
         const tasks = input ? (selectedTask ? [selectedTask] : []) : service.listTasks(),
           drafts = [];
         for (const file of await files(
@@ -686,7 +851,7 @@ export class StudioProduction {
               ),
             );
         const current = this.compileInput(project, true);
-        return { ...ok({
+        return { ok: true, value: {
           migrationIssues: ctx.migrationIssues,
           tasks,
           ...(input ? { taskSummaries, imageCandidates: service.listImageCandidates() } : {}),
@@ -699,14 +864,17 @@ export class StudioProduction {
               current.scenes.find((s) => s.id === d.sceneId)
                 ?.name ?? d.sceneId,
             statements: parse(d)
-              .cst.filter((n) => n.id)
-              .map((n) => ({
-                id: n.id,
-                command: n.command,
-                label: n.command === 'say' ? dialoguePlainText(DialogueContentSchema.safeParse(n.object?.value?.text).data ?? '') : String(n.object?.value?.text ?? n.command),
-                characterId: n.object?.value?.speaker?.kind === 'character' ? n.object.value.speaker.id : null,
-                silent: n.object?.value?.speaker?.kind === 'character' && current.characters.find(character => character.id === n.object.value.speaker.id)?.defaultVoicing === 'intentionalSilent',
-              })),
+              .cst.flatMap((n) => {
+                if (!n.id) return [];
+                const fields = n.object?.value as { text?: unknown; speaker?: { kind?: string; id?: string } } | undefined;
+                const characterId = fields?.speaker?.kind === 'character' ? fields.speaker.id ?? null : null;
+                return [{
+                  id: n.id, command: n.command,
+                  label: n.command === 'say' ? dialoguePlainText(DialogueContentSchema.safeParse(fields?.text).data ?? '') : String(fields?.text ?? n.command),
+                  characterId,
+                  silent: characterId !== null && current.characters.find(character => character.id === characterId)?.defaultVoicing === 'intentionalSilent',
+                }];
+              }),
           })),
           canvas: current.project.canvas,
           pages: current.template.pages.map((p) => ({
@@ -714,6 +882,7 @@ export class StudioProduction {
             documentId: p.id, revision: project.readDocument(p.id)?.revision,
             key: p.key,
             labels: Object.fromEntries(Object.entries(current.template.locales).map(([locale, messages]) => [locale, messages[p.titleKey] ?? p.key])),
+            components: components(p.root).map(component => ({ id: component.id, name: component.name || component.id })),
           })),
           characters: current.characters.map((c) => ({
             id: c.id,
@@ -727,42 +896,20 @@ export class StudioProduction {
           operations: await this.generationProviders?.operations?.(project, catalogOptions) ?? new ProductionOperationCatalog().list(),
           workflows,
           workflowDrafts: value(await this.connectionService.listWorkflowDrafts()),
-          imageRoutes: await service.store.read(join(this.userData, 'connections/image-routes.json')) ?? {},
-          defaults: await service.store.read(join(this.userData, 'connections/usage-defaults.json')) ?? { connections: {}, recipes: {} },
+          imageRoutes: await service.store.read<ImageGenerationRoutes>(join(this.userData, 'connections/image-routes.json')) ?? {},
+          defaults: await service.store.read<ConnectionDefaults>(join(this.userData, 'connections/usage-defaults.json')) ?? { connections: {}, recipes: {} },
           versions: versions(project),
           projectVersion: versions(project).find(version => project.readDocument(version.ref.id)?.files['project.json']),
           assetsVersion: versions(project).find(version => project.readDocument(version.ref.id)?.files['assets/index.json']),
-        }), warnings };
+        }, warnings };
       }
-      case "mediaInput": {
-        const asset = ctx
-            .index()
-            .data.assets.find((a) => a.id === input.assetId),
-          variant = asset?.variants.find(
-            (v) => v.id === (input.variantId ?? asset.activeVariantId),
-          );
-        if (!variant) throw new Error("参考素材不存在");
-        const file = variant.files.find((f) => f.path === variant.entry);
-        return ok({
-          assetId: asset.id,
-          variantId: variant.id,
-          candidateId: null,
-          artifactIndex: null,
-          kind: asset.kind, typeVersion: variant.typeData?.typeVersion ?? 1,
-          localPath: join(
-            ctx.root,
-            ...assetFilePath(asset.id, variant.id, variant.entry).split("/"),
-          ),
-          mime: file.mime,
-        });
-      }
+      case "mediaInput":
+        return ok(this.mediaInput(ctx, input));
       case "attachment": {
         const inspected = value(
           await inspectFile(
             input,
             this.assets.toolDirectory,
-            undefined,
-            this.assets.svgDecoder,
           ),
         );
         if (!["image/png", "image/jpeg", "image/webp"].includes(inspected.mime))
@@ -787,7 +934,7 @@ export class StudioProduction {
       case "removeTaskRecord":
         return service.removeTaskRecord(input);
       case "plan": {
-        if (Array.isArray(input.items)) {
+        if ("items" in input && Array.isArray(input.items)) {
           const proposed = structuredClone(input);
           for (const item of proposed.items) if (item.configSnapshot) {
             const current = await this.connections.read(item.configSnapshot.id);
@@ -796,6 +943,7 @@ export class StudioProduction {
           }
           return service.planTask(proposed);
         }
+        if (!("draftId" in input)) throw new Error("制作计划缺少草稿");
         const draft = value(await service.loadFormDraft(input.draftId));
         if (!draft) throw new Error('制作草稿不存在');
         const planned = await planProductionDraft(this.planningPorts(ctx), draft, input.name);
@@ -804,13 +952,13 @@ export class StudioProduction {
       }
       case "submit": {
         const planId=typeof input==='string'?input:input.planId;
-        const plan = await service.store.read(service.store.planPath(planId));
+        const plan = await service.store.read<TaskPlan>(service.store.planPath(planId));
         if (plan && !service.listTasks().some(task => task.id === plan.task.id || task.sourceDraftId && task.sourceDraftId === plan.task.sourceDraftId)) for (const item of plan.task.items) {
           if (item.configSnapshot) {
             const current = await this.connections.read(item.configSnapshot.id);
             if (!current || current.config.revision !== item.configSnapshot.revision) throw new Error('执行连接已变化，请重新检查发送计划');
           }
-          for (const frozen of [item.productionSnapshot ?? item.recipeSnapshot?.recipe, item.parameterPresetSnapshot].filter(Boolean)) { const current = await recipes.getRecipe(frozen.id, frozen.scope); if (!current || current.revision !== frozen.revision) throw new Error('制作方案或提示规则已变化，请重新检查发送计划'); }
+          for (const frozen of [item.productionSnapshot ?? item.recipeSnapshot?.recipe, item.parameterPresetSnapshot].filter(value => value != null)) { const current = await recipes.getRecipe(frozen.id, frozen.scope); if (!current || current.revision !== frozen.revision) throw new Error('制作方案或提示规则已变化，请重新检查发送计划'); }
         }
         const result = await service.submit(planId,typeof input==='string'?undefined:input.collaboration);
         if (result.ok) void service.drain().catch(() => {});
@@ -866,7 +1014,7 @@ export class StudioProduction {
       case 'previewScript': {
         const candidate = service.getCandidate(input);
         if (!candidate) throw new Error('候选不存在');
-        const item = service.listTasks().find(task => task.id === candidate.taskId)?.items.find(item => item.id === candidate.itemId);
+        const item = service.listTasks().find(task => task.id === candidate.taskId)?.items.find(item => item.id === candidate?.itemId);
         if (!item || item.target.usage !== 'script') throw new Error('此候选不是场景脚本');
         const current = this.scriptCompileInput(project), document = current.documents.find(document => document.sceneId === item.target.sceneId);
         if (!document) throw new Error('目标场景不存在');
@@ -899,13 +1047,13 @@ export class StudioProduction {
         });
       }
       case "assetReferences":
-        return ok(this.assets.referenceRecords ? await this.assets.referenceRecords(project, input) : backgroundReferences(project, input));
+        return ok(this.assets.referenceRecords ? await this.assets.referenceRecords(project, input) : legacyBackgroundReferences(project, input));
       case "saveRecipe":
         return recipes.saveRecipe(input);
       case 'deleteRecipe': {
         const result = await recipes.deleteRecipe(input);
         if (result.ok) {
-          const path = join(this.userData, 'connections/usage-defaults.json'), defaults = await service.store.read(path);
+          const path = join(this.userData, 'connections/usage-defaults.json'), defaults = await service.store.read<ConnectionDefaults>(path);
           if (defaults) { defaults.recipes = Object.fromEntries(Object.entries(defaults.recipes ?? {}).filter(([, id]) => id !== input.recipeId)); await service.store.write(path, defaults); }
         }
         return result;
@@ -923,11 +1071,12 @@ export class StudioProduction {
         if (!config || config.protocol !== 'comfyUI') return fail('CONNECTION_MISSING', '请选择 ComfyUI 连接。', 'M10');
         let historyId;
         if (input.historyTaskId) {
-          const task = service.tasks.get(input.historyTaskId);
+          const task = service.getTask(input.historyTaskId);
           const item = task?.items.find(item => item.remote && item.configSnapshot?.id === config.id && item.workflowSnapshot?.id === input.workflow.id);
-          if (!item) return fail('WORKFLOW_HISTORY_MISMATCH', '此任务没有当前工作流和连接的远端记录。', 'M10');
+          if (!item?.remote || !item.workflowSnapshot) return fail('WORKFLOW_HISTORY_MISMATCH', '此任务没有当前工作流和连接的远端记录。', 'M10');
           historyId = item.remote.id;
-          if (Object.entries(input.workflow.apiGraph).some(([id, node]) => item.workflowSnapshot.apiGraph[id]?.class_type !== node.class_type)) return fail('WORKFLOW_HISTORY_MISMATCH', '图中节点已变化，请选择对应版本的历史或仅读取节点信息。', 'M10');
+          const historicalGraph = item.workflowSnapshot.apiGraph;
+          if (Object.entries(input.workflow.apiGraph).some(([id, node]) => historicalGraph[id]?.class_type !== node.class_type)) return fail('WORKFLOW_HISTORY_MISMATCH', '图中节点已变化，请选择对应版本的历史或仅读取节点信息。', 'M10');
         }
         return this.adapter.discoverWorkflowOutputs(config, input.workflow, historyId);
       }
@@ -952,7 +1101,10 @@ export class StudioProduction {
           ...input,
           createItem: step => createUIPlanItem(this.planningPorts(ctx), {
             draft: input.draft, step, proposal: input.proposal, selectedAssets: input.selectedAssets,
-            reference: async (assetId, variantId) => service.options.prepareReference(value(await this.call('mediaInput', { assetId, variantId }))),
+            reference: async (assetId, variantId) => {
+              const media = this.mediaInput(ctx, { assetId, variantId });
+              return service.options.prepareReference ? service.options.prepareReference(media) : media;
+            },
           }),
         });
       }
@@ -963,7 +1115,7 @@ export class StudioProduction {
       }
       case "saveComposition": {
         const candidate = service.getCandidate(input.candidateId);
-        const item = service.listTasks().find(task => task.id === candidate?.taskId)?.items.find(item => item.id === candidate.itemId);
+        const item = service.listTasks().find(task => task.id === candidate?.taskId)?.items.find(item => item.id === candidate?.itemId);
         let prepared;
         try { prepared = await prepareCompositionRecord(input, {
           candidate, item,
@@ -971,13 +1123,14 @@ export class StudioProduction {
           plans: async () => {
             const plans = [];
             for (const file of await files(service.store.path('ui-plans'))) if (file.endsWith('.json')) {
-              const plan = await service.store.read(service.store.path('ui-plans', file));
-              const taskPlan = plan?.taskPlanId && await service.store.read(service.store.planPath(plan.taskPlanId));
+              const plan = await service.store.read<UIAuthoringPlan>(service.store.path('ui-plans', file));
+              if (!plan) continue;
+              const taskPlan = plan.taskPlanId ? await service.store.read<TaskPlan>(service.store.planPath(plan.taskPlanId)) : null;
               plans.push({ id: plan.id, itemIds: taskPlan?.task.items.map(item => item.id) ?? [] });
             }
             return plans;
           },
-          previous: id => service.store.read(service.store.path('compositions', `${IdSchema.parse(id)}.json`)),
+          previous: id => service.store.read<UIComposition>(service.store.path('compositions', `${IdSchema.parse(id)}.json`)),
         }); } catch (error) {
           if (error instanceof DiagnosticError) return { ok: false, error: error.issue, issues: [error.issue] };
           throw error;
@@ -989,7 +1142,7 @@ export class StudioProduction {
         return ok(composition);
       }
       case "prepareUIAdoption": {
-        let resolver;
+        let resolver: StyleMatchResolver | undefined;
         if (input.previewId) {
           const review = ctx.previewReviews.get(input.previewId);
           if (!review?.matches || review.compositionId !== input.compositionId || review.revision !== input.expectedCompositionRevision ||
@@ -997,12 +1150,13 @@ export class StudioProduction {
             !isDeepStrictEqual(review.substitutions, Object.fromEntries(input.substitutions.map(value => [value.key, value.assetId]))) ||
             !isDeepStrictEqual(review.substitutionVariants, Object.fromEntries(input.substitutions.map(({ key, assetId, variantId }) => [key, { assetId, variantId }]))) ||
             review.versions.some(version => project.readDocument(version.ref.id)?.revision !== version.revision)) return fail('UI_PREVIEW_CHANGED', '组合预览已变化，请重新预览所选组合', 'M10', ['compare']);
-          resolver = request => review.matches.get(styleMatchKey(request)) ?? null;
+          const matches = review.matches;
+          resolver = request => matches.get(styleMatchKey(request)) ?? null;
         }
         return ui.prepareUIAdoption(input, resolver);
       }
       case "previewComposition": {
-        const composition = await service.store.read(
+        const composition = await service.store.read<UIComposition>(
           service.store.path(
             "compositions",
             `${IdSchema.parse(input.id)}.json`,
@@ -1013,14 +1167,15 @@ export class StudioProduction {
         if (composition.baseVersions.some(version => project.readDocument(version.ref.id)?.revision !== version.revision)) throw new Error('页面来源版本已变化');
         const selected = compositionClosure(composition, input.keys, []);
         if (selected.some(key => !input.keys.includes(key))) throw new Error('预览须确认完整依赖闭包');
-        let review = null, resolver;
+        let review: PreviewReview | null | undefined = null;
+        let resolver: StyleMatchResolver | undefined;
         if (input.previewId) {
           review = ctx.previewReviews.get(input.previewId);
           if (!review || review.compositionId !== composition.id || review.revision !== composition.revision ||
             !isDeepStrictEqual(review.keys, input.keys) || !isDeepStrictEqual(review.substitutions, input.substitutions ?? {}) ||
             review.versions.some(version => project.readDocument(version.ref.id)?.revision !== version.revision)) throw new Error('组合预览已变化，请重新预览所选组合');
           if (!Array.isArray(input.matches) || input.matches.length !== review.pending.length) throw new Error('预览属性归属尚未完整解析');
-          const matches = new Map();
+          const matches = new Map<string, StyleTarget[]>();
           for (const match of input.matches) {
             const key = styleMatchKey(match), request = review.pending.find(value => styleMatchKey(value) === key);
             if (!request || matches.has(key) || !Array.isArray(match.targets)) throw new Error('预览属性归属与待解析声明不匹配');
@@ -1029,19 +1184,15 @@ export class StudioProduction {
           resolver = request => matches.get(styleMatchKey(request)) ?? null;
           review = { ...review, matches };
         } else if (input.matches) throw new Error('预览属性归属缺少版本绑定');
-        const assets = new Map(
-          composition.proposal.assets
-            .filter((a) => a.source.kind === "existing")
-            .map((a) => [
-              a.key,
-              {
-                ...a.source,
-                active:
-                  ctx.index().data.assets.find((v) => v.id === a.source.assetId)
-                    ?.activeVariantId === a.source.variantId,
-              },
-            ]),
-        );
+        const assets: Parameters<typeof prepareComposition>[0]['assets'] = new Map();
+        for (const asset of composition.proposal.assets) {
+          const { source } = asset;
+          if (source.kind !== 'existing') continue;
+          assets.set(asset.key, {
+            ...source,
+            active: ctx.index().data.assets.find(value => value.id === source.assetId)?.activeVariantId === source.variantId,
+          });
+        }
         for (const [key, assetId] of Object.entries(
           input.substitutions ?? {},
         )) {
@@ -1053,7 +1204,7 @@ export class StudioProduction {
             active: true,
           });
         }
-        const previewAssets = [],
+        const previewAssets: ResolvedAsset[] = [],
           locations = [];
         for (const resource of composition.resources.filter(
           (r) => input.keys.includes(r.key) && !input.substitutions?.[r.key],
@@ -1071,8 +1222,6 @@ export class StudioProduction {
             await inspectFile(
               artifact.localPath,
               this.assets.toolDirectory,
-              undefined,
-              this.assets.svgDecoder,
             ),
           );
           const assetId = candidate.id,
@@ -1129,7 +1278,7 @@ export class StudioProduction {
                   (!variant || a.variants.some((v) => v.id === variant)),
               ),
         });
-        const styles = Object.assign(
+        const styles: Record<string, string> = Object.assign(
           {},
           ...[...project.documents.values()].map((d) => d.files),
         );
@@ -1139,7 +1288,7 @@ export class StudioProduction {
         const previewId = input.previewId ?? createId();
         if (!review) review = { compositionId: composition.id, revision: composition.revision, keys: input.keys,
           substitutions: input.substitutions ?? {}, substitutionVariants: Object.fromEntries(Object.keys(input.substitutions ?? {}).map(key => {
-            const { assetId, variantId } = assets.get(key); return [key, { assetId, variantId }];
+            const { assetId, variantId } = assets.get(key)!; return [key, { assetId, variantId }];
           })), versions: versions(project), pending: prepared.unresolvedStyleMatches,
           matches: prepared.unresolvedStyleMatches.length ? null : new Map() };
         ctx.previewReviews.set(previewId, review);

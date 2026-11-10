@@ -722,7 +722,7 @@
   .production-page[data-inspector-external="true"] .production-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(100px, 150px) minmax(0, 1fr); }
   .production-page[data-inspector-external="true"] .task-sidebar { max-height: 150px; border-right: 0; border-bottom: 1px solid var(--line); }
 }
-.production-page[data-explorer-external="true"] .production-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.production-page:is([data-explorer-external="true"], [data-directory-docked="true"]) .production-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 .production-page[data-explorer-external="true"] .production-library-layout,
 .service-manager.persistent-service-manager[data-explorer-external="true"] { grid-template-columns: minmax(0, 1fr); }
 .production-explorer-host :is(.production-library-list, .connection-workspace-list) { border-right: 0; padding: 12px 8px; }
@@ -776,6 +776,20 @@
 .candidate-card > :is(img,audio), .candidate-card > .candidate-background-preview { order:-1; }
 .candidate-card > img { object-fit:contain; width:100%; max-height:clamp(180px,30dvh,320px); background:var(--workbench-explorer); }
 .candidate-card > .candidate-select { order:-2; }
+.whole-figure-comparison { display: grid; gap: 8px; min-width: 0; }
+.whole-figure-images { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 164px), 1fr)); gap: 8px; }
+.whole-figure-images figure { margin: 0; min-width: 0; display: grid; grid-template-rows: subgrid; grid-row: span 2; }
+.whole-figure-images figcaption { display: grid; align-content: start; overflow-wrap: anywhere; }
+.whole-figure-images figcaption span { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.whole-figure-image {
+  min-height: 100px;
+  display: grid;
+  place-content: center;
+  background: repeating-conic-gradient(var(--workbench-explorer) 0% 25%, color-mix(in srgb, var(--workbench-explorer), var(--border) 45%) 0% 50%) 0 0 / 16px 16px;
+}
+.candidate-card .whole-figure-image img { width: 100%; max-height: clamp(160px, 32dvh, 360px); object-fit: contain; background: transparent; }
+.candidate-grid:has(.whole-figure-comparison) { grid-template-columns: minmax(0, 1fr); }
+.whole-figure-comparison details p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .production-explorer-sections .production-global-search { width: 100%; margin-top: 12px; }
 .production-section-select { min-width: 150px; max-width: 230px; }
 .preset-action-separator { width: 1px; align-self: stretch; margin: 3px 8px; background: var(--border); }

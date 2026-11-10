@@ -94,10 +94,11 @@ function AvatarPreview({ difference, assets, resources, locale }: { difference: 
   const label = t('共同差分头像预览', 'Shared difference portrait preview', '共通差分のアバタープレビュー');
   return <figure className="shared-difference-portrait"><canvas ref={canvas} width={300} height={300} aria-label={label} /><figcaption>{label}</figcaption>{error && <p role="status">{error}</p>}</figure>;
 }
-export function SharedDifferencesEditor({ value, initialId, change, assets, locale, disabled, resources, previewAsset, removeDifference, persistedIds, selectedId, onSelect }: {
+export function SharedDifferencesEditor({ value, initialId, change, assets, locale, disabled, resources, previewAsset, produceDifference, removeDifference, persistedIds, selectedId, onSelect }: {
   value: CharacterDifference[]; initialId: Id | null; change(value: CharacterDifference[], initialId: Id | null): void;
   assets: Asset[]; locale: string; disabled?: boolean; resources?: DifferenceResources;
   previewAsset?(id: Id, variantId?: Id): void; removeDifference?(id: Id, replacementId?: Id): Promise<void>;
+  produceDifference?(differenceId: Id, assetId: Id, variantId: Id): void;
   persistedIds?: readonly Id[]; selectedId?: Id; onSelect?(id: Id): void;
 }) {
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
@@ -107,6 +108,8 @@ export function SharedDifferencesEditor({ value, initialId, change, assets, loca
   const [removing, setRemoving] = useState(false);
   const difference = value.find(item => item.id === (selectedId ?? localId)) ?? value.find(item => item.id === initialId) ?? value[0];
   const images = assets.filter(asset => asset.kind === 'image');
+  const referenceAsset = images.find(asset => asset.id === difference?.figure.assetId);
+  const referenceVersion = referenceAsset?.variants.find(variant => variant.id === (difference?.figure.variantId ?? referenceAsset.activeVariantId));
   const availableImage = images.find(asset => asset.variants.some(variant => variant.id === asset.activeVariantId));
   const blocked = disabled || removing;
   const persisted = !!removeDifference && !!difference && (persistedIds?.includes(difference.id) ?? true);
@@ -174,6 +177,7 @@ export function SharedDifferencesEditor({ value, initialId, change, assets, loca
           {difference.id === initialId ? <span className="shared-difference-hint">{t('新会话初始差分', 'Initial difference for new sessions', '開始時の差分')}</span>
             : <Button disabled={blocked} onClick={() => change(value, difference.id)}>{t('设为新会话初始差分', 'Set as initial difference', '開始時の差分にする')}</Button>}
           {previewAsset && <Button disabled={blocked || !images.some(asset => asset.id === difference.figure.assetId && (!difference.figure.variantId || asset.variants.some(variant => variant.id === difference.figure.variantId)))} onClick={() => previewAsset(difference.figure.assetId, difference.figure.variantId ?? undefined)}>{t('查看源图', 'View source', '元画像を表示')}</Button>}
+          {produceDifference && referenceAsset && referenceVersion && <Button disabled={blocked} onClick={() => produceDifference(difference.id, referenceAsset.id, referenceVersion.id)}>{t('制作整图差分', 'Create figure variation', '全身差分を制作')}</Button>}
         </div>
         {assetField(t('立绘源图', 'Figure source', '立ち絵の元画像'), t('立绘版本', 'Figure version', '立ち絵のバージョン'), difference.figure, figure => update({ figure }))}
         <Field label={portraitLabel}><Choice label={portraitLabel} disabled={blocked} value={avatar?.kind ?? 'default'} options={[

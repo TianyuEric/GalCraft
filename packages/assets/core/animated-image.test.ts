@@ -19,9 +19,21 @@ describe('real animated image metadata', () => {
     const path = join(directory, `fixture.${format}`); await writeFile(path, bytes);
     const inspected = await inspectFile(path, '');
     expect(inspected.ok).toBe(true); if (!inspected.ok) throw inspected.error;
-    expect(inspected.value.metadata).toMatchObject({ width: 4, height: 4, durationSec: .23,
+    expect(inspected.value.metadata).toMatchObject({ width: 4, height: 4, durationSec: .23, hasTransparency: false,
       imageAnimation: { format, frameDurationsMs: [40, 120, 70], sourceLoopCount: 0 } });
     await writeFile(path, 'invalid bytes');
     expect((await inspectFile(path, '')).ok).toBe(false);
+  });
+
+  it('reports partial transparency in a still WebP', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'galcraft-webp-alpha-')); directories.push(directory);
+    const path = join(directory, 'fixture.webp');
+    await sharp(Buffer.from([255, 0, 0, 255, 0, 255, 0, 80]), {
+      raw: { width: 2, height: 1, channels: 4 },
+    }).webp({ lossless: true }).toFile(path);
+    const inspected = await inspectFile(path, '');
+    expect(inspected.ok).toBe(true); if (!inspected.ok) throw inspected.error;
+    expect(inspected.value.metadata).toMatchObject({ width: 2, height: 1, hasAlpha: true, hasTransparency: true });
+    expect(inspected.value.metadata.imageAnimation).toBeUndefined();
   });
 });

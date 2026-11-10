@@ -11,7 +11,7 @@ import { StudioBuilds } from './build-providers.mjs';
 import { PluginDocuments } from './plugin-documents.mjs';
 import { StudioPluginPackages } from './plugin-packages.mjs';
 import { pluginDocumentReferences, pluginServicePorts } from './plugin-service-ports.mjs';
-import { StudioProduction } from './production-providers.mjs';
+import { StudioProduction } from './production-providers.mts';
 
 const root = resolve(import.meta.dirname, '../../../tmp/testing/plugin-missing-packages');
 const shapeId = 'org.test.geometry', kind = `${shapeId}/shape`, generatorId = 'org.test.generator', operationId = `${generatorId}/generate`;

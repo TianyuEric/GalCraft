@@ -7,7 +7,7 @@ import { ensureProjectFixture } from './project-fixture.mjs';
 
 export const Adoption = { figure: 'AdpFA1', chibi: 'AdpFA2', illustration: 'AdpIA1', other: 'AdpIA2',
   backgroundStatement: 'AdpB01', figureStatement: 'AdpF01', chibiStatement: 'AdpF02',
-  illustrationStatement: 'AdpI01', otherStatement: 'AdpI02', differenceStatement: 'AdpD01', sayStatement: 'AdpS01' };
+  illustrationStatement: 'AdpI01', otherStatement: 'AdpI02', differenceStatement: 'AdpD01', sayStatement: 'AdpS01', nextSayStatement: 'AdpS02' };
 
 /** Authored geometry and tone only; no downloaded assets, personal cache or generation service. */
 export async function writeAdoptionMedia(directory) {
@@ -58,6 +58,7 @@ export async function ensureAdoptionFixture(directory) {
     command('changeIllustration', { objectId: Adoption.other, assetId: asset.id, effects: { x: -300, z: 6 } }, Adoption.otherStatement),
     command('changeIllustrationDiff', { objectId: Adoption.illustration, stateName: 'bright' }, Adoption.differenceStatement),
     command('say', { speaker: { kind: 'narrator' }, text: 'Adoption：独立插图、精确对象替换与真实采用验收。' }, Adoption.sayStatement),
+    command('say', { speaker: { kind: 'narrator' }, text: '下一句保留独立对白身份。' }, Adoption.nextSayStatement),
     command('end', { target: { kind: 'title' } }),
   ].join('\n') + '\n';
   const expected = [{ ref: { kind: 'document', id: first.documentId }, revision: first.revision }];
