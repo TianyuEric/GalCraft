@@ -91,7 +91,7 @@ export async function populatePracticeProject(documents, assets, directory = joi
       { id: createId(), name: expressionNames[expression], figure: { assetId: asset(filename), variantId: variants.get(asset(filename)) },
         avatar: { kind: 'crop', crop: crop(person.key) } }])) }));
   const expansion = await practiceExpansion({ documents, plugins, directory, manifest, asset, characters, project, command });
-  const narration = text => command('say', { speaker: { kind: 'narrator' }, text });
+  const narration = (text, events) => command('say', { speaker: { kind: 'narrator' }, text, events });
   const playerSay = text => command('say', { speaker: { kind: 'character', id: playerId }, text, avatarMode: 'hidden' });
   const say = (person, number, text) => {
     const line = frozen.lines.find(line => line.key === `${person.key}-ja-${String(number).padStart(2, '0')}`);
@@ -122,6 +122,7 @@ export async function populatePracticeProject(documents, assets, directory = joi
   const backgroundAnimationId = createId(), breathId = createId(), moveId = createId(), rainSoundId = createId(), bellSoundId = createId();
   const wait = durationMs => command('wait', { durationMs });
   const [deepseek, chatgpt, claude] = characters;
+  const shelterLine = '我们挤在檐下，护住最后一卷胶片。';
 
   const opening = [video('opening'), bg('street'), music(0), decoration('petals'), animate(backgroundAnimationId, { kind: 'object', id: backgroundId }, 'sway', { durationMs: 6000, amplitude: 14, cycles: 1, loop: true }),
     narration('我回到旧城时，春风正把花瓣吹进巷口。春灯放映馆门前贴着一张通知：明日起，停止营业。'),
@@ -155,7 +156,11 @@ export async function populatePracticeProject(documents, assets, directory = joi
     command('playEffect', { op: 'stop', soundId: rainSoundId, fadeOutMs: 350 }), wait(6000),
     clearDecoration('rain'), bg('sky'), narration('雨声停了，檐下的铃还在轻响。夕阳从云缝里照出来，而距离开场，只剩最后一个小时。'),
     bg('shop'), ...characters.map((person, i) => command('setTransform', { target: target(person), effects: { x: i === 0 ? 290 : i === 2 ? -290 : 0, z: i }, durationMs: 400, cross: true })),
-    narration('我们挤在檐下，护住最后一卷胶片。绯书从身后探出头，又抱着盒子绕到前面。'), command('setTransform', { target: target(claude), effects: { z: 5 }, durationMs: 0 }),
+    narration(`${shelterLine}绯书从身后探出头，又抱着盒子绕到前面。`, [
+      { id: createId(), offset: shelterLine.length, kind: 'wait', durationMs: 350 },
+      { id: createId(), offset: shelterLine.length, kind: 'expression', objectId: claude.objectId, characterId: claude.id, differenceId: claude.differences.smile.id },
+    ]),
+    command('setTransform', { target: target(claude), effects: { z: 5 }, durationMs: 0 }),
     animate(moveId, target(chatgpt), 'moveBy', { durationMs: 500, amplitude: 150 }), wait(200),
     difference(chatgpt, 'smile'), wait(300),
     narration('绮白一边挪开椅子，一边笑了起来。大家终于在狭窄的檐下找到了各自的位置。'),

@@ -1,5 +1,5 @@
 import { createId } from '@galcraft/contracts';
-import { createBasicComponent, componentDefinition } from '@galcraft/templates';
+import { createBasicComponent, componentDefinition, convertPageBinding } from '@galcraft/templates';
 
 import { compileStyle } from '@galcraft/templates/compiler';
 const walk = node => [node, ...node.children.flatMap(walk)];
@@ -103,6 +103,7 @@ export function practiceTheme(views, manifest, asset, variants) {
         const button = get(`menu.${part}`);
         if (button) Object.assign(button.normal, { color: '#15243b', background: { ...next.template.defaultVisual.background, color: '#f4d7a3', colorOpacity: .96 } });
       }
+      get('menu.settings').interactions = [convertPageBinding({ event: 'click', actions: [{ kind: 'open', page: 'settings' }] }, [], [])];
       rules.push(`${selector('title.menu')} { background: transparent; padding: 0; border: 0; }`,
         `${get('menu').children.map(component => selector(component.part)).join(', ')} { font-size: calc(28px * var(--gc-scale)); letter-spacing: .06em; justify-content: flex-start; padding-inline: 1.25em; }`,
         `${get('menu').children.map(component => `${selector(component.part)}:focus-visible`).join(', ')} { outline: 2px solid #f4d7a3; outline-offset: 3px; }`);
