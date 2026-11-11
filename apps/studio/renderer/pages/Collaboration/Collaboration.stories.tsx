@@ -43,16 +43,28 @@ function fixture(scenario:string):CollaborationBridge {
     },
     writeConfiguration:async input=>{await new Promise(resolve=>setTimeout(resolve,400));if(scenario==='configuration-write-failed'&&!writeFailed){writeFailed=true;throw new Error('配置文件已变化，请重新审阅合并内容');}if(input.mode==='export')return scenario==='configuration-export-cancelled'?ok({status:'cancelled' as const,path:null}):ok({status:'written' as const,path:'D:/导出目录/助手连接配置.yml'});written.add(input.path);return ok({status:'written' as const,path:input.path});},open:()=>ok(undefined)};
 }
-function Workspace({scenario='active',theme='light',locale='zh-CN',document}:{scenario?:string;theme?:'light'|'dark';locale?:string;document?:string}) {
+function Workspace({scenario='active',theme='light',locale='zh-CN',document,central}:{scenario?:string;theme?:'light'|'dark';locale?:string;document?:string;central?:boolean}) {
   const bridge=fixture(scenario);
   localStorage.removeItem('galcraft.collaboration.codexWorkspaces');
   if(document==='service'){localStorage.setItem('galcraft.collaboration.selected','service');localStorage.setItem('galcraft.collaboration.tabs','["service"]');}
-  return <div id="app" className="authoring-shell collaboration-story" data-theme={theme} lang={locale}><div id="studio-portals" lang={locale} data-theme={theme}/><Collaboration bridge={bridge} locale={locale} initialDocument={document??(scenario==='empty'?'service':scenario.startsWith('configuration')?'configuration':'Sess01')}/></div>;
+  return <div id="app" className={`authoring-shell collaboration-story${central?' collaboration-central-story':''}`} data-theme={theme} lang={locale}><div id="studio-portals" lang={locale} data-theme={theme}/><Collaboration bridge={bridge} locale={locale}
+    projectId={central?'Proj01':undefined} initialDocument={central?'activity':document??(scenario==='empty'?'service':scenario.startsWith('configuration')?'configuration':'Sess01')}/></div>;
 }
 const meta={title:'Product/Studio/Collaboration/Collaboration',component:Workspace,parameters:{layout:'fullscreen'},tags:['autodocs']} satisfies Meta<typeof Workspace>;
 export default meta;
 type Story=StoryObj<typeof meta>;
 export const Active:Story={play:async({canvas})=>{await expect(await canvas.findByRole('heading',{name:'补写雨夜车站重逢场景'})).toBeVisible();await userEvent.click(canvas.getByRole('button',{name:'暂停协作'}));await expect(await canvas.findByRole('button',{name:'恢复协作'})).toBeVisible();}};
+export const CurrentProjectActivity: Story = {
+  args: { central: true, theme: 'dark' },
+  play: async ({ canvas }) => {
+    await userEvent.click(await canvas.findByRole('button', { name: '打开当前协作' }));
+    await expect(await canvas.findByRole('heading', { name: '补写雨夜车站重逢场景' })).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: '暂停协作' }));
+    await expect(await canvas.findByRole('button', { name: '恢复协作' })).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: '连接助手' }));
+    await expect(await canvas.findByRole('button', { name: '生成配置预览' })).toBeVisible();
+  },
+};
 export const Dark:Story={args:{theme:'dark'}};
 export const Narrow:Story={globals:{viewport:{value:'tablet',isRotated:false}},args:{scenario:'long'}};
 export const Empty:Story={args:{scenario:'empty'},play:async({canvas})=>{await userEvent.click(await canvas.findByRole('button',{name:'开启服务'}));await expect(await canvas.findByText('服务运行中')).toBeVisible();}};

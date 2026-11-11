@@ -1,0 +1,23 @@
+.project-draft-review .document-recovery-files summary > small {
+  margin-inline-start: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.project-draft-versions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 12px;
+}
+.project-draft-version { min-width: 0; }
+.project-draft-version .gc-code-block { margin: 0; }
+.project-draft-version .gc-code-block header { flex-wrap: wrap; }
+.project-draft-choices {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.project-draft-choices label { display: flex; align-items: center; gap: 8px; }
+.project-draft-choices input { accent-color: var(--primary); }

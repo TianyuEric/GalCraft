@@ -5,9 +5,10 @@ import type { PublishGuiDraft } from './Publish.js';
 export const PublishHistoryPaths = ['/data/releaseVersion', '/data/platform/steamAppId', '/data/name', '/data/display/icon', '/data/release'];
 
 export type PublishIdentityField = 'steamAppId' | 'version' | 'brandName' | 'brandIcon' | 'executableName' | 'publisher' | 'windowsSigning';
+type PublishIdentityDraft = Pick<PublishGuiDraft, PublishIdentityField | 'target'>;
 export type PublishIdentityBase=Pick<Project,'projectId'|'name'|'releaseVersion'|'release'|'platform'|'display'>;
 export function publishIdentityBase(project:Project):PublishIdentityBase{return structuredClone({projectId:project.projectId,name:project.name,releaseVersion:project.releaseVersion,release:project.release,platform:project.platform,display:project.display});}
-export function publishIdentityChanges(draft: PublishGuiDraft, project: PublishIdentityBase): PublishIdentityField[] {
+export function publishIdentityChanges(draft: PublishIdentityDraft, project: PublishIdentityBase): PublishIdentityField[] {
   const fields: [PublishIdentityField, unknown, unknown][] = [
     ['steamAppId', draft.steamAppId ?? '', project.platform.steamAppId ?? ''],
     ['version', draft.version, project.releaseVersion], ['brandName', draft.brandName, project.name],
@@ -20,7 +21,7 @@ export function publishIdentityChanges(draft: PublishGuiDraft, project: PublishI
   );
   return fields.filter(([, value, baseline]) => value !== baseline).map(([field]) => field);
 }
-export function mergePublishIdentity(base:PublishIdentityBase,draft:PublishGuiDraft,current:Project,resolution?:'draft'|'current'):{project:Project;conflicts:PublishIdentityField[]}{
+export function mergePublishIdentity(base:PublishIdentityBase,draft:PublishIdentityDraft,current:Project,resolution?:'draft'|'current'):{project:Project;conflicts:PublishIdentityField[]}{
   const project=structuredClone(current),conflicts:PublishIdentityField[]=[],changed=publishIdentityChanges(draft,base),currentChanged=publishIdentityChanges(draft,current);
   const read=(value:PublishIdentityBase,field:PublishIdentityField)=>field==='steamAppId'?value.platform.steamAppId??'':field==='version'?value.releaseVersion:field==='brandName'?value.name:field==='brandIcon'?value.display.icon??'':field==='executableName'?value.release?.executableName??'Game.exe':field==='publisher'?value.release?.publisher??'':value.release?.windowsSigning??'unsigned';
   for(const field of changed){

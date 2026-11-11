@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import type { RestoreOptions, RestorePlanSummary, RestoreReceipt, StudioBridge } from '@galcraft/contracts';
+import { useId, useRef, useState } from 'react';
+import type { Dependency, Issue, RestoreOptions, RestorePlanSummary, RestoreReceipt, StudioBridge } from '@galcraft/contracts';
 import { ArchiveRestore, Check, FolderOpen, LoaderCircle } from 'lucide-react';
 import { Button, Field } from '../../components/controls.js';
 import { Input } from '../../components/ui/input.js';
@@ -13,10 +13,21 @@ export type RestoreProjectPort = {
   projects: Pick<StudioBridge['projects'], 'chooseBackupFile' | 'chooseDirectory' | 'supplyRestoreDependency'>;
   documents: Pick<StudioBridge['documents'], 'prepareRestore' | 'checkRestore' | 'commitRestore' | 'cancelRestore'>;
 };
+
+function matchesDependency(issue: Issue, dependency: Dependency) {
+  const details = issue.details;
+  const identity = details && typeof details === 'object' && !Array.isArray(details) ? details.dependency : null;
+  if (identity && typeof identity === 'object' && !Array.isArray(identity)) {
+    return identity.kind === dependency.kind && identity.id === dependency.id && identity.version === dependency.version;
+  }
+  return dependency.kind === 'engine' && issue.code === 'ENGINE_MISSING';
+}
+
 export function RestoreProject({ locale, bridge, open, close }: { locale: StudioLocale; bridge: RestoreProjectPort; open(directory: string): Promise<boolean>; close(): void }) {
   const t = (zh: string, en: string, ja: string) => tr(locale, zh, en, ja);
   const [packagePath, setPackagePath] = useState(''), [parent, setParent] = useState(''), [name, setName] = useState('');
-  const [identity, setIdentity] = useState<RestoreOptions['identity'] | ''>('');
+  const [identity, setIdentity] = useState<RestoreOptions['identity']>('copyNew');
+  const identityName = useId();
   const [plan, setPlan] = useState<RestorePlanSummary | null>(null), [receipt, setReceipt] = useState<RestoreReceipt | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const running = useRef(false);
@@ -31,6 +42,10 @@ export function RestoreProject({ locale, bridge, open, close }: { locale: Studio
   const reset = async () => { if (plan && !receipt) unwrap(await bridge.documents.cancelRestore(plan.operationDirectory)); setPlan(null); setReceipt(null); };
   const blocked = !plan || plan.missing.some(issue => issue.severity === 'error') || plan.readiness?.editing !== 'editable';
   const readiness = receipt?.readiness ?? plan?.readiness;
+  const dependencies = (plan?.manifest?.externalDependencies ?? []).map(entry => ({
+    ...entry, issues: plan?.missing.filter(issue => matchesDependency(issue, entry.dependency)) ?? [],
+  })).sort((first, second) => Number(!!second.issues.length) - Number(!!first.issues.length));
+  const generalIssues = plan?.missing.filter(issue => !dependencies.some(dependency => dependency.issues.includes(issue))) ?? [];
   return <section className="project-restore" aria-label={t('从备份恢复作品', 'Restore project backup', 'バックアップから作品を復元')} aria-busy={busy}>
     <header><div><h2><ArchiveRestore size={18} aria-hidden="true"/>{t('从备份恢复作品', 'Restore project backup', 'バックアップから作品を復元')}</h2>
       <p>{t('恢复作品与已保存素材。备份不包含玩家存档、个人连接和凭据。', 'Restore the project and saved assets. The backup does not include player saves, personal connections or credentials.', '作品と保存済み素材を復元します。バックアップにプレイヤーのセーブ、個人接続、認証情報は含まれません。')}</p></div>
@@ -45,8 +60,8 @@ export function RestoreProject({ locale, bridge, open, close }: { locale: Studio
           <Input value={name} placeholder={t('例如：春日来信 恢复', 'e.g. Spring Letters restored', '例：春の便り 復元')} disabled={busy || !!plan} onChange={event => setName(event.target.value)}/></Field>
       </div>
       <fieldset className="restore-identity" disabled={busy || !!plan}><legend>{t('作品身份', 'Project identity', '作品の識別情報')}</legend>
-        <label><input type="radio" name="restore-identity" checked={identity === 'restoreOriginal'} onChange={() => setIdentity('restoreOriginal')}/><span><strong>{t('保留原作品身份', 'Keep original identity', '元の作品の ID を保持')}</strong><small>{t('恢复后的作品继续关联原作品的玩家资料。', 'The restored project continues to use the original project’s player data.', '復元した作品は、元の作品のプレイヤーデータを引き続き使用します。')}</small></span></label>
-        <label><input type="radio" name="restore-identity" checked={identity === 'copyNew'} onChange={() => setIdentity('copyNew')}/><span><strong>{t('创建独立副本', 'Create independent copy', '独立したコピーを作成')}</strong><small>{t('为副本建立新的作品身份，玩家资料与原作品分开。', 'Give this copy a new project identity and keep its player data separate.', 'コピーに新しい作品 ID を付け、プレイヤーデータを元の作品と分けます。')}</small></span></label>
+        <label><input type="radio" name={identityName} checked={identity === 'copyNew'} onChange={() => setIdentity('copyNew')}/><span><strong>{t('创建独立副本', 'Create independent copy', '独立したコピーを作成')}</strong><small>{t('为副本建立新的作品身份，玩家资料与原作品分开。', 'Give this copy a new project identity and keep its player data separate.', 'コピーに新しい作品 ID を付け、プレイヤーデータを元の作品と分けます。')}</small></span></label>
+        <label><input type="radio" name={identityName} checked={identity === 'restoreOriginal'} onChange={() => setIdentity('restoreOriginal')}/><span><strong>{t('保留原作品身份', 'Keep original identity', '元の作品の ID を保持')}</strong><small>{t('恢复后的作品继续关联原作品的玩家资料。', 'The restored project continues to use the original project’s player data.', '復元した作品は、元の作品のプレイヤーデータを引き続き使用します。')}</small></span></label>
       </fieldset>
     </>}
     {plan && <section className="restore-report" aria-label={t('恢复检查报告', 'Restore report', '復元チェック結果')}>
@@ -54,9 +69,25 @@ export function RestoreProject({ locale, bridge, open, close }: { locale: Studio
       <dl><dt>{t('目标目录', 'Destination', '復元先')}</dt><dd>{plan.destination}</dd><dt>{t('身份策略', 'Identity', '識別情報')}</dt><dd>{plan.options.identity === 'copyNew' ? t('独立副本', 'Independent copy', '独立したコピー') : t('保留原作品身份', 'Keep original identity', '元の作品の ID を保持')}</dd></dl>
       {!receipt && <>
         <p role="status">{blocked ? t('先补齐下列缺项，再重新检查。目标作品尚未写入。', 'Resolve the issues below, then check again. The destination has not been installed.', '不足項目を補って再チェックしてください。復元先にはまだ書き込んでいません。') : t('检查已通过，可以确认恢复。', 'Checks passed. Ready to confirm restoration.', 'チェック完了。復元を確定できます。')}</p>
-        {plan.missing.map((issue, index) => <IssueNotice key={index} issue={issue} locale={locale}/>)}
+        {generalIssues.map((issue, index) => <IssueNotice key={index} issue={issue} locale={locale}/>)}
         <details open={blocked}><summary>{t('精确依赖与本地补齐', 'Exact dependencies and local import', '依存パッケージとローカル読み込み')}</summary>
-          <ul className="restore-dependencies">{plan.manifest?.externalDependencies.map(({ dependency, included, reason, instructions, sourceUrl }) => <li key={`${dependency.kind}:${dependency.id}`}><div><strong>{dependency.id}@{dependency.version}</strong><span>{included ? t('备份已携带', 'Included in backup', 'バックアップに同梱') : reason}</span><small>{instructions}</small></div><div className="gc-actions">{sourceUrl && <a href={sourceUrl} target="_blank" rel="noreferrer">{t('来源说明', 'Source', '入手先')}</a>}<Button disabled={busy} onClick={() => void run(async () => { const next = unwrap(await bridge.projects.supplyRestoreDependency({ operationDirectory: plan.operationDirectory, kind: dependency.kind, id: dependency.id, version: dependency.version })); if (next) setPlan(next); })}>{t('导入本地目录', 'Import local folder', 'ローカルフォルダーを読み込む')}</Button></div></li>)}</ul>
+          <ul className="restore-dependencies">{dependencies.map(({ dependency, included, reason, instructions, sourceUrl, issues }, index) => {
+            const canSupply = dependency.kind === 'engine' ? issues.some(issue => issue.actions.includes('supplyDependency'))
+              : dependency.kind === 'plugin' && issues.some(issue => issue.severity === 'error');
+            const kind = dependency.kind === 'engine' ? t('引擎', 'Engine', 'エンジン') : dependency.kind === 'template' ? t('模板', 'Template', 'テンプレート') : t('插件', 'Plugin', 'プラグイン');
+            const descriptionId = `${identityName}-dependency-${index}`;
+            return <li key={`${dependency.kind}:${dependency.id}:${dependency.version}`}>
+              <div><strong id={descriptionId}>{kind} · {dependency.id}@{dependency.version}</strong><span>{included ? t('备份已携带', 'Included in backup', 'バックアップに同梱') : reason}</span><small>{instructions}</small>
+                {issues.map((issue, index) => <IssueNotice key={index} issue={issue} locale={locale}/>)}</div>
+              {(sourceUrl || canSupply) && <div className="gc-actions">
+                {sourceUrl && <a href={sourceUrl} target="_blank" rel="noreferrer">{t('来源说明', 'Source', '入手先')}</a>}
+                {canSupply && <Button disabled={busy} aria-describedby={descriptionId} onClick={() => void run(async () => {
+                  const next = unwrap(await bridge.projects.supplyRestoreDependency({ operationDirectory: plan.operationDirectory, kind: dependency.kind, id: dependency.id, version: dependency.version }));
+                  if (next) setPlan(next);
+                })}>{t('导入本地目录', 'Import local folder', 'ローカルフォルダーを読み込む')}</Button>}
+              </div>}
+            </li>;
+          })}</ul>
         </details>
       </>}
       {readiness && <ul className="restore-readiness"><li>{readiness.editing === 'editable' && <Check size={15}/>} {readiness.editing === 'editable' ? t('可编辑', 'Editable', '編集可能') : readiness.editing === 'readOnly' ? t('仅可读取', 'Read only', '読み取り専用') : t('编辑不可用', 'Editing unavailable', '編集不可')}</li>
@@ -66,7 +97,7 @@ export function RestoreProject({ locale, bridge, open, close }: { locale: Studio
     </section>}
     <footer>{error && <p className="project-library-error" role="alert">{error}</p>}<div className="gc-actions">
       {busy && <span role="status" className="restore-progress"><LoaderCircle size={15} className="gc-wb-spin"/>{t('正在处理…', 'Working…', '処理中…')}</span>}
-      {!plan ? <Button tone="primary" disabled={busy || !packagePath || !destination || !validName || !identity} onClick={() => void run(async () => { if (identity) setPlan(unwrap(await bridge.documents.prepareRestore({ packagePath, destination, identity, collision: 'newDirectory' }))); })}>{t('准备恢复并检查依赖', 'Prepare and check dependencies', '復元を準備して依存をチェック')}</Button> : receipt ? <Button tone="primary" disabled={busy} onClick={() => void run(async () => { await open(receipt.directory); })}>{t('打开恢复作品', 'Open restored project', '復元した作品を開く')}</Button> : <>
+      {!plan ? <Button tone="primary" disabled={busy || !packagePath || !destination || !validName} onClick={() => void run(async () => { setPlan(unwrap(await bridge.documents.prepareRestore({ packagePath, destination, identity, collision: 'newDirectory' }))); })}>{t('准备恢复并检查依赖', 'Prepare and check dependencies', '復元を準備して依存をチェック')}</Button> : receipt ? <Button tone="primary" disabled={busy} onClick={() => void run(async () => { await open(receipt.directory); })}>{t('打开恢复作品', 'Open restored project', '復元した作品を開く')}</Button> : <>
         <Button disabled={busy} onClick={() => void run(reset)}>{t('更改选择', 'Change choices', '選択を変更')}</Button>
         <Button disabled={busy} onClick={() => void run(async () => setPlan(unwrap(await bridge.documents.checkRestore(plan.operationDirectory))))}>{t('重新检查', 'Check again', '再チェック')}</Button>
         <Button tone="primary" disabled={busy || blocked} onClick={() => void run(async () => { const result = unwrap(await bridge.documents.commitRestore(plan.operationDirectory)); setReceipt(result); await open(result.directory); })}>{t('确认恢复并打开', 'Restore and open', '復元して開く')}</Button>

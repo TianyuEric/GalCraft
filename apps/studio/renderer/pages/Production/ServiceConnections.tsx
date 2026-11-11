@@ -3,7 +3,7 @@ import { issueText } from '../../components/issue-text.js';
 import { IssueNotice } from '../../components/issue-notice.js';
 import { createId, DiagnosticError, type Issue } from '@galcraft/contracts';
 import { productionCopy } from './copy.js';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link2, Plus, Trash2, Copy, Layers } from 'lucide-react';
 import { SecretInput } from '../../components/secret-input.js';
@@ -55,21 +55,40 @@ export function ServiceConnections({ session: s, locale="zh-CN", editWorkflow, i
   const [edit, setEdit] = useState<ConnectionConfig | null>(s.connectionGuiDraft?.edit??null), [provider, setProvider] = useState(s.connectionGuiDraft?.provider??'openai');
   const [secret, setSecret] = useState(s.connectionGuiDraft?.secret??''), [advanced, setAdvanced] = useState<string | null>(s.connectionGuiDraft?.advanced??null);
   const [remove, setRemove] = useState<ConnectionConfig | null>(null), [report, setReport] = useState<CapabilityReport | null>(null);
+  const sheet = useRef<HTMLElement>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [diagnostic, setDiagnostic] = useState<Issue | null>(null);
   const [baseline, setBaseline] = useState(s.connectionGuiDraft?.baseline??''), [discard, setDiscard] = useState(false);
   const [checkPurpose, setCheckPurpose] = useState<Purpose | null>(null), [checkImageUsage, setCheckImageUsage] = useState<ImageUsage>('background');
+  const [checkWorkflow, setCheckWorkflow] = useState<string | null>();
   const [selection, setSelection] = useState<string[]>(s.connectionGuiDraft?.selection??[]);
   const purposeLabel = (purpose: Purpose) => purposes[purpose] ?? s.data.operations?.find(item => item.definition.purpose === purpose)?.definition.title ?? purpose;
   const pluginProviders = s.data.providers ?? [], pluginProvider = pluginProviders.find(item => item.key === edit?.providerKey);
   const listedConnections = edit && !s.data.connections.some(connection => connection.id === edit.id) ? [...s.data.connections, edit] : s.data.connections;
+  const saved = edit && s.data.connections.find(connection => connection.id === edit.id);
   const dirty = !!edit && (JSON.stringify(edit) !== baseline || secret !== '' || advanced !== null && advanced !== JSON.stringify(edit.parameters, null, 2));
   useEffect(()=>{s.connectionGuiDraft={edit,provider,secret,advanced,baseline,selection};if(s.connectionDirty!==dirty){s.connectionDirty=dirty;s.changed();}},[s,edit,provider,secret,advanced,baseline,selection,dirty]);
+  useEffect(() => {
+    if (!edit || !saved || dirty || busy || saved.revision === edit.revision && saved.credentialId === edit.credentialId) return;
+    setEdit(structuredClone(saved)); setBaseline(JSON.stringify(saved));
+    if (saved.revision !== edit.revision) setReport(null);
+  }, [edit, saved, dirty, busy]);
+  const stale = !!edit && edit.revision > 0 && s.overviewLoaded && (!saved || saved.revision !== edit.revision);
   const closeEditor = async () => { setEdit(null); setDiscard(false); };
   const requestClose = () => { if (!busy) { if (dirty) setDiscard(true); else void closeEditor(); } };
-  const run = async (action: () => Promise<void>) => { setBusy(true); setError(''); setDiagnostic(null); try { await action(); await s.refresh(); } catch (e) { if (e instanceof DiagnosticError) setDiagnostic(e.issue); else setError(String(e).replace(/^Error: /, '')); } finally { setBusy(false); } };
+  const run = async (action: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true); setError(''); setDiagnostic(null);
+    try { await action(); await s.refresh(); }
+    catch (error) {
+      if (error instanceof DiagnosticError) {
+        setDiagnostic(error.issue);
+        if (error.issue.code === 'CONNECTION_CONFLICT') await s.refresh().catch(() => {});
+      } else setError(String(error).replace(/^Error: /, ''));
+    } finally { setBusy(false); }
+  };
   const openWorkflow = (id?: string) => { setError(''); editWorkflow(id); };
-  const open = (c: ConnectionConfig) => { if (edit?.id === c.id) { showConnection?.(); return; } if (dirty) { setError(local('当前配置有未保存修改，请先保存或取消编辑。', 'Save or cancel the current edits before switching connections.', '変更を保存するかキャンセルしてから接続を切り替えてください。')); return; } showConnection?.(); setSelection([c.id]); setEdit(structuredClone(c)); setBaseline(JSON.stringify(c)); setDiscard(false); setProvider(c.protocol === 'plugin' ? c.providerKey ?? '' : c.baseUrl.includes('api.deepseek.com') ? 'deepseek' : providers.find(p => p.protocol === c.protocol && p.id !== 'deepseek')?.id ?? 'openai'); setSecret(''); setAdvanced(null); setError(''); setReport(null); };
+  const open = (c: ConnectionConfig) => { if (busy) return; if (edit?.id === c.id) { showConnection?.(); return; } if (dirty) { setError(local('当前配置有未保存修改，请先保存或取消编辑。', 'Save or cancel the current edits before switching connections.', '変更を保存するかキャンセルしてから接続を切り替えてください。')); return; } showConnection?.(); setSelection([c.id]); setEdit(structuredClone(c)); setBaseline(JSON.stringify(c)); setDiscard(false); setProvider(c.protocol === 'plugin' ? c.providerKey ?? '' : c.baseUrl.includes('api.deepseek.com') ? 'deepseek' : providers.find(p => p.protocol === c.protocol && p.id !== 'deepseek')?.id ?? 'openai'); setSecret(''); setAdvanced(null); setError(''); setReport(null); setCheckWorkflow(undefined); };
   const patch = (p: Partial<ConnectionConfig>) => { setEdit(c => c ? { ...c, ...p } : c); setReport(null); };
   const parameter = (key: string, value: Json) => edit && patch({ parameters: { ...edit.parameters, [key]: value } });
   const request = edit?.parameters.request as Record<string, Json> ?? {};
@@ -77,7 +96,7 @@ export function ServiceConnections({ session: s, locale="zh-CN", editWorkflow, i
   const selectedPurpose = edit?.purposes.includes(checkPurpose!) ? checkPurpose! : edit?.purposes[0];
   const save = async (checkOnly = false) => {
     if (!edit) return null;
-    if (!pluginInputsValid(document.querySelector('.service-connection-sheet'))) throw new Error(local('请修正标出的字段。', 'Correct the highlighted fields.', '表示されたフィールドを修正してください。'));
+    if (!pluginInputsValid(sheet.current)) throw new Error(local('请修正标出的字段。', 'Correct the highlighted fields.', '表示されたフィールドを修正してください。'));
     if (!edit.name.trim()) throw new Error(t("请填写连接名称"));
     if (edit.protocol !== 'plugin' || edit.baseUrl) { const url = new URL(edit.baseUrl); if (!['http:', 'https:'].includes(url.protocol)) throw new Error(t("服务地址需使用 http 或 https")); }
     if (!edit.purposes.length) throw new Error(t("请至少选择一个用途"));
@@ -88,6 +107,17 @@ export function ServiceConnections({ session: s, locale="zh-CN", editWorkflow, i
     const updated = { ...edit, revision: edit.revision + 1, parameters };
     unwrap(await s.bridge.connections.save(updated, secret || undefined)); setEdit(updated); setBaseline(JSON.stringify(updated)); setSecret(''); setAdvanced(null); s.data.connections = [...s.data.connections.filter(connection => connection.id !== updated.id), updated]; return updated;
   };
+  const check = async () => {
+    const config = dirty || !saved ? await save(true) : saved;
+    if (!config || !selectedPurpose) return;
+    setReport(unwrap(await s.bridge.connections.test({
+      connectionId: config.id, model: config.model, purpose: selectedPurpose,
+      imageUsage: selectedPurpose === 'image' ? checkImageUsage : null,
+      workflowBindingId: config.protocol === 'comfyUI' ? checkWorkflow === undefined ? config.workflowBindingId : checkWorkflow : null,
+    })));
+  };
+  const selectedWorkflowKey = selectedWorkflow.startsWith('workflow-draft:') || s.data.workflows.some(workflow => workflow.id === selectedWorkflow)
+    ? selectedWorkflow : `workflow-draft:${selectedWorkflow}`;
   const defaults = s.data.defaults ?? { connections: {}, recipes: {} };
   const inspector = <aside className="production-section-inspector" hidden={!active}>
 
@@ -102,7 +132,7 @@ export function ServiceConnections({ session: s, locale="zh-CN", editWorkflow, i
   const explorer = <aside className="connection-workspace-list" hidden={!active}>
     <header className="service-manager-heading"><div><h2>{t("服务连接")}</h2><p>{t("连接个人使用的模型与制作工具，再为不同用途选择默认服务。")}</p></div><Button tone="primary" onClick={() => open(preset('openai',locale,s.data))}><Plus size={16}/>{t("添加服务")}</Button></header>
     {error && (!edit || workflowActive) && !remove && <p role="alert" className="workbench-error">{error}</p>}
-    <ObjectTree label={local('服务与工作流', 'Services and workflows', 'サービスとワークフロー')} selected={workflowActive && selectedWorkflow ? [s.data.workflows.some(workflow => workflow.id === selectedWorkflow) ? selectedWorkflow : `workflow-draft:${selectedWorkflow}`] : selection} onSelect={() => {}} onOpen={id => { const connection = listedConnections.find(c => c.id === id); if (connection) open(connection); else if (s.data.workflows.some(w => w.id === id) || s.data.workflowDrafts?.some(w => `workflow-draft:${w.id}` === id)) openWorkflow(id); }} nodes={[
+    <ObjectTree label={local('服务与工作流', 'Services and workflows', 'サービスとワークフロー')} selected={workflowActive && selectedWorkflow ? [selectedWorkflowKey] : selection} onSelect={() => {}} onOpen={id => { const connection = listedConnections.find(c => c.id === id); if (connection) open(connection); else if (s.data.workflows.some(w => w.id === id) || s.data.workflowDrafts?.some(w => `workflow-draft:${w.id}` === id)) openWorkflow(id); }} nodes={[
       { id: 'production-connections', name: t('服务连接'), icon: <Link2 size={15}/>, children: listedConnections.filter(c => c.name.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map(c => ({ id: c.id, name: c.name, icon: <Link2 size={15}/> })) },
       { id: 'production-workflow-drafts', name: local('配置草稿（跨作品）', 'Configuration drafts (all projects)', '設定下書き（全作品）'), icon: <Layers size={15}/>, children: (s.data.workflowDrafts ?? []).filter(w => w.name.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map(w => ({ id: `workflow-draft:${w.id}`, name: `${w.name || t('未命名工作流')} · ${local('草稿', 'Draft', '下書き')}`, icon: <Layers size={15}/> })) },
       { id: 'production-workflows', name: t('ComfyUI 工作流'), icon: <Layers size={15}/>, children: s.data.workflows.filter(w => w.name.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map(w => ({ id: w.id, name: w.name || t('未命名工作流'), icon: <Layers size={15}/> })) },
@@ -115,9 +145,10 @@ export function ServiceConnections({ session: s, locale="zh-CN", editWorkflow, i
     {explorerContainer ? createPortal(explorer, explorerContainer) : explorer}
     {inspectorContainer && createPortal(inspector, inspectorContainer)}
     {workflowEditor}
-    {edit && <section className="service-connection-sheet connection-workspace-editor" hidden={workflowActive}><header><h2>{edit.name || t("配置服务")}</h2><span role="status">{dirty ? local("配置未保存", "Configuration unsaved", "設定未保存") : s.data.connections.some(c => c.id === edit.id) ? local("配置已保存", "Configuration saved", "設定保存済み") : local('尚未保存的新连接', 'New connection · not saved', '新規接続・未保存')}</span></header>
+    {edit && <section className="service-connection-sheet connection-workspace-editor" ref={sheet} hidden={workflowActive}><header><h2>{edit.name || t("配置服务")}</h2><span role="status">{dirty ? local("配置未保存", "Configuration unsaved", "設定未保存") : s.data.connections.some(c => c.id === edit.id) ? local("配置已保存", "Configuration saved", "設定保存済み") : local('尚未保存的新连接', 'New connection · not saved', '新規接続・未保存')}</span></header>
       {error && <p role="alert" className="workbench-error">{error}</p>}
       {diagnostic && <IssueNotice issue={diagnostic} locale={locale}/>}
+      {stale && dirty && <p className="workbench-error" role="alert">{local('已保存的连接在本次编辑期间发生变化。当前输入已保留，请记录要保留的字段后取消并重新打开连接。', 'The saved connection changed while you were editing. Your input is retained. Note the fields you want to keep, then cancel and reopen the connection.', '編集中に保存済みの接続が変更されました。入力は保持されています。残す項目を控え、キャンセルして接続を開き直してください。')}</p>}
       <fieldset disabled={busy} className="workflow-edit-fields"><section className="connection-section"><h3>{local("基本信息", "Basic information", "基本情報")}</h3>
       {!s.data.connections.some(c => c.id === edit.id) && <Field label={t("服务类型")}><Choice label={t("服务类型")} value={provider} options={[...providers.map(p => ({ value: p.id, label: t(p.name) })), ...pluginProviders.map(p => ({ value: p.key, label: `${local('插件服务', 'Plugin service', 'プラグインサービス')} · ${p.key.split('/').at(-1)}` }))]} onChange={id => { setProvider(id); const plugin = pluginProviders.find(item => item.key === id); setEdit(plugin ? { ...preset('openai',locale,s.data), id: edit.id, name: plugin.key.split('/').at(-1)!, protocol: 'plugin', providerKey: plugin.key, purposes: [...plugin.purposes], parameters: fieldDefaults(plugin.configFields) } : { ...preset(id,locale,s.data), id: edit.id }); setAdvanced(null); setReport(null); }}/></Field>}
       {edit.protocol === 'plugin' && !pluginProvider && <p role="alert" className="workbench-error">{local('此连接的插件提供者不可用，配置与历史任务已保留。请安装并启用对应插件。', 'This provider is unavailable. Its connection and historical tasks are preserved. Install and enable the provider plugin.', '提供元を利用できません。接続と履歴タスクは保持されています。プラグインをインストールして有効にしてください。')}</p>}
@@ -147,16 +178,26 @@ export function ServiceConnections({ session: s, locale="zh-CN", editWorkflow, i
       </section>
       <section className="connection-section"><h3>{local("高级设置", "Advanced settings", "詳細設定")}</h3>
       <div className="form-grid"><Field label={local('检查用途', 'Inspection purpose', '確認する用途')}><Choice label={local('检查用途', 'Inspection purpose', '確認する用途')} value={selectedPurpose ?? ''} options={edit.purposes.map(value => ({ value, label: purposeLabel(value) }))} onChange={value => { setCheckPurpose(value as Purpose); setReport(null); }}/></Field>{selectedPurpose === 'image' && <Field label={local('检查图像用途', 'Inspection image use', '確認する画像用途')}><Choice label={local('检查图像用途', 'Inspection image use', '確認する画像用途')} value={checkImageUsage} options={(['background', 'figure', 'cg', 'ui'] as const).map(value => ({ value, label: t(({ background: '背景', figure: '立绘', cg: 'CG', ui: 'UI 素材' })[value]) }))} onChange={value => { setCheckImageUsage(value as ImageUsage); setReport(null); }}/></Field>}</div>
+      {edit.protocol === 'comfyUI' && <Field label={local('检查工作流', 'Inspection workflow', '確認するワークフロー')} help={local('仅用于本次连接检查，保留已保存的默认工作流。', 'Applies to this check. The saved default workflow is retained.', 'この接続確認にだけ使用します。保存済みの既定ワークフローは保持されます。')}>
+        <Choice label={local('检查工作流', 'Inspection workflow', '確認するワークフロー')}
+          value={checkWorkflow === undefined ? '@default' : checkWorkflow ?? ''}
+          options={[
+            { value: '@default', label: local('使用默认工作流', 'Use default workflow', '既定のワークフローを使用') },
+            { value: '', label: local('不指定工作流', 'No workflow selected', 'ワークフローを指定しない') },
+            ...s.data.workflows.map(workflow => ({ value: workflow.id, label: `${workflow.name} · r${workflow.revision}` })),
+          ]}
+          onChange={value => { setCheckWorkflow(value === '@default' ? undefined : value || null); setReport(null); }}/>
+      </Field>}
       <Disclosure><span>{t("高级设置 · 超时、并行请求与服务参数")}</span><div className="form-grid"><Field label={t("同时执行的请求数")}><Input type="number" min={1} value={edit.concurrency} onChange={e => patch({ concurrency: Math.max(1, Number(e.target.value)) })}/></Field>{edit.purposes.map(p => <Field key={p} label={`${purposeLabel(p)}${t('超时（秒）')}`}><Input type="number" min={1} value={edit.timeoutSecByPurpose[p] ?? 600} onChange={e => patch({ timeoutSecByPurpose: { ...edit.timeoutSecByPurpose, [p]: Math.max(1, Number(e.target.value)) } })}/></Field>)}</div><Field label={t("高级参数 JSON（request 对象写服务请求参数）")}><Textarea rows={7} value={advanced ?? JSON.stringify(edit.parameters, null, 2)} onChange={e => setAdvanced(e.target.value)}/></Field></Disclosure>
-      {report && <section className="connection-inspection"><h3>{report.status === 'unavailable' ? t("连接检查未通过") : t("服务已响应")}</h3>{report.issues.length ? report.issues.map((issue, index) => <IssueNotice key={index} issue={issue} locale={locale}/>) : <p>{t("可选择下方模型。检查只读取服务信息，不发送生成请求；真实生成会在任务中单独确认。")}</p>}<div className="gc-actions">{report.models?.map(model => <Button key={model} onClick={() => patch({ model })}>{model}</Button>)}</div></section>}
+      {report && <section className="connection-inspection"><h3>{report.status === 'unavailable' ? t("连接检查未通过") : t("服务已响应")}</h3><p>{local('连接版本', 'Connection revision', '接続の版')} {report.connectionRevision} · <time dateTime={report.checkedAt}>{new Date(report.checkedAt).toLocaleString(locale)}</time> · {local('连接检查未发送生成请求', 'Connection check sent no generation request', '接続確認では生成リクエストを送信していません')}</p>{report.issues.length ? report.issues.map((issue, index) => <IssueNotice key={index} issue={issue} locale={locale}/>) : <p>{t("可选择下方模型。检查只读取服务信息，不发送生成请求；真实生成会在任务中单独确认。")}</p>}<div className="gc-actions">{report.models?.map(model => <Button key={model} onClick={() => patch({ model })}>{model}</Button>)}</div></section>}
       </section>
       </fieldset>
-      <div className="dialog-actions"><Button disabled={busy} onClick={requestClose}>{t("取消")}</Button><Button disabled={busy || !selectedPurpose} onClick={() => void run(async () => { const config = await save(true); if (!config || !selectedPurpose) return; setReport(unwrap(await s.bridge.connections.test({ connectionId: config.id, model: config.model, purpose: selectedPurpose, imageUsage: selectedPurpose === 'image' ? checkImageUsage : null, workflowBindingId: config.protocol === 'comfyUI' ? config.workflowBindingId : null }))); })}>{t("保存并检查连接")}</Button><Button tone="primary" disabled={busy} onClick={() => void run(async () => { await save(); })}>{t("保存连接")}</Button></div>
+      <div className="dialog-actions"><Button disabled={busy} onClick={requestClose}>{t("取消")}</Button><Button disabled={busy || stale || !selectedPurpose} onClick={() => void run(check)}>{dirty || !saved ? t("保存并检查连接") : local('检查连接', 'Check connection', '接続を確認')}</Button><Button tone="primary" disabled={busy || stale || !!saved && !dirty} onClick={() => void run(async () => { await save(); })}>{t("保存连接")}</Button></div>
     </section>}
     {!edit && !workflowActive && <section className="connection-workspace-editor connection-workspace-empty"><h2>{local("选择连接或本地工具", "Select a connection or local tool", "接続またはローカルツールを選択")}</h2><p>{local("连接配置与检查结果会保持在工作区。", "Connection configuration and inspection stay in this workspace.", "接続設定と確認結果をこのワークスペースに保持します。")}</p></section>}
-    {discard && <MessageBox title={local('保存服务连接修改？', 'Save connection changes?', '接続の変更を保存しますか？')} description={local('连接设置尚未保存。继续编辑，或选择保存后关闭。', 'Connection settings have not been saved. Continue editing or save before closing.', '接続の変更は未保存です。編集を続けるか、保存して閉じてください。')} cancelLabel={local('继续编辑', 'Keep editing', '編集を続ける')} onClose={() => setDiscard(false)} actions={[
+    {active && discard && <MessageBox title={local('保存服务连接修改？', 'Save connection changes?', '接続の変更を保存しますか？')} description={local('连接设置尚未保存。继续编辑，或选择保存后关闭。', 'Connection settings have not been saved. Continue editing or save before closing.', '接続の変更は未保存です。編集を続けるか、保存して閉じてください。')} cancelLabel={local('继续编辑', 'Keep editing', '編集を続ける')} onClose={() => setDiscard(false)} actions={[
       { label: local('放弃修改', 'Discard changes', '変更を破棄'), tone: 'danger', run: closeEditor },
-      { label: local('保存并关闭', 'Save & close', '保存して閉じる'), tone: 'primary', run: async () => { await save(); await s.refresh(); await closeEditor(); } },
+      ...(!stale ? [{ label: local('保存并关闭', 'Save & close', '保存して閉じる'), tone: 'primary' as const, run: async () => { await save(); await s.refresh(); await closeEditor(); } }] : []),
     ]}/>}
-    {remove && <MessageBox title={`${t('删除')} “${remove.name}”`} description={<>{t('删除后，使用此连接的未提交草稿需要重新选择服务。历史任务、已生成候选与可复用工作流会保留。')}<br/>{t('默认用途：')}{Object.entries(defaults.connections).filter(([, id]) => id === remove.id).map(([p]) => purposeLabel(p as Purpose)).join('、') || t('无')}</>} cancelLabel={t('取消')} onClose={() => setRemove(null)} actions={[{ label: t('删除连接'), tone: 'danger', run: async () => { unwrap(await s.bridge.production.removeConnection(remove.id)); if (edit?.id === remove.id) { setEdit(null); setReport(null); } setSelection(ids => ids.filter(id => id !== remove.id)); await s.refresh(); } }]}/>}  </section>;
+    {active && remove && <MessageBox title={`${t('删除')} “${remove.name}”`} description={<>{t('删除后，使用此连接的未提交草稿需要重新选择服务。历史任务、已生成候选与可复用工作流会保留。')}<br/>{t('默认用途：')}{Object.entries(defaults.connections).filter(([, id]) => id === remove.id).map(([p]) => purposeLabel(p as Purpose)).join('、') || t('无')}</>} cancelLabel={t('取消')} onClose={() => setRemove(null)} actions={[{ label: t('删除连接'), tone: 'danger', run: async () => { unwrap(await s.bridge.production.removeConnection(remove.id)); if (edit?.id === remove.id) { setEdit(null); setReport(null); } setSelection(ids => ids.filter(id => id !== remove.id)); await s.refresh(); } }]}/>}  </section>;
 }

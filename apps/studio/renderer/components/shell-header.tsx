@@ -10,7 +10,7 @@ import { StudioToaster } from './toast.js';
 import brandLight from '../authoring/galcraft-icon.svg?url';
 import brandDark from '../authoring/galcraft-icon-dark.svg?url';
 
-export type ShellAction = 'quickOpen' | 'commands' | 'projects' | 'closeProject' | 'save' | 'saveAll' | 'undo' | 'redo' | 'cards' | 'writing' | 'script' | 'resetLayout' | 'preferences' | 'publish';
+export type ShellAction = 'quickOpen' | 'commands' | 'projects' | 'projectSettings' | 'startupHome' | 'closeProject' | 'save' | 'saveAll' | 'undo' | 'redo' | 'cards' | 'writing' | 'script' | 'resetLayout' | 'preferences' | 'publish';
 export function StudioMenubar({ locale, project, action }: { locale: StudioLocale; project?: string; action(value: ShellAction): void }) {
   const [help, setHelp] = useModalState(false);
   const [guideError, setGuideError] = useState('');
@@ -23,11 +23,13 @@ export function StudioMenubar({ locale, project, action }: { locale: StudioLocal
     } catch (error) { setGuideError(String(error instanceof Error ? error.message : error)); }
   };
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
-  const item = (id: ShellAction, label: string, icon?: React.ReactNode) => <MenubarItem disabled={id !== 'projects' && !project} onClick={() => action(id)}>{icon}{label}</MenubarItem>;
+  const item = (id: ShellAction, label: string, icon?: React.ReactNode) => <MenubarItem disabled={id !== 'projects' && id !== 'preferences' && !project} onClick={() => action(id)}>{icon}{label}</MenubarItem>;
   return <>
     <Menubar className="studio-menubar" aria-label={t('主菜单', 'Main menu', 'メインメニュー')}>
       <MenubarMenu><MenubarTrigger>{t('文件', 'File', 'ファイル')}</MenubarTrigger><MenubarContent>
-        {item('projects', t('作品工作台', 'Project workbench', '作品ワークスペース'), <FolderOpen />)}
+        {item('projects', t('项目中心', 'Project center', '作品センター'), <FolderOpen />)}
+        {item('projectSettings', t('作品设置', 'Project settings', '作品設定'))}
+        {item('startupHome', t('启动与主页', 'Startup & home', '起動とホーム'))}
         {item('closeProject', t('关闭作品', 'Close project', '作品を閉じる'))}<MenubarSeparator />
         {item('save', t('保存当前文档', 'Save document', '文書を保存'), <Save />)}{item('saveAll', t('保存全部', 'Save all', 'すべて保存'))}
         <MenubarSeparator />{item('publish', t('发布作品', 'Publish project', '作品を公開'), <ArrowUpRight />)}

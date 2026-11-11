@@ -39,6 +39,8 @@ export function createStudioHandlers(host) {
       import: async input => host.soundbanks ? host.soundbanks.import(input) : fail('SOUNDBANK_HOST_UNAVAILABLE', '本机音色包服务尚未就绪', 'M09'),
     },
     engines: {
+      health: async () => host.engines?.health ? host.engines.health() : fail('ENGINE_PREVIEW_UNAVAILABLE', '预览引擎目录尚未就绪', 'M11'),
+      repair: async () => host.engines?.repair ? host.engines.repair() : fail('ENGINE_PREVIEW_UNAVAILABLE', '预览引擎目录尚未就绪', 'M11'),
       listCreationVersions: async (...args) => {
         return host.engines ? await host.engines.listCreationVersions(...args) : fail('ENGINE_PREVIEW_UNAVAILABLE', '预览引擎目录尚未就绪', 'M11');
       },

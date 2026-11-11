@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { FixtureProject } from '@galcraft/contracts/fixtures';
 import { ProjectSession } from '@galcraft/documents';
-import { StudioProjectLibrary } from './project-library.mjs';
+import { StudioProjectLibrary } from './project-library.mts';
 import { ProjectDocuments } from './document-providers.mjs';
 import { ProjectAccess } from './project-access.mjs';
 

@@ -6,7 +6,7 @@ import type { CommandSpec, Id, Ref, Variable } from '@galcraft/contracts';
 import type { ConditionMetadata, MonacoContext } from '@galcraft/dsl';
 import type { SceneSource } from './controller.js';
 
-type Input = { container: HTMLElement; scene: SceneSource; engineVersion: string; wordWrap: boolean; fontSize: number;
+type Input = { container: HTMLElement; scene: SceneSource; engineVersion: string; wordWrap: boolean; fontSize: number; readOnly?: boolean;
   selectedId: Id | null; documentOffset: number; revealOffset?: number; scroll: { statementId: Id | null; offsetPx: number; scrollLeft: number };
   references: (Ref & { name: string; detail?: string })[]; variables: Variable[]; locale?: string;
   pluginCommands?: CommandSpec[];
@@ -36,7 +36,7 @@ export async function mountScriptEditor(input: Input): Promise<{ flush(): Promis
   let editor: ReturnType<typeof monaco.editor.create>;
   try {
     editor = monaco.editor.create(input.container, { value: input.initialText ?? input.scene.text, language: languageId,
-      automaticLayout: true, minimap: { enabled: false }, wordWrap: input.wordWrap ? 'on' : 'off', fontSize: input.fontSize,
+      automaticLayout: true, minimap: { enabled: false }, wordWrap: input.wordWrap ? 'on' : 'off', fontSize: input.fontSize, readOnly: input.readOnly,
       theme: input.container.closest('[data-theme="dark"]') ? 'vs-dark' : 'vs' });
   } catch (error) {
     releaseLanguageIfIdle(); throw error;
@@ -107,7 +107,7 @@ export async function mountScriptEditor(input: Input): Promise<{ flush(): Promis
     input = next;
     registry = createCommandRegistry(next.engineVersion, next.pluginCommands ?? []);
     monaco.editor.setTheme(next.container.closest('[data-theme="dark"]') ? 'vs-dark' : 'vs');
-    editor.updateOptions({ wordWrap: next.wordWrap ? 'on' : 'off', fontSize: next.fontSize });
+    editor.updateOptions({ wordWrap: next.wordWrap ? 'on' : 'off', fontSize: next.fontSize, readOnly: next.readOnly ?? false });
     if (!pendingDraft && model.getValue() !== next.scene.text) {
       const position = editor.saveViewState();
       committed = scheduled = next.scene.text;

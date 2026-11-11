@@ -6,9 +6,7 @@ import { IssueNotice } from '../../components/issue-notice.js';
 import { TaskItemFeedback } from './TaskItemFeedback.js';
 import { ConversationPanel, CandidateUsage } from './ConversationPanel.js';
 import { CandidatePlacement } from './CandidatePlacement.js';
-import { ServiceConnections } from './ServiceConnections.js';
-import { readWorkflow } from './workflow-model.js';
-import { WorkflowDialog } from './WorkflowDialog.js';
+import { ConnectionWorkbench } from './ConnectionWorkbench.js';
 import { ContextTable } from './ContextTable.js';
 import { Disclosure } from '../../components/disclosure.js';
 import { SaveChangeList } from '../../components/change-list.js';
@@ -130,6 +128,7 @@ export function Production({
   onUnappliedChange,
   onReviewChange,
   productionHost,
+  openConnections,
 }: {
   session: ProductionSession;
   locale: string;
@@ -154,6 +153,7 @@ export function Production({
   onUnappliedChange?(dirty: boolean): void;
   onReviewChange?(reviewing: boolean): void;
   productionHost?: ProductionEditorHost | null;
+  openConnections?(): void;
 }) {
   s.displayLocale = () => locale;
   useSyncExternalStore(s.subscribe, s.snapshot);
@@ -167,6 +167,7 @@ export function Production({
   const [surfaceVisible, setSurfaceVisible] = useState(activeDocument);
   const documentActive = directory ? surfaceVisible : activeDocument;
   const changeSection = (value: string) => {
+    if (value === 'connections' && openConnections) { openConnections(); return; }
     for (const element of mediaRoot.current?.querySelectorAll<HTMLMediaElement>('audio,video') ?? []) { element.pause(); element.currentTime = 0; }
     setActiveReview('');
     setTab(value);
@@ -174,23 +175,9 @@ export function Production({
   const [searches, setSearches] = useState<Record<string, string>>({ recipes: '', connections: '' });
   const [recipeCategory, setRecipeCategory] = useState('all'), [recipeScope, setRecipeScope] = useState('all');
   const [librarySelection, setLibrarySelection] = useState<string[]>([]);
-  const [workflowDocuments, setWorkflowDocuments] = useState<NonNullable<ProductionSession['guiDraft']>['workflowDocuments']>(s.guiDraft?.workflowDocuments??[]);
-  const [activeWorkflow, setActiveWorkflow] = useState(s.guiDraft?.activeWorkflow??'');
   const [removeTask, setRemoveTask] = useState<{id:string;name:string}|null>(null);
   const [removeDraft, setRemoveDraft] = useState<{ id: string; name: string } | null>(null);
-  const closeWorkflow = (id: string) => { setWorkflowDocuments(items => items.filter(item => item.id !== id)); setActiveWorkflow(current => current === id ? '' : current); };
-  const selectWorkflow = (id?: string, importText?: string) => {
-    const resumeDraft = id?.startsWith('workflow-draft:') ?? false;
-    id = id?.replace(/^workflow-draft:/, '');
-    const opened = id && workflowDocuments.find(item => (readWorkflow(item.text)?.id ?? item.id) === id);
-    if (opened) { setActiveWorkflow(opened.id); return; }
-    const existing = s.data.workflows.find(w => w.id === id);
-    const storedDraft = s.data.workflowDrafts?.find(draft => draft.id === id);
-    const workflow = (resumeDraft ? storedDraft?.workflow : existing) ?? storedDraft?.workflow ?? existing ?? { id: createId(s.data), revision: 0, name: '', purpose: null, imageUsages: null, graphVersion: '1', apiGraph: {}, editorWorkflowPath: null, inputs: [], uploads: [], outputs: [], requiredNodes: [], modelNotes: [] };
-    setWorkflowDocuments(items => items.some(item => item.id === workflow.id) ? items : [...items, { id: workflow.id, text: JSON.stringify(workflow, null, 2), title: workflow.name || t('未命名工作流', 'Untitled workflow', '無題ワークフロー'), dirty: Boolean(importText), importText, paste: resumeDraft ? storedDraft?.paste ?? '' : '', draftRevision: storedDraft?.revision ?? null, expectedRevision: resumeDraft && storedDraft ? storedDraft.availableRevision : existing?.revision ?? null, closeRequest: 0 }]);
-    setActiveWorkflow(workflow.id);
-  };
-  const [tab, setTab] = useState(s.guiDraft?.tab??"tasks"),
+  const [tab, setTab] = useState(() => openConnections && s.guiDraft?.tab === "connections" ? "tasks" : s.guiDraft?.tab ?? "tasks"),
     [modal, setModal] = useModalState(""),
     [busy, setBusy] = useState(false);
   const [stepsOpen, setStepsOpen] = useState(false);
@@ -265,8 +252,10 @@ export function Production({
   const [discardReview, setDiscardReview] = useState(false);
   const reviewTitle = (id: string) => id === 'save' ? t('保存审阅', 'Save review', '保存レビュー') : id === 'adopt' ? t('采用审阅', 'Adoption review', '採用レビュー') : id === 'recipe-import' ? t('导入审阅', 'Import review', '読み込みレビュー') : t('UI 计划与请求', 'UI plan & requests', 'UI 計画とリクエスト');
   const uiDirty = !!uiProposal && JSON.stringify(uiProposal) !== uiBaseline;
-  const unapplied = s.connectionDirty || uiDirty || workflowDocuments.some(item => item.dirty) || !!recipe && recipe.scope !== 'official' && JSON.stringify(recipe) !== recipeBaseline;
-  useEffect(()=>{s.guiDraft={workflowDocuments,activeWorkflow,tab,recipe,recipeBaseline,uiProposal,uiSource,uiBaseline};},[s,workflowDocuments,activeWorkflow,tab,recipe,recipeBaseline,uiProposal,uiSource,uiBaseline]);
+  const unapplied = (!openConnections && (s.connectionDirty || s.workflowDirty)) || uiDirty || !!recipe && recipe.scope !== 'official' && JSON.stringify(recipe) !== recipeBaseline;
+  useEffect(() => {
+    s.guiDraft = { workflowDocuments: [], activeWorkflow: '', ...s.guiDraft, tab, recipe, recipeBaseline, uiProposal, uiSource, uiBaseline };
+  }, [s, tab, recipe, recipeBaseline, uiProposal, uiSource, uiBaseline]);
   useEffect(() => { onUnappliedChange?.(unapplied); }, [unapplied, onUnappliedChange]);
   useEffect(() => () => onUnappliedChange?.(false), []);
   const finishReview = (id: ReviewKind) => {
@@ -418,7 +407,7 @@ export function Production({
       {directory && createPortal(records, directory.container)}
       {!directory && placeExplorer(<nav className="production-explorer-sections" hidden={!documentActive} aria-label={t('制作分区','Production sections','制作の区分')}>
         <TabsList className="workbench-tabs" aria-label={t('制作工作台分区', 'Production sections', '制作ワークスペースの区分')}>
-          {[['tasks', t('制作与候选', 'Production & candidates', '制作と候補')], ['recipes', t('方案库', 'Scheme library', '制作方法ライブラリ')], ['connections', t('连接与工具', 'Connections & tools', '接続とツール')]].map(([id, label]) => <TabsTrigger key={id} value={id}>{id==='tasks'?<WandSparkles size={15}/>:id==='recipes'?<Layers size={15}/>:<SlidersHorizontal size={15}/>} {label}</TabsTrigger>)}
+          {[['tasks', t('制作与候选', 'Production & candidates', '制作と候補')], ['recipes', t('方案库', 'Scheme library', '制作方法ライブラリ')], ...(openConnections ? [] : [['connections', t('连接与工具', 'Connections & tools', '接続とツール')]])].map(([id, label]) => <TabsTrigger key={id} value={id}>{id==='tasks'?<WandSparkles size={15}/>:id==='recipes'?<Layers size={15}/>:<SlidersHorizontal size={15}/>} {label}</TabsTrigger>)}
         </TabsList>
         {tab !== 'tasks' && <Input className="production-global-search" aria-label={t('搜索当前制作分区', 'Search the current production section', '現在の制作区分を検索')} placeholder={t('搜索当前分区…', 'Search this section…', 'この区分を検索…')} value={taskSearch} onChange={e => setTaskSearch(e.target.value)}/>}
       </nav>)}
@@ -429,11 +418,12 @@ export function Production({
       {pendingReceipt && <div className="production-adoption-refresh" role="status"><p>{t('内容已采用，正在同步工作区。', 'Content adopted; synchronizing the workspace.', '採用済み。ワークスペースを同期しています。')}</p>{refreshError && <><p role="alert">{t('工作区刷新失败；采用已经完成，请重试刷新。', 'Workspace refresh failed. Adoption completed; retry refreshing.', '更新に失敗しました。採用済みです。更新を再試行してください。')} {refreshError}</p><Button disabled={busy} onClick={() => void run(() => refreshAdoption(pendingReceipt, false), false)}>{t('重试刷新', 'Retry refresh', '更新を再試行')}</Button></>}</div>}
       {documentActive && activeReview === 'ui-plan' && uiProposal && placeExplorer(<nav className="production-plan-outline" aria-label={t('计划步骤', 'Plan steps', '計画のステップ')}><h3>{t('计划步骤与依赖', 'Plan steps and dependencies', '計画のステップと依存関係')}</h3>{uiProposal.steps.map((step, index) => <Button key={step.key} onClick={() => mediaRoot.current?.querySelectorAll('.plan-step-editor')[index]?.scrollIntoView({block:'start',behavior:'smooth'})}><span>{index + 1}. {step.description || step.key}<small>{t('先完成', 'After', '先行ステップ')}: {step.dependsOn.join(', ') || '—'}</small></span></Button>)}</nav>)}
       <header className="production-workbench-toolbar">
-        <div className="production-section-select"><Choice label={t('制作分区','Production section','制作の区分')} value={tab} onChange={changeSection} options={[{value:'tasks',label:t('制作与候选','Production & candidates','制作と候補')},{value:'recipes',label:t('方案库','Scheme library','制作方法ライブラリ')},{value:'connections',label:t('连接与工具','Connections & tools','接続とツール')}]}/></div>
+        <div className="production-section-select"><Choice label={t('制作分区','Production section','制作の区分')} value={tab} onChange={changeSection} options={[{value:'tasks',label:t('制作与候选','Production & candidates','制作と候補')},{value:'recipes',label:t('方案库','Scheme library','制作方法ライブラリ')},...(openConnections ? [] : [{value:'connections',label:t('连接与工具','Connections & tools','接続とツール')}])]}/></div>
         <ProductionCreateMenu locale={locale} busy={busy} entries={[
           ...(['script', 'stage', 'background', 'figure', 'cg', 'difference', 'voice', 'music', 'page', 'ui-assets'] as const).map(intent => ({ id:intent, label:t(...quickLabels[intent]), group:['script','stage'].includes(intent) ? t('剧情与演出','Story & staging','シナリオと演出') : ['voice','music'].includes(intent) ? t('声音','Sound','音声') : ['page','ui-assets'].includes(intent) ? t('页面与界面','Pages & UI','ページとUI') : t('画面素材','Artwork','画像素材'), run:() => { setTab('tasks'); setActiveReview(''); void run(() => s.startQuick(intent)); } })),
           ...(s.data.operations ?? []).filter(operation => operation.provider).map(operation => ({ id:operation.id, label:operationTitle(operation, locale), group:t('插件制作','Plugin production','プラグイン制作'), detail:operationDescription(operation, locale), run:() => { setTab('tasks'); setActiveReview(''); void run(() => s.openOperation(operation, locale)); } })),
         ]}/>
+        {openConnections && <Button tone="quiet" onClick={openConnections}><SlidersHorizontal size={15}/>{t('管理连接与工作流', 'Manage connections and workflows', '接続とワークフローを管理')}</Button>}
         {tab==='tasks'&&<Button tone="quiet" onClick={() => setModal(modal === 'outline' ? '' : 'outline')}><FileText size={15}/>{t('作品大纲', 'Project outline', '作品のあらすじ')}</Button>}
         {directory && tab === 'tasks' && <Button tone="quiet" onClick={directory.open}><ListTree size={15}/>{t('打开制作记录', 'Open production records', '制作履歴を開く')}</Button>}
         {directory && tab !== 'tasks' && <Input className="production-global-search" aria-label={t('搜索当前制作分区', 'Search the current production section', '現在の制作区分を検索')} placeholder={t('搜索当前分区…', 'Search this section…', 'この区分を検索…')} value={taskSearch} onChange={event => setTaskSearch(event.target.value)}/>}
@@ -1214,13 +1204,11 @@ export function Production({
         }}/>}
           {!recipe && <Empty title={t('选择方案或提示规则', 'Choose a scheme or prompt rule', '制作方法またはルールを選択')} detail={t('制作方案决定实际执行能力；提示规则只参与明确的文字步骤。', 'Schemes choose execution capabilities. Prompt rules apply only to explicit text steps.', '制作方法は実行能力を指定。ルールは明示したテキスト処理に使用します。')}/>}</section>
       </TabsContent>
-      <TabsContent keepMounted value="connections" data-section-active={tab === 'connections'}><ServiceConnections session={s} locale={locale} search={searches.connections} active={documentActive && !activeReview && tab === 'connections'} explorerContainer={explorerContainer} inspectorContainer={inspectorContainer} workflowActive={!!activeWorkflow} selectedWorkflow={readWorkflow(workflowDocuments.find(item => item.id === activeWorkflow)?.text ?? '')?.id ?? activeWorkflow} showConnection={() => setActiveWorkflow('')} workflowEditor={workflowDocuments.length ? <section className="workflow-documents" hidden={!activeWorkflow}>
-        <DocumentTabs documents={workflowDocuments.map(item => ({ ...item, icon: <Layers/> }))} active={activeWorkflow} onSelect={setActiveWorkflow} onPin={() => {}} onReorder={ids => setWorkflowDocuments(items => ids.map(id => items.find(item => item.id === id)!))} onClose={id => setWorkflowDocuments(items => items.map(item => item.id === id ? { ...item, closeRequest: item.closeRequest + 1 } : item))}/>
-        {workflowDocuments.map(item => <div key={item.id} hidden={item.id !== activeWorkflow} className="workflow-document-content"><WorkflowDialog inline initialText={item.text} initialImportText={item.importText} initialBaseline={item.baseline} initialPaste={item.paste} operations={s.data.operations} outputConnections={s.data.connections.filter(connection => connection.protocol === 'comfyUI')} discoverOutputs={async (connectionId, workflow, historyTaskId) => { if (!workflow.purpose) throw new Error(t('请先选择用途或操作。', 'Choose a purpose or operation first.', '用途・操作を選択してください。')); return unwrap(await s.bridge.production.discoverWorkflowOutputs({ connectionId, workflow: { ...workflow, purpose: workflow.purpose }, historyTaskId })); }} existingWorkflows={s.data.workflows} availableRevision={item.expectedRevision} onIdentityChange={expectedRevision => setWorkflowDocuments(items => items.map(current => current.id === item.id ? { ...current, expectedRevision, draftRevision: null } : current))} saveDraft={async (workflow, paste) => { const result = unwrap(await s.bridge.production.saveWorkflowDraft({ draft: { schemaVersion: 1, id: workflow.id, revision: item.draftRevision ?? 0, name: workflow.name, workflow, paste, availableRevision: item.expectedRevision, updatedAt: new Date().toISOString() }, expectedRevision: item.draftRevision ?? null })); setWorkflowDocuments(items => items.map(current => current.id === item.id ? { ...current, draftRevision: result.revision } : current)); await s.refresh(); }} locale={locale} closeRequest={item.closeRequest} chooseImport={s.bridge.files.readImport ? async () => unwrap(await s.bridge.files.readImport!({ purpose: 'production', extensions: ['json'] })) : undefined} onState={state => setWorkflowDocuments(items => items.map(current => current.id === item.id ? { ...current, ...state, importText: undefined } : current))} close={() => closeWorkflow(item.id)} save={async workflow => {
-          const updated = unwrap(await s.bridge.production.saveWorkflow({ workflow, expectedRevision: item.expectedRevision }));
-          setWorkflowDocuments(items => items.map(current => current.id === item.id ? { ...current, expectedRevision: updated.revision } : current)); await s.refresh(); return updated;
-        }}/></div>)}
-      </section> : undefined} editWorkflow={selectWorkflow} importWorkflow={s.bridge.files.readImport ? async () => { const selected = unwrap(await s.bridge.files.readImport!({ purpose: 'production', extensions: ['json'] })); if (selected) selectWorkflow(undefined, selected.text); } : undefined}/></TabsContent>      {inspectorContainer && createPortal(<aside className="production-section-inspector" hidden={!documentActive || !!activeReview || tab !== 'recipes'}>
+      {!openConnections && <TabsContent keepMounted value="connections" data-section-active={tab === 'connections'}>
+        <ConnectionWorkbench session={s} locale={locale} active={documentActive && !activeReview && tab === 'connections'}
+          embedded={{ search: searches.connections ?? '', explorer: explorerContainer, inspector: inspectorContainer }}/>
+      </TabsContent>}
+      {inspectorContainer && createPortal(<aside className="production-section-inspector" hidden={!documentActive || !!activeReview || tab !== 'recipes'}>
         <InspectorSection title={recipe ? localizeRecipe(recipe, locale).name : t('方案库', 'Scheme library', '制作方法ライブラリ')}>
           {recipe ? <><Badge>{recipeKindLabel(recipeKind(recipe))}</Badge><p>{localizeRecipe(recipe, locale).description || t('在中央工作区查看与编辑方案。', 'View and edit this scheme in the document area.', '中央のワークスペースで制作方法を確認・編集できます。')}</p><dl className="production-object-summary"><dt>{t('归属', 'Scope', '所有範囲')}</dt><dd>{presetSource(recipe.scope, locale)}</dd><dt>{t('编辑状态', 'Editing state', '編集状態')}</dt><dd>{recipe.scope === 'official' ? t('官方只读 · 可复制', 'Official · copy to edit', '公式・コピーして編集') : JSON.stringify(recipe) !== JSON.stringify(s.data.recipes.find(item => item.id === recipe.id)) ? t('有未保存修改', 'Unsaved changes', '未保存の変更') : t('已保存', 'Saved', '保存済み')}</dd><dt>{t('适用用途', 'Uses', '用途')}</dt><dd>{recipe.uses.map(use => uses.find(item => item[0] === use)?.[locale === 'en' ? 2 : locale === 'ja' ? 3 : 1] ?? use).join(' · ')}</dd></dl></> : <p>{t('从 Explorer 选择制作方案、参数预设或提示规则。', 'Select a production scheme, parameter preset, or prompt rule in Explorer.', 'Explorer から制作方法、パラメータプリセット、ルールを選択してください。')}</p>}
         </InspectorSection><InspectorSection title={t('使用与保存', 'Using and saving', '使用と保存')}><p>{t('保存更新可复用内容；使用会进入对应制作草稿。检查实际输入后再发送生成请求。', 'Save updates reusable content. Use opens a production draft; review the actual input before sending a request.', '保存は再利用内容を更新し、使用は制作下書きを開きます。生成前に実際の入力を確認してください。')}</p></InspectorSection>

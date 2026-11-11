@@ -8,6 +8,7 @@ import { createOfficialTemplate, createTemplateDocuments } from '@galcraft/templ
 import { CoreCommandSpecs, parse } from '@galcraft/dsl';
 import { backgroundReferences } from './asset-providers.mjs';
 import { fail, ok } from './result.mjs';
+import { checkProjectEngine } from './restore-dependency.mts';
 
 const envelope = (documentId, data) => JSON.stringify({ schemaVersion: 1, documentId, revision: 1, data }, null, 2) + '\n';
 const sameDirectory = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
@@ -264,9 +265,10 @@ export class ProjectDocuments {
       session = await openFromAccess(this.projectAccess, sessionId, project.projectId,
         { resolveRequiredRef: this.resolveRequiredRef, requiredReferences: requiredDocumentReferences });
       validateEditableDocuments(session);
+      if (this.engineCatalog?.resolveProjectEngine) await checkProjectEngine(this.engineCatalog, session);
       const recovery = await session.listRecovery();
       if (!recovery.ok) throw new Error(recovery.error.message);
-      if (!recovery.value) {
+      if (!recovery.value && !session.writeBlocked) {
         const normalized=normalizeAuthoringFields(session);if(!normalized.ok)throw new Error(normalized.error.message);
         const initialized = initializeMenuLanguages(session);
         if (!initialized.ok) throw new Error(initialized.error.message);
@@ -365,6 +367,7 @@ export class ProjectDocuments {
     if (!session) return fail('PROJECT_SESSION_MISSING', '请先打开作品', 'M02');
     const recovered = await session.recover(choice);
     if (!recovered.ok) return recovered;
+    if (session.writeBlocked) return recovered;
     const normalized=normalizeAuthoringFields(session);if(!normalized.ok)return normalized;
     const initialized = initializeMenuLanguages(session);
     return initialized.ok ? recovered : initialized;
@@ -375,6 +378,7 @@ export class ProjectDocuments {
     if (!session) return fail('PROJECT_SESSION_MISSING', '请先打开作品', 'M02');
     const recovered = await session.resolveRecoveryConflict(choice, copyPath);
     if (!recovered.ok) return recovered;
+    if (session.writeBlocked) return recovered;
     const normalized=normalizeAuthoringFields(session);if(!normalized.ok)return normalized;
     const initialized = initializeMenuLanguages(session);
     return initialized.ok ? recovered : initialized;

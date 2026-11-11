@@ -82,6 +82,24 @@ it('blocks an unrelated output directory during checking and invalidates the pre
   expect(withSavedSnapshot).not.toHaveBeenCalled();
   expect(await builds.build('OldPlan')).toMatchObject({ ok: false, error: { code: 'BUILD_PLAN_STALE' } });
 });
+it('accepts a frozen saved plan after a working preview and rejects a later saved revision', async () => {
+  const projectId = FixtureSnapshot.projectId;
+  const lock = structuredClone(FixtureSnapshot.lock);
+  const document = { documentId: 'Lock01', revision: 2, files: { 'dependencies.lock.json': JSON.stringify({ data: lock }) } };
+  const withSavedSnapshot = async read => read([document]);
+  const lastValid = vi.fn(() => ({ ok: true, value: { ...FixtureSnapshot, snapshotId: 'Draft1' } }));
+  const builds = new StudioBuilds({ projects: { currentSession: { projectId, withSavedSnapshot } }, language: { lastValid }, pluginRoot: root });
+  const planId = 'Build1';
+  builds.latestPlans.set(projectId, planId);
+  builds.plans.set(planId, { input: { projectId, snapshotId: FixtureSnapshot.snapshotId, savedVersions: [{ ref: { kind: 'document', id: document.documentId }, revision: 2 }] }, lock });
+  const build = vi.spyOn(builds.builder, 'build').mockResolvedValue({ ok: true, value: {}, warnings: [] });
+  expect(await builds.build(planId)).toMatchObject({ ok: true });
+  expect(build).toHaveBeenCalledWith(planId);
+  expect(lastValid).not.toHaveBeenCalled();
+  document.revision = 3;
+  expect(await builds.build(planId)).toMatchObject({ ok: false, error: { code: 'BUILD_PLAN_STALE' } });
+  expect(build).toHaveBeenCalledTimes(1);
+});
 it.each(['web','windows'])('removes Studio declarations and selects actual Player native files for %s',async(target)=>{
   const pluginId='org.example.mixed',directory=join(root,'plugins',pluginId,'0.1.0');await mkdir(join(directory,'runtime'),{recursive:true});await mkdir(join(directory,'editor'),{recursive:true});
   const runtime='export function createPlugin(){return {activate:async()=>({commands:[],conditions:[],documents:[],tools:[],resources:[],stages:[],pages:[],components:[],systems:[],platform:[]}),deactivate:async()=>{}}}',

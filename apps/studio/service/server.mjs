@@ -109,7 +109,11 @@ export async function startStudioService({ userData, createHost, frontendDirecto
         const { group, method, args, clientId, entry } = input;
         const work = context.run({ clientId, entry }, () => host.call(group, method, ...args)); pending.add(work);
         let result; try { result = await work; } finally { pending.delete(work); }
-        if (result.ok && mutations.has(method) && !['authoringPreferences', 'language', 'engines', 'files', 'operations', 'service'].includes(group)) {
+        if (result.ok && group === 'engines' && method === 'repair' && result.value) {
+          publish('studio:collaborationChanged', undefined, undefined, clientId);
+        } else if (result.ok && group === 'upgrades' && (method === 'commit' || method === 'restore')) {
+          publish('studio:collaborationNavigate', { page: 'creation', projectChanged: true }, undefined, clientId);
+        } else if (result.ok && mutations.has(method) && !['authoringPreferences', 'language', 'engines', 'files', 'operations', 'service'].includes(group)) {
           publish(group === 'projects' ? 'studio:collaborationNavigate' : 'studio:collaborationChanged', group === 'projects' ? { page: 'creation', projectChanged: true } : undefined, undefined, clientId);
         }
         json(response, 200, result); return;

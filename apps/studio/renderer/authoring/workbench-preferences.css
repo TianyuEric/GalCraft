@@ -1,0 +1,8 @@
+.workbench-preferences { display: grid; gap: 20px; width: min(100%, 680px); padding: 16px; }
+.workbench-preferences h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
+.workbench-preferences h2 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }
+.workbench-preferences p { margin: 4px 0 0; color: var(--muted-foreground); }
+.workbench-preference-section { display: grid; justify-items: start; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; }
+.workbench-preference-section form, .workbench-preference-grid { width: 100%; }
+.workbench-preference-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 4px 12px; }
+.workbench-preference-checkbox { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; min-height: 28px; }

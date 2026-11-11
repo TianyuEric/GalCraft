@@ -231,7 +231,11 @@ async function inputWithPlugins(bridge: StudioBridge, documents: DocumentView[])
         field.type === 'boolean' ? 'boolean' as const : 'string' as const), returns: 'boolean' as const,
     }]));
     return { ok: true as const, value: { input, dispose: plugins.dispose }, warnings: [] };
-  } catch (error) { await plugins?.dispose(); return fail<{ input: CompileInput; dispose(): Promise<void> }>('PLUGIN_LOAD', String(error)); }
+  } catch (error) {
+    await plugins?.dispose();
+    const issue = issueFromError(error);
+    return issue ? { ok: false as const, error: issue, issues: [issue] } : fail<{ input: CompileInput; dispose(): Promise<void> }>('PLUGIN_LOAD', String(error));
+  }
 }
 
 export function createAuthoringServices(bridge: StudioBridge): AuthoringServices & {
@@ -304,3 +308,4 @@ export function createAuthoringServices(bridge: StudioBridge): AuthoringServices
     revealEntity: ref => bridge.files.revealEntity(ref),
   };
 }
+import { issueFromError } from '@galcraft/contracts';

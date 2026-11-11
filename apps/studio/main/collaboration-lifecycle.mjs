@@ -5,6 +5,7 @@ import { BuildInputSchema, BuildReceiptSchema, IssueSchema, JsonSchema, SavePlan
 import { CollaborationError } from '@galcraft/collaboration';
 import { compileCollaborationProject } from './collaboration-compile.mjs';
 import {authorSigningCertificates} from './author-signing.mjs';
+import { CollaborationReleaseReview, releaseReceiptForProject } from './collaboration-release-review.mts';
 
 const unwrap=result=>{if(!result.ok){const error=new CollaborationError(result.error.code,result.error.message);error.issue=result.error;throw error;}return result.value;};
 const json=value=>JSON.parse(JSON.stringify(value));
@@ -25,9 +26,9 @@ export function registerLifecycleTools(owner){
   const persist=async(path,value)=>{await mkdir(root,{recursive:true});const file=join(root,path);await writeFile(`${file}.tmp`,JSON.stringify(value,null,2)+'\n');await rename(`${file}.tmp`,file);};
   const read=async path=>{try{return JSON.parse(await readFile(join(root,path),'utf8'));}catch(error){if(error.code==='ENOENT')return null;throw error;}};
   const builds=()=>{const provider=owner.control.host?.builds;if(!provider)throw new CollaborationError('BUILD_PROVIDER_UNAVAILABLE','The local release provider is unavailable.');return provider;};
-  const savePlans=new Map(),releaseChecks=new Map();
+  const savePlans=new Map(),releaseReview=new CollaborationReleaseReview();
   const previousDelete=owner.sessionDeleted;
-  owner.sessionDeleted=async ids=>{await previousDelete?.(ids);for(const [key,value]of savePlans)if(ids.includes(value.sessionId))savePlans.delete(key);for(const [key,value]of releaseChecks)if(ids.includes(value.sessionId))releaseChecks.delete(key);for(const file of await readdir(root).catch(error=>{if(error.code==='ENOENT')return [];throw error;}))if(ids.some(id=>file.startsWith(`${id}-`)))await rm(join(root,file),{force:true});};
+  owner.sessionDeleted=async ids=>{await previousDelete?.(ids);for(const [key,value]of savePlans)if(ids.includes(value.sessionId))savePlans.delete(key);releaseReview.forget(ids);for(const file of await readdir(root).catch(error=>{if(error.code==='ENOENT')return [];throw error;}))if(ids.some(id=>file.startsWith(`${id}-`)))await rm(join(root,file),{force:true});};
   owner.register('galcraft_save','Review and save project objects','Read the actual M02 save closure and all object changes. Scope issues are included for author review; expand the collaboration scope if needed, then save the same current plan. Saving commits these complete objects, including any author edits. Other dirty objects remain unsaved.',schema(SaveInput),['read','edit'],async(input,context,check)=>{
     const project=owner.project(context,input.action!=='conflicts');
     if(input.action==='plan'){
@@ -55,16 +56,17 @@ export function registerLifecycleTools(owner){
     if(input.action==='check')return project.withSavedSnapshot(async documents=>{
       const saved={projectId:project.projectId,documents:new Map(documents.map(document=>[document.documentId,document]))};
       const compiled=await compileCollaborationProject(owner,saved,{publish:true});
-      if(!compiled.current){releaseChecks.delete(project.projectId);throw new CollaborationError('COMPILE_SUPERSEDED','A newer project compilation superseded this saved-snapshot check. Read the current project state and run galcraft_release check again. No release was prepared.');}
-      const checked=json({action:'check',snapshotId:compiled.snapshot?.snapshotId??null,savedVersions:documents.map(document=>({ref:{kind:'document',id:document.documentId},revision:document.revision})),dirty:project.dirtyIds(),issues:compiled.issues});
-      if(checked.snapshotId)releaseChecks.set(project.projectId,{...checked,sessionId:context.sessionId});else releaseChecks.delete(project.projectId);return checked;
+      return json(releaseReview.check(context.sessionId,compiled,documents,()=>project.dirtyIds()));
     });
     const provider=builds();
     if(input.action==='prepare'){
-      const checked=releaseChecks.get(project.projectId);if(!checked)throw new CollaborationError('BUILD_SNAPSHOT_MISSING','Run galcraft_release check on the saved project first.');
-      return json({action:'prepare',plan:unwrap(await provider.planBuild({...input.settings,projectId:project.projectId,snapshotId:checked.snapshotId,savedVersions:checked.savedVersions}))});
+      const buildInput=releaseReview.prepare(context.sessionId,project.projectId,input.settings);
+      return json({action:'prepare',plan:unwrap(await provider.planBuild(buildInput))});
     }
-    if(input.action==='status')return json({action:'status',receipt:unwrap(provider.receipt(input.planId))??null});
+    if(input.action==='status'){
+      const receipt=unwrap(provider.receipt(input.planId));
+      return json({action:'status',receipt:releaseReceiptForProject(context.projectId,receipt)});
+    }
     const plan=provider.plans.get(input.planId);if(!plan||plan.input.projectId!==context.projectId)throw new CollaborationError('BUILD_PLAN_STALE','Prepare a current release plan for this project.');
     check({effects:['edit']});const receipt=unwrap(await provider.build(input.planId)),result=json({action:'build',receipt});await persist(`${context.sessionId}-${context.callId}.json`,result);return result;
   },input=>({effects:input.action==='build'?['edit']:['read']}),async(context,input,previous)=>previous??await read(`${context.sessionId}-${context.callId}.json`),schema(ReleaseOutput));

@@ -36,7 +36,7 @@ const bridge = {
     closeRequested = callback;
     return () => { if (closeRequested === callback) closeRequested = null; };
   },
-  engines: { listCreationVersions: () => call('engines', 'listCreationVersions'), resolvePreview: snapshot => call('engines', 'resolvePreview', snapshot), releasePreview: id => call('engines', 'releasePreview', id), importLive2D: withMotionSync => call('engines', 'importLive2D', withMotionSync) },
+  engines: { listCreationVersions: () => call('engines', 'listCreationVersions'), health: () => call('engines', 'health'), repair: () => call('engines', 'repair'), resolvePreview: snapshot => call('engines', 'resolvePreview', snapshot), releasePreview: id => call('engines', 'releasePreview', id), importLive2D: withMotionSync => call('engines', 'importLive2D', withMotionSync) },
   production: {
     waitForTask: input => call('production', 'waitForTask', input),
     inspectTaskResources: input => call('production', 'inspectTaskResources', input),

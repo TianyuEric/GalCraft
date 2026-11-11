@@ -1,21 +1,18 @@
-import { createId } from '@galcraft/contracts';
-import { VersionSchema, ProjectSchema } from '@galcraft/contracts';
+import { createId, VersionSchema, ProjectSchema, type BuildInput, type Issue, type Result, type TargetCapability } from '@galcraft/contracts';
 import { Input } from '../../components/ui/input.js';
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { ObjectTree } from "../../components/workbench/ObjectTree.js";
-import "../../components/workbench/workbench.css";
 import {
   Globe,
   Monitor,
+  Smartphone,
   FolderOpen,
   ArrowRight,
   CircleAlert,
-  PanelRight, RotateCcw, Check,
+  RotateCcw, Check,
 } from "lucide-react";
 import type { AuthoringServices } from "../../authoring/controller.js";
 import type { AuthoringSource } from "../../authoring/controller.js";
-import { Button, Badge, Field, Choice } from "../../components/controls.js";
+import { Button, Badge, Field, Choice, Modal } from "../../components/controls.js";
 import {
   workbenchBridge,
   type BuildReceipt,
@@ -36,24 +33,33 @@ export type PublishGuiDraft = {
   entryMappings:import('@galcraft/contracts').EntryMapping[];version:string;brandName:string;executableName:string;
   publisher:string;brandIcon:string;windowsSigning:'unsigned'|'certificate';certificate:string;
 };
+type ReleaseSettings = 'assets' | 'compatibility' | 'platform';
+type PublishView = 'release' | ReleaseSettings | 'engine';
+type CheckedRelease = { planId: string; issues: Issue[]; capabilityResults?: TargetCapability[]; input: BuildInput };
+
 export function Publish({
   services,
   source,
   locale,
   changed,
   saveAll,
-  explorerContainer, inspectorContainer, documentActive = true, revealInspector, locateSource, onUnappliedChange,guiDraft,onGuiDraftChange,onHistoryReady,
+  documentActive = true, locateSource, onUnappliedChange, guiDraft, onGuiDraftChange, onHistoryReady,
+  onCheckIssues, onBuildStarted, onBuildReceipt, onBuildFailure, lastBuild, openProjectMaintenance, locateDependency,
 }: {
   services: AuthoringServices;
   source: AuthoringSource;
   locale: string;
   changed(receipt?: import('@galcraft/contracts').EditReceipt): Promise<void>;
   saveAll(): Promise<void>;
-  explorerContainer?: HTMLElement | null;
-  inspectorContainer?: HTMLElement | null;
   documentActive?: boolean;
-  revealInspector?(): void;
   locateSource?(source: import('@galcraft/contracts').Source): void;
+  onCheckIssues?(issues: Issue[]): void;
+  locateDependency?(issue: Issue): void;
+  onBuildStarted?(planId: string): void;
+  onBuildReceipt?(planId: string, receipt: BuildReceipt): void;
+  onBuildFailure?(planId: string, issue: Issue, cancelled: boolean): void;
+  lastBuild?: { planId: string; receipt: BuildReceipt };
+  openProjectMaintenance?(): void;
   onUnappliedChange?(dirty: boolean): void;
   guiDraft?:PublishGuiDraft|null;
   onGuiDraftChange?(draft:PublishGuiDraft):void;
@@ -61,6 +67,7 @@ export function Publish({
 }) {
   const t = (zh: string, en: string, ja: string) => tr(locale, zh, en, ja),
     bridge = workbenchBridge(services.bridge);
+  const standaloneEngineView = !openProjectMaintenance;
   const unwrap = <T,>(result: import('@galcraft/contracts').Result<T>): T => {
     if (!result.ok) throw new Error(issueText(result.error, locale));
     return result.value;
@@ -69,6 +76,9 @@ export function Publish({
     [output, setOutput] = useState(guiDraft?.output??""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const operationPending = useRef(false);
+  const [checking, setChecking] = useState(false);
+  const [savedSelection, setSavedSelection] = useState<{ version: string; revision: number; signing: 'unsigned' | 'certificate' } | null>(null);
   const [mobile, setMobile] = useState<MobileDrafts>(guiDraft?.mobile ?? {});
   const [savedIssues, setSavedIssues] = useState<import('@galcraft/contracts').Issue[]>([]);
   const targetLabel = (value: import('@galcraft/contracts').Target) => ({ web: 'Web', windows: 'Windows', android: 'Android', ios: 'iOS' }[value]);
@@ -85,15 +95,14 @@ export function Publish({
   }, [bridge, source.project.projectId, target]);
   useEffect(() => () => { verificationRequest.current = null; }, []);
   useEffect(()=>{if(!source.anyDirty)setVerificationPending(false);},[source.anyDirty]);
-  const [building, setBuilding] = useState(false);
-  const [plan, setPlan] = useState<{
-      planId: string;
-      issues: import("@galcraft/contracts").Issue[];
-      capabilityResults?: import('@galcraft/contracts').TargetCapability[];
-      input?: import("@galcraft/contracts").BuildInput;
-    } | null>(null),
-    [receipt, setReceipt] = useState<BuildReceipt | null>(null);
-  const [receiptPlan, setReceiptPlan] = useState<string | null>(null);
+  const [activeBuild, setActiveBuild] = useState<CheckedRelease | null>(null);
+  const buildRequest = useRef<string | null>(null);
+  const [cancelPending, setCancelPending] = useState(false);
+  const [buildCancelled, setBuildCancelled] = useState(false);
+  const [plan, setPlan] = useState<CheckedRelease | null>(null);
+  const [replacement, setReplacement] = useState<{ checked: CheckedRelease; warning: Issue } | null>(null);
+  const [receipt, setReceipt] = useState<BuildReceipt | null>(lastBuild?.receipt ?? null);
+  const [receiptPlan, setReceiptPlan] = useState<string | null>(lastBuild?.planId ?? null);
   const [oldSaveFiles, setOldSaveFiles] = useState<string[]>([]);
   const [fontMode, setFontMode] = useState<'full' | 'subsetStatic'>(guiDraft?.fontMode??'full');
   const [fallbackAssetId, setFallbackAssetId] = useState<string | null>(guiDraft?.fallbackAssetId??null);
@@ -119,10 +128,16 @@ export function Publish({
   const [certificates, setCertificates] = useState<{ thumbprint: string; subject: string; expiresAt: string;authorUsable?:boolean;blockedReason?:string|null }[]>([]);
   const [certificate, setCertificate] = useState(guiDraft?.certificate??'');
   const [fieldErrors, setFieldErrors] = useState<Record<string,string>>({});
-  const [engineOpen, setEngineOpen] = useState(false);
-  const [settings, setSettings] = useState<string | null>(null);
-  const [side, setSide] = useState<'explorer' | 'inspector'>('inspector');
+  const [currentDocument, setCurrentDocument] = useState<PublishView>('release');
+  const engineOpen = currentDocument === 'engine';
+  const settings = currentDocument === 'release' || engineOpen ? null : currentDocument;
+  const releaseScroll = useRef(0);
+  const viewNavRef = useRef<HTMLElement>(null);
   const configurationRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const checksRef = useRef<HTMLElement>(null);
+  const resultRef = useRef<HTMLElement>(null);
+  const pendingResultFocus = useRef(false);
   const actionStripRef = useRef<HTMLElement>(null);
   useEffect(() => {
     const strip = actionStripRef.current, portal = document.getElementById('studio-portals');
@@ -133,15 +148,9 @@ export function Publish({
     window.addEventListener('resize', positionNotifications);
     return () => { observer.disconnect(); window.removeEventListener('resize', positionNotifications); portal.style.removeProperty('--studio-toast-bottom'); };
   }, [documentActive, engineOpen, settings]);
-  const documentRef = useRef<HTMLElement>(null);
-  const [configurationVisible,setConfigurationVisible]=useState(!inspectorContainer);
-  useEffect(()=>{const workbench=documentRef.current?.closest<HTMLElement>('.gc-workbench');if(!workbench)return;
-    const update=()=>setConfigurationVisible(workbench.dataset.inspectorVisible==='true');update();
-    const observer=new MutationObserver(update);observer.observe(workbench,{attributes:true,attributeFilter:['data-inspector-visible']});return ()=>observer.disconnect();
-  },[inspectorContainer]);
   const [issueQuery, setIssueQuery] = useState('');
   const advancedRef = useRef<HTMLDivElement>(null);
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState<boolean | null>(null);
   const identityBaseline=useRef(guiDraft?.identityBase??publishIdentityBase(source.project));
   const [identityConflicts,setIdentityConflicts]=useState<string[]>([]);
   const pendingIdentity = publishIdentityChanges({target,steamAppId,version,brandName,brandIcon,executableName,publisher,windowsSigning} as PublishGuiDraft, identityBaseline.current);
@@ -163,7 +172,7 @@ export function Publish({
   });return()=>onHistoryReady?.(null);},[onHistoryReady]);
   useEffect(() => { onUnappliedChange?.(identityDirty); }, [identityDirty, onUnappliedChange]);
   useEffect(() => () => onUnappliedChange?.(false), [onUnappliedChange]);
-  useEffect(() => { setPlan(null); }, [source]);
+  useEffect(() => { setPlan(null); }, [target, mobile, output, fontMode, fallbackAssetId, keepAssets, steamAppId, steamRequired, live2dPurpose, live2dLicenseConfirmed, entryMappings, version, brandName, executableName, publisher, brandIcon, windowsSigning, certificate]);
   useEffect(() => { setIssueQuery(''); }, [plan?.planId]);
   useEffect(()=>{
     const previous=identityBaseline.current,pending=new Set(publishIdentityChanges({target,steamAppId,version,brandName,brandIcon,executableName,publisher,windowsSigning} as PublishGuiDraft,previous)),latest=source.project;
@@ -174,11 +183,13 @@ export function Publish({
   useEffect(() => {
     void bridge.builds.status().then((r) => {
       if (r.ok) setReady(r.value.ready);
-      else setError(issueText(r.error, locale));
+      else { setReady(false); setError(issueText(r.error, locale)); }
     });
-    void bridge.upgrades?.list().then(result => { if (result.ok) setEngines(result.value); });
-    void bridge.upgrades?.history().then(result => { if (result.ok) setUpgrades(result.value); });
-  }, [bridge]);
+    if (standaloneEngineView) {
+      void bridge.upgrades?.list().then(result => { if (result.ok) setEngines(result.value); });
+      void bridge.upgrades?.history().then(result => { if (result.ok) setUpgrades(result.value); });
+    }
+  }, [bridge, standaloneEngineView]);
   useEffect(() => { let live = true;
     void (async () => {
       const items: import('@galcraft/contracts').Asset[] = [];
@@ -191,7 +202,8 @@ export function Publish({
     return () => { live = false; };
   }, [services, source.project.projectId, source.assetIndexRevision]);
   const run = async (fn: () => Promise<void>) => {
-    if (busy) return;
+    if (operationPending.current) return;
+    operationPending.current = true;
     setBusy(true);
     setError("");
     try {
@@ -199,6 +211,7 @@ export function Publish({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      operationPending.current = false;
       setBusy(false);
     }
   };
@@ -232,8 +245,18 @@ export function Publish({
     .filter(({ issue }) => !query || `${issueText(issue, locale)} ${issue.message} ${issue.code} ${issue.owner}`.toLocaleLowerCase().includes(query))
     .sort((a, b) => ({ error: 0, warning: 1, info: 2 }[a.issue.severity] - { error: 0, warning: 1, info: 2 }[b.issue.severity]));
   const hiddenBlockers = issueCounts.error - visibleIssues.filter(({ issue }) => issue.severity === 'error').length;
-  const locateSettings = (section: string) => {
-    setEngineOpen(false); setSettings(section);
+  const openDocument = (id: PublishView) => {
+    if (id === 'engine' && openProjectMaintenance) { openProjectMaintenance(); return; }
+    if (!engineOpen && !settings) releaseScroll.current = scrollRef.current?.scrollTop ?? 0;
+    setCurrentDocument(id);
+    requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: id === 'release' ? releaseScroll.current : 0 }));
+  };
+  const returnToRelease = () => {
+    openDocument('release');
+    requestAnimationFrame(() => viewNavRef.current?.querySelector<HTMLElement>('[aria-current="page"]')?.focus({ preventScroll: true }));
+  };
+  const locateSettings = (section: ReleaseSettings) => {
+    openDocument(section);
     requestAnimationFrame(() => {
       const destination = advancedRef.current?.querySelector<HTMLElement>(`[data-publish-settings="${section}"]`);
       destination?.scrollIntoView({ block: 'center', behavior: 'instant' });
@@ -241,99 +264,176 @@ export function Publish({
     });
   };
   const showConfiguration = (field?: string) => {
-    setSide('inspector'); revealInspector?.();
     requestAnimationFrame(() => {
       const target=field?configurationRef.current?.querySelector<HTMLElement>(`[data-field="${field}"] input`):configurationRef.current?.querySelector<HTMLElement>('h2');
       target?.scrollIntoView({block:'nearest'});target?.focus({preventScroll:true});
     });
   };
-  const openDocument = (id: string) => {
-    setEngineOpen(id === 'engine');
-    setSettings(['assets', 'compatibility', 'platform'].includes(id) ? id : null);
-
-  };
-  const currentDocument = engineOpen ? 'engine' : settings ?? 'release';
-  const documentTitle = engineOpen ? t('引擎版本与历史', 'Engine version & history', 'エンジンバージョンと履歴')
-    : settings === 'assets' ? t('素材与字体', 'Assets & fonts', '素材とフォント')
-    : settings === 'compatibility' ? t('旧档兼容性', 'Save compatibility', '旧セーブの互換性')
-    : settings === 'platform' ? t('平台选项', 'Platform options', 'プラットフォームの設定')
-    : t('检查与构建', 'Check & build', '確認と構築');
-  const explorer = <div className="publish-explorer-content"><ObjectTree label={t('发行工作区', 'Release workspace', '配布ワークスペース')}
-    nodes={[{ id: 'release-group', name: t('当前发行', 'Current release', '現在の配布'), icon: <Globe size={15}/>, children: [
-      { id: 'release', name: t('检查与构建', 'Check & build', '確認と構築') },
-      { id: 'assets', name: t('素材与字体', 'Assets & fonts', '素材とフォント') },
-      { id: 'compatibility', name: t('旧档兼容性', 'Save compatibility', '旧セーブの互換性') },
-      { id: 'platform', name: t('平台选项', 'Platform options', 'プラットフォームの設定') },
-    ] }, { id: 'engine-group', name: t('运行引擎', 'Runtime engine', '実行エンジン'), icon: <Monitor size={15}/>, children: [
-      { id: 'engine', name: t('引擎版本与历史', 'Engine version & history', 'エンジンバージョンと履歴'), detail: source.project.engineVersion },
-    ] }]} selected={[currentDocument]} onSelect={() => {}} onOpen={openDocument}/>
-    <div className="publish-explorer-summary"><strong>{source.project.name}</strong><span>{version} · {targetLabel(target)}</span><span>{plan ? canBuild ? t('检查通过', 'Checks passed', '確認済み') : t('存在阻塞', 'Blocked', '問題あり') : t('等待检查', 'Awaiting checks', '未確認')}</span></div>
-  </div>;
+  const focusSection = (section: HTMLElement | null) => requestAnimationFrame(() => {
+    if (!section?.getClientRects().length) return;
+    section.scrollIntoView({ block: 'start' });
+    section.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
+  });
+  useEffect(() => {
+    if (!pendingResultFocus.current) return;
+    pendingResultFocus.current = false;
+    focusSection(resultRef.current);
+  }, [receipt]);
+  const views = [
+    ['release', t('检查与构建', 'Check & build', '確認と構築')],
+    ['assets', t('素材与字体', 'Assets & fonts', '素材とフォント')],
+    ['compatibility', t('旧档兼容性', 'Save compatibility', '旧セーブの互換性')],
+    ['platform', t('平台选项', 'Platform options', 'プラットフォームの設定')],
+    ['engine', t('引擎版本与历史', 'Engine version & history', 'エンジンバージョンと履歴')],
+  ] as const;
   const unverified=assets.filter(asset=>asset.variants.some(variant=>(variant.id===asset.activeVariantId||variant.role==='compatible')&&(!variant.targets[target]||variant.targets[target]==='unverified')));
-  const checkSaved=async()=>{
-                setSavedIssues([]);
-                if (identityDirty) { setPlan(null); throw new Error(t('请先应用发行配置并审阅保存，再检查已保存版本。','Apply the release settings and review the save before checking the saved version.','配布設定を適用し、確認して保存してから保存済みバージョンを確認してください。')); }
-                if (!output.trim()) { setFieldErrors({output: t('请选择或填写输出目录', 'Choose an output directory', '出力ディレクトリを選択してください')}); showConfiguration('output'); return; }
-                if (!VersionSchema.safeParse(version).success) { setFieldErrors({version: t('请填写有效版本，例如 0.1.0', 'Enter a version, such as 0.1.0', '0.1.0 などのバージョンを入力してください')}); showConfiguration('version'); return; }
-                setPlan(null);
-                const docs = unwrap(await bridge.documents.list());
-                const projectDocument = docs.find(document => document.savedFiles['project.json']);
-                if (!projectDocument) throw new Error('Saved Project document missing');
-                const savedProject = JSON.parse(projectDocument.savedFiles['project.json']).data;
-                const savedVersion = savedProject.releaseVersion;
-                if (version !== savedVersion) throw new Error(t(
-                  `发行版本 ${version} 尚未保存；请保存全部修改，或选用上次保存版本 ${savedVersion}`,
-                  `Release ${version} is not saved. Save all changes or select the last saved release ${savedVersion}.`,
-                  `配布バージョン ${version} は未保存です。すべて保存するか、前回保存した ${savedVersion} を選択してください。`,
-                ));
-                if(publishIdentityChanges({target,steamAppId,version,brandName,brandIcon,executableName,publisher,windowsSigning} as PublishGuiDraft,savedProject).length)throw new Error(t('发行配置尚未保存。请先保存全部，再检查已保存版本。','Release settings are unsaved. Save all before checking the saved version.','配布設定が未保存です。すべて保存してから保存済みバージョンを確認してください。'));
-                const compiled = await services.compilePreview?.(true);
-                if (!compiled?.ok)
-                  throw new Error(
-                    compiled && !compiled.ok
-                      ? issueText(compiled.error, locale)
-                      : t(
-                          "编译服务尚未就绪",
-                          "Compiler unavailable",
-                          "コンパイラーは未準備です",
-                        ),
-                  );
-                const snapshot = compiled.value.snapshot;
-                if (!snapshot) {
-                  setSavedIssues(compiled.value.issues);
-                  throw new Error(
-                    t(
-                      "已保存内容编译失败",
-                      "Saved content did not compile",
-                      "保存済み内容のコンパイルに失敗しました",
-                    ),
-                  );
-                }
-                if (target === 'windows' && snapshot.project.release?.windowsSigning === 'certificate' && !certificates.some(item => item.thumbprint === certificate && item.authorUsable !== false))
-                  throw new Error(t('请读取并选择本次发行使用的本机证书。', 'Load and select the local certificate for this release.', '今回の配布用ローカル証明書を読み込んで選択してください。'));
-                setPlan(
-                  unwrap(
-                    await bridge.builds.planBuild({
-                      projectId: source.project.projectId,
-                      target,
-                        ...((target === 'android' || target === 'ios') ? { targetBuilder: mobile[target]?.builder ?? undefined, targetOptions: mobile[target]?.options ?? initialMobileOptions(target, source.project.projectId) } : {}),
-                      outputDirectory: output,
-                      releaseVersion: snapshot.project.releaseVersion,
-                      snapshotId: snapshot.snapshotId,
-                      savedVersions: docs.map((d) => ({
-                        ref: { kind: "document", id: d.documentId },
-                        revision: d.savedRevision,
-                      })),
-                      keepAssets,
-                      platformPolicy: steamRequired ? { 'org.galcraft.steam/achievement': 'required' } : {},
-                      font: { mode: fontMode, fallbackAssetId },
-                      oldSaveFiles,
-                      entryMappings,
-                      windowsSigning: target === 'windows' ? snapshot.project.release?.windowsSigning === 'certificate' ? { mode: 'certificate', certificateThumbprint: certificate } : { mode: 'unsigned' } : undefined,
-                      live2d: { purpose: live2dPurpose, licenseConfirmed: live2dLicenseConfirmed },
-                    }),
-                  ),
-                );
+  const reportCheckIssues = (issues: Issue[]) => {
+    setSavedIssues(issues);
+    onCheckIssues?.(issues);
+    if (issues.length) focusSection(checksRef.current);
+  };
+  const checkSaved = async (selection = savedSelection): Promise<CheckedRelease | null> => {
+    setPlan(null);
+    setBuildCancelled(false);
+    reportCheckIssues([]);
+    if (!output.trim()) {
+      setFieldErrors({ output: t('请选择或填写输出目录', 'Choose an output directory', '出力ディレクトリを選択してください') });
+      showConfiguration('output');
+      return null;
+    }
+    if (!selection && !VersionSchema.safeParse(version).success) {
+      setFieldErrors({ version: t('请填写有效版本，例如 0.1.0', 'Enter a version, such as 0.1.0', '0.1.0 などのバージョンを入力してください') });
+      showConfiguration('version');
+      return null;
+    }
+    setChecking(true);
+    try {
+      const documents = unwrap(await bridge.documents.list());
+      const projectDocument = documents.find(document => document.savedFiles['project.json']);
+      if (!projectDocument) throw new Error(t('找不到已保存的作品文档。', 'The saved project document is unavailable.', '保存済みの作品文書が見つかりません。'));
+      const savedProject = ProjectSchema.parse(JSON.parse(projectDocument.savedFiles['project.json']!).data);
+      const savedVersion = savedProject.releaseVersion;
+      if (selection && selection.revision !== projectDocument.savedRevision) {
+        setSavedSelection(null);
+        throw new Error(t('保存版本已经更新，请重新选择。', 'The saved release changed. Choose it again.', '保存済みバージョンが更新されました。選択し直してください。'));
+      }
+      if (!selection && (identityDirty || documents.some(document => document.dirty) || version !== savedVersion ||
+          publishIdentityChanges({ target, steamAppId, version, brandName, brandIcon, executableName, publisher, windowsSigning }, savedProject).length)) {
+        throw new Error(t(`当前修改尚未保存。请审阅保存，或明确选用上次保存版本 ${savedVersion}。`, `Changes are unsaved. Review and save them, or choose the last saved release ${savedVersion}.`, `変更は未保存です。確認して保存するか、前回保存したバージョン ${savedVersion} を選択してください。`));
+      }
+      const compiled = await services.compilePreview?.(true, documents, { publish: true });
+      if (!compiled) throw new Error(t('编译服务尚未就绪', 'Compiler unavailable', 'コンパイラーは未準備です'));
+      if (!compiled.ok) {
+        reportCheckIssues(compiled.issues.includes(compiled.error) ? compiled.issues : [compiled.error, ...compiled.issues]);
+        return null;
+      }
+      const snapshot = compiled.value.snapshot;
+      if (!snapshot) {
+        reportCheckIssues(compiled.value.issues);
+        if (!compiled.value.issues.length) throw new Error(t('已保存内容尚未编译成功，请重新检查。', 'The saved content did not compile. Check it again.', '保存済みの内容をコンパイルできませんでした。再確認してください。'));
+        return null;
+      }
+      const signingRequired = target === 'windows' && snapshot.project.release?.windowsSigning === 'certificate';
+      if (signingRequired && !certificates.some(item => item.thumbprint === certificate && item.authorUsable !== false))
+        throw new Error(t('请读取并选择本次发行使用的本机证书。', 'Load and select the local certificate for this release.', '今回の配布用ローカル証明書を読み込んで選択してください。'));
+      const input: BuildInput = {
+        projectId: source.project.projectId,
+        target,
+        ...((target === 'android' || target === 'ios') ? { targetBuilder: mobile[target]?.builder ?? undefined, targetOptions: mobile[target]?.options ?? initialMobileOptions(target, source.project.projectId) } : {}),
+        outputDirectory: output,
+        releaseVersion: snapshot.project.releaseVersion,
+        snapshotId: snapshot.snapshotId,
+        savedVersions: documents.filter(document => Object.keys(document.savedFiles).length).map(document => ({
+          ref: { kind: 'document', id: document.documentId }, revision: document.savedRevision,
+        })),
+        keepAssets,
+        platformPolicy: steamRequired ? { 'org.galcraft.steam/achievement': 'required' } : {},
+        font: { mode: fontMode, fallbackAssetId },
+        oldSaveFiles,
+        entryMappings,
+        windowsSigning: target === 'windows' ? signingRequired ? { mode: 'certificate', certificateThumbprint: certificate } : { mode: 'unsigned' } : undefined,
+        live2d: { purpose: live2dPurpose, licenseConfirmed: live2dLicenseConfirmed },
+      };
+      const planned = await bridge.builds.planBuild(input);
+      if (!planned.ok) {
+        reportCheckIssues([...compiled.value.issues, ...(planned.issues.includes(planned.error) ? planned.issues : [planned.error, ...planned.issues])]);
+        return null;
+      }
+      const nextPlan: CheckedRelease = { ...planned.value, input, issues: [...compiled.value.issues, ...planned.value.issues] };
+      setPlan(nextPlan);
+      onCheckIssues?.(nextPlan.issues);
+      return nextPlan;
+    } finally {
+      setChecking(false);
+    }
+  };
+  const buildChecked = async (checked: CheckedRelease) => {
+    const id = checked.planId;
+    buildRequest.current = id;
+    setActiveBuild(checked);
+    setBuildCancelled(false);
+    try {
+      onBuildStarted?.(id);
+      const built = await bridge.builds.build(id).catch((reason: unknown): Result<BuildReceipt> => ({
+        ok: false,
+        error: {
+          code: 'BUILD_REQUEST_FAILED', owner: 'M11', severity: 'error', related: [], actions: ['retry'],
+          message: t('未能取得构建回执。请检查输出目录，再决定是否重试。', 'The build receipt could not be retrieved. Check the output directory before retrying.', '構築結果を取得できませんでした。出力先を確認してから再試行してください。'),
+          details: { reason: reason instanceof Error ? reason.message : String(reason) },
+        },
+        issues: [],
+      }));
+      buildRequest.current = null;
+      setActiveBuild(null);
+      setCancelPending(false);
+      if (!built.ok) {
+        const cancelled = built.error.code === 'BUILD_CANCELLED';
+        onBuildFailure?.(id, built.error, cancelled);
+        if (cancelled) setBuildCancelled(true);
+        else {
+          if (built.error.code === 'BUILD_PLAN_STALE') setPlan(null);
+          setError(issueText(built.error, locale));
+        }
+        focusSection(checksRef.current);
+        return;
+      }
+      pendingResultFocus.current = true;
+      setReceipt(built.value);
+      setReceiptPlan(id);
+      onBuildReceipt?.(id, built.value);
+      setCompatibility(null);
+      const report = await bridge.builds.compatibility(id);
+      if (report.ok) setCompatibility(report.value);
+      else setError(issueText(report.error, locale));
+    } finally {
+      buildRequest.current = null;
+      setActiveBuild(null);
+      setCancelPending(false);
+    }
+  };
+  const requestBuild = async (checked: CheckedRelease) => {
+    const warning = checked.issues.find(issue => issue.code === 'BUILD_OUTPUT_REPLACE');
+    if (warning) setReplacement({ checked, warning });
+    else await buildChecked(checked);
+  };
+  const checkRelease = (build: boolean) => void run(async () => {
+    const checked = await checkSaved().catch(reason => {
+      focusSection(checksRef.current);
+      throw reason;
+    });
+    if (!checked) return;
+    if (build && !checked.issues.some(issue => issue.severity === 'error')) await requestBuild(checked);
+    else focusSection(checksRef.current);
+  });
+  const cancelBuild = (id: string) => {
+    setCancelPending(true);
+    void bridge.builds.cancel(id).then(result => {
+      if (buildRequest.current !== id) return;
+      if (!result.ok) { setError(issueText(result.error, locale)); setCancelPending(false); }
+      else if (result.value && typeof result.value === 'object' && 'local' in result.value && result.value.local === 'alreadyFinished') setCancelPending(false);
+    }).catch(reason => {
+      if (buildRequest.current === id) { setError(String(reason)); setCancelPending(false); }
+    });
   };
   const applyConfiguration = async (resolution?:'draft'|'current') => {
     const docs = unwrap(await bridge.documents.list()), document = docs.find(item => item.files['project.json']);
@@ -353,7 +453,7 @@ export function Publish({
       preparedAssets: [], requiredRefs: brandIcon ? [{ kind: 'asset', id: brandIcon }] : [] }));
     const receipt = unwrap(await bridge.documents.applyEdit(edit.planId, expected));identityBaseline.current=publishIdentityBase(after.data);setIdentityConflicts([]);setVersion(after.data.releaseVersion);setBrandName(after.data.name);setBrandIcon(after.data.display.icon??'');setSteamAppId(after.data.platform.steamAppId??'');setExecutableName(after.data.release?.executableName??'Game.exe');setPublisher(after.data.release?.publisher??'');setWindowsSigning(after.data.release?.windowsSigning??'unsigned'); draftHistory.current={current:draftHistory.current.current,undo:[],redo:[],restoring:false}; setPlan(null); await changed(receipt);
   };
-  const inspector = <div className="publish-inspector-content publish-workflow" ref={configurationRef}>
+  const configuration = <div className="publish-configuration-body" ref={configurationRef}>
         <section className="publish-panel publish-configuration">
           <h2 tabIndex={-1}>{t('发行配置', 'Release configuration', '配布設定')}</h2>
           <fieldset className="publish-config-fields" disabled={busy}>
@@ -365,7 +465,7 @@ export function Publish({
                 setPlan(null);
               }}
             >
-              <Globe size={24} />
+              <Globe size={16} />
               <strong>Web</strong>
               <small>
                 {t(
@@ -382,7 +482,7 @@ export function Publish({
                 setPlan(null);
               }}
             >
-              <Monitor size={24} />
+              <Monitor size={16} />
               <strong>Windows</strong>
               <small>
                 {t(
@@ -392,11 +492,11 @@ export function Publish({
                 )}
               </small>
             </Button>
-            {(["android", "ios"] as const).map(value => <Button key={value} aria-pressed={target === value} onClick={() => { setTarget(value); setPlan(null); }}><strong>{targetLabel(value)}</strong><small>{value === "android" ? "APK / AAB" : "Xcode"}</small></Button>)}
+            {(["android", "ios"] as const).map(value => <Button key={value} aria-pressed={target === value} onClick={() => { setTarget(value); setPlan(null); }}><Smartphone size={16}/><strong>{targetLabel(value)}</strong><small>{value === "android" ? "APK / AAB" : "Xcode"}</small></Button>)}
           </div>
           {(target === 'android' || target === 'ios') && <MobileTargetOptions target={target} value={mobile[target] ?? { builder: null, options: initialMobileOptions(target, source.project.projectId) }}
             onChange={value => { setMobile(previous => ({ ...previous, [target]: value })); setPlan(null); }} builds={bridge.builds} locale={locale} chooseDirectory={async () => unwrap(await bridge.projects.chooseDirectory())}/>}
-          <Field name="output" required error={fieldErrors.output} label={t("输出目录", "Output directory", "出力ディレクトリ")}>
+          <div className="publish-output-config"><Field name="output" required error={fieldErrors.output} label={t("输出目录", "Output directory", "出力ディレクトリ")}>
             <Input
               value={output}
               onChange={(e) => {
@@ -419,18 +519,22 @@ export function Publish({
             <FolderOpen size={15} />
             {t("选择目录", "Choose directory", "ディレクトリを選択")}
           </Button>
+          </div>
           <div className="publish-version-config">
           <Field name="version" required error={fieldErrors.version} label={t("发行版本", "Release version", "配布バージョン")}>
-            <Input data-local-history={String(version !== source.project.releaseVersion)} value={version} onChange={event => { setVersion(event.target.value); setFieldErrors(previous => ({...previous, version: ''})); setPlan(null); }} />
+            <Input data-local-history={String(version !== source.project.releaseVersion)} readOnly={!!savedSelection} value={savedSelection?.version ?? version} onChange={event => { setVersion(event.target.value); setFieldErrors(previous => ({...previous, version: ''})); setPlan(null); }} />
           </Field>
           <Button disabled={busy} onClick={() => void run(async () => {
+            if (savedSelection) { setSavedSelection(null); setPlan(null); return; }
             const docs = unwrap(await bridge.documents.list());
             const document = docs.find(item => item.savedFiles['project.json']);
             if (!document) throw new Error('Saved Project document missing');
-            setVersion(JSON.parse(document.savedFiles['project.json']).data.releaseVersion);
+            const savedProject = ProjectSchema.parse(JSON.parse(document.savedFiles['project.json']!).data);
+            setSavedSelection({ version: savedProject.releaseVersion, revision: document.savedRevision, signing: savedProject.release?.windowsSigning ?? 'unsigned' });
+            setFieldErrors(previous => ({ ...previous, version: '' }));
             setPlan(null);
-          })} title={t('恢复版本输入为上次保存值，不提交作品修改','Restore the version field to its saved value','バージョン入力を保存済みの値に戻す')}><RotateCcw size={15}/>{t('选用上次保存版本', 'Use last saved release', '前回保存したバージョンを使用')}</Button>
-          <Button disabled={busy} onClick={() => void run(async () => {
+          })}><RotateCcw size={15}/>{savedSelection ? t('返回当前修改', 'Return to working changes', '作業中の変更に戻る') : t('选用上次保存版本', 'Use last saved release', '前回保存したバージョンを使用')}</Button>
+          <Button disabled={busy || !!savedSelection || version === source.project.releaseVersion} onClick={() => void run(async () => {
             const docs = unwrap(await bridge.documents.list());
             const document = docs.find(doc => doc.files['project.json']);
             if (!document) throw new Error('Project document missing');
@@ -440,6 +544,13 @@ export function Publish({
             const edit = unwrap(await bridge.documents.planEdit({ label: t('修改发行版本', 'Change release version', '配布バージョンを変更'), origin: 'field', expected,
               patches: [{ kind: 'json', documentId: document.documentId, changes: [{ path: '/data/releaseVersion', before: project.releaseVersion, after: version, op: 'set' }] }], preparedAssets: [], requiredRefs: [] }));
             const receipt = unwrap(await bridge.documents.applyEdit(edit.planId, expected));
+            identityBaseline.current = { ...identityBaseline.current, releaseVersion: version };
+            const currentDraft = draftHistory.current.current;
+            if (currentDraft) {
+              const nextDraft = { ...currentDraft, identityBase: identityBaseline.current };
+              draftHistory.current.current = nextDraft;
+              onGuiDraftChange?.(nextDraft);
+            }
             setPlan(null); await changed(receipt);
           })} title={t('应用版本到工作区，审阅保存后用于构建','Apply to the workspace; review and save before building','バージョンを作業状態に適用。保存後に構築できます')}><Check size={15}/>{t('应用版本修改', 'Apply version change', 'バージョン変更を適用')}</Button>
           </div>
@@ -459,7 +570,7 @@ export function Publish({
             <Button disabled={!identityDirty || busy} onClick={() => void run(()=>applyConfiguration())}>{t('应用作品身份', 'Apply work identity', '作品情報を適用')}</Button>
             <p>{t('应用后审阅保存，再检查已保存版本。名称和图标更改保留作品的存档身份。', 'Review and save before checking the saved release. Renaming keeps this work’s saved data identity.', '適用後に確認・保存してから配布を確認してください。名前を変更してもセーブの作品識別は維持されます。')}</p>
           </details>
-          {target === 'windows' && windowsSigning === 'certificate' && <section className="publish-author-signing">
+          {target === 'windows' && (savedSelection?.signing ?? windowsSigning) === 'certificate' && <section className="publish-author-signing">
             <Button onClick={() => void run(async () => { setCertificates(unwrap(await bridge.builds.signingCertificates())); setPlan(null); })}>{t('读取本机签名证书', 'Load local signing certificates', 'ローカル署名証明書を読み込む')}</Button>
             <Field label={t('本次发行证书', 'Certificate for this release', '今回の配布用証明書')}><Choice label={t('本次发行证书', 'Certificate for this release', '今回の配布用証明書')} value={certificate}
               onChange={value => { setCertificate(value); setPlan(null); }} options={[{ value: '', label: t('请选择本机证书', 'Select a local certificate', 'ローカル証明書を選択') },
@@ -470,34 +581,34 @@ export function Publish({
 
           </fieldset>
         </section>
-    <div className="publish-inspector-summary"><p>{fontMode === 'full' ? t('完整字体', 'Full fonts', '完全なフォント') : t('字体子集＋回退', 'Font subset + fallback', 'フォントのサブセット＋代替')} · {t(`额外保留 ${keepAssets.length} 项素材`, `${keepAssets.length} retained assets`, `追加素材 ${keepAssets.length} 件`)}</p><Button onClick={() => locateSettings('assets')}>{t('素材与字体', 'Assets & fonts', '素材とフォント')}</Button></div>
   </div>;
   return (
-    <main ref={documentRef} className={`publish-page publish-workflow publish-desktop-workbench ${explorerContainer ? 'has-external-explorer' : ''} ${inspectorContainer ? 'has-external-inspector' : ''}`} data-side={side}>
-      {explorerContainer ? documentActive && createPortal(explorer, explorerContainer) : <aside className="publish-local-explorer" aria-label="Explorer"><header className="publish-pane-heading">{t('发布', 'Publish', '配布')}</header>{explorer}</aside>}
+    <main className="publish-page publish-workflow publish-desktop-workbench">
       <div className="publish-workbench-document">
-        <header className="publish-workbench-toolbar"><h1>{documentTitle}</h1><div className="gc-actions">{!explorerContainer && <Button tone="quiet" className="publish-local-toggle" onClick={() => setSide('explorer')}>{t('发行导航', 'Release explorer', '配布ナビゲーション')}</Button>}<Button tone="quiet" onClick={() => showConfiguration()}><PanelRight size={15}/>{configurationVisible?t('定位发行配置','Locate release configuration','配布設定へ移動'):t('显示发行属性', 'Show release properties', '配布の属性を表示')}</Button></div></header>
-        <div className="publish-document-scroll">
+        <header className="publish-workbench-toolbar"><h1>{t('发布', 'Publish', '配布')}</h1>
+          <nav ref={viewNavRef} className="publish-view-nav" aria-label={t('发行工作区', 'Release workspace', '配布ワークスペース')}>
+            {views.map(([id, label]) => <Button key={id} tone="quiet" aria-current={id === currentDocument ? 'page' : undefined} onClick={() => openDocument(id)}>{label}</Button>)}
+          </nav>
+        </header>
+        <div className="publish-document-scroll" ref={scrollRef}>
         <section className="publish-panel publish-next-steps" hidden={engineOpen || !!settings}>
+          {configuration}
           <section className="publish-saved-state"><h2>{t('已保存内容', 'Saved content', '保存済み内容')}</h2>
           <Badge tone={source.anyDirty ? "warm" : "good"}>
             {source.anyDirty
               ? t("有未保存修改", "Unsaved changes", "未保存の変更")
               : t("已保存", "Saved", "保存済み")}
           </Badge>
-          <p>
-            {t(
-              "构建只读取已保存快照。当前工作修改继续保留。",
-              "Builds read a saved snapshot. Working changes remain available.",
-              "保存済みスナップショットから構築します。作業中の変更は保持されます。",
-            )}
-          </p>
+          <p>{savedSelection
+            ? t(`使用保存版本 ${savedSelection.version}。当前修改保留在工作区。`, `Using saved release ${savedSelection.version}. Working changes remain in the workspace.`, `保存済み ${savedSelection.version} を使用します。作業中の変更は保持されます。`)
+            : t('发布使用已保存的作品内容。未保存时，可以审阅保存或选用上次保存版本。', 'Publish uses saved project content. Review and save changes, or choose the last saved release.', '配布には保存済みの作品を使用します。変更を確認して保存するか、前回保存したバージョンを選択してください。')}</p>
           <Button disabled={busy || !source.anyDirty}
             onClick={() =>
               void run(async () => {
                 await saveAll();
                 const documents=unwrap(await bridge.documents.list()); if(documents.some(document=>document.dirty))return;
-                setVerificationPending(false);setPlan(null);await changed();await checkSaved();
+                setVerificationPending(false); setSavedSelection(null); await changed();
+                if (await checkSaved(null)) focusSection(checksRef.current);
               })
             }
           >
@@ -519,20 +630,23 @@ export function Publish({
             <VerificationAssetList assets={unverified} target={targetLabel(target)} locale={locale}/>
             {!!verificationIssues.length && <div className="publish-verification-issues" role="region" aria-label={t('素材验证问题','Asset verification issues','素材検証の問題')} tabIndex={0}>{verificationIssues.map((issue,index)=><IssueNotice key={index} issue={issue} locale={locale}/>)}</div>}
           </section>
-          <section className="publish-checks"><h2>{t('检查与构建', 'Check & build', '確認と構築')}</h2>
-            <p role="status">{ready ? t('构建服务已就绪', 'Build service ready', '構築サービス準備完了') : t('构建服务尚未就绪', 'Build service unavailable', '構築サービス未準備')}</p>
+          <section className="publish-checks" ref={checksRef}><h2 tabIndex={-1}>{t('检查结果', 'Check results', '確認結果')}</h2>
+            {ready === false && <p role="status">{t('构建服务尚未就绪', 'Build service unavailable', '構築サービス未準備')}</p>}
+            {ready && !checking && !error && !plan && !savedIssues.length && <p>{t('检查后可在这里查看目标能力、阻断项和修复入口。', 'After checking, find target capabilities, blockers and repair actions here.', '確認後、対象機能、問題、修正方法がここに表示されます。')}</p>}
+            {buildCancelled && <p role="status">{receipt ? t('构建已取消。上一份有效产物仍可打开。', 'Build cancelled. The previous release is still available.', '構築を中止しました。前回の配布物を引き続き開けます。') : t('构建已取消。', 'Build cancelled.', '構築を中止しました。')}</p>}
             {error && <div className="workbench-error publish-check-error" role="alert" tabIndex={0}><CircleAlert size={16}/><span>{error}</span></div>}
             {!!savedIssues.length && <div className="publish-issue-list" role="region" aria-label={t('保存版本诊断', 'Saved revision diagnostics', '保存済みリビジョンの診断')} tabIndex={0}>
               {savedIssues.map((issue, index) => {
-                const target = issue.source;
-                const canLocate = locateSource && target && source.scenes.some(scene => scene.documentId === target.documentId && scene.revision === target.revision);
-                return <IssueNotice key={index} issue={issue} locale={locale} recovery={canLocate ? {
-                  label: t('定位问题', 'Locate issue', '問題へ移動'), run: () => locateSource(target),
-                } : undefined}/>;
+                const issueSource = issue.source;
+                const recovery = locateSource && issueSource ? { label: t('定位问题', 'Locate issue', '問題へ移動'), run: () => locateSource(issueSource) }
+                  : issue.code.startsWith('BUILD_OUTPUT_') ? { label: t('定位输出目录', 'Locate output directory', '出力ディレクトリへ移動'), run: () => showConfiguration('output') }
+                  : locateDependency && issue.actions.includes('supplyDependency') ? { label: t('定位缺少的依赖', 'Locate missing dependency', '不足している依存を表示'), run: () => locateDependency(issue) }
+                  : undefined;
+                return <IssueNotice key={index} issue={issue} locale={locale} recovery={recovery}/>;
               })}
             </div>}
             {plan && <div className="publish-check-results">
-              <p>{t('已冻结保存版本', 'Frozen saved release', '固定済み保存バージョン')} · {plan.input?.releaseVersion ?? version}</p>
+              <p>{t('已冻结保存版本', 'Frozen saved release', '固定済み保存バージョン')} · {plan.input.releaseVersion}</p>
               <Badge tone={canBuild ? 'good' : 'warm'}>{canBuild ? t('检查完成，可以构建', 'Checks complete · ready to build', '確認完了・構築できます') : t('修复阻塞项后重新检查', 'Resolve blockers, then check again', '問題を修正して再確認')}</Badge>
               <p className="publish-diagnostic-summary" role="status">{t(`诊断：${issueCounts.error} 项阻塞 · ${issueCounts.warning} 项警告 · ${issueCounts.info} 项提示`, `Diagnostics: ${issueCounts.error} blockers · ${issueCounts.warning} warnings · ${issueCounts.info} notes`, `診断：問題 ${issueCounts.error} 件・警告 ${issueCounts.warning} 件・情報 ${issueCounts.info} 件`)}</p>
             </div>}
@@ -548,10 +662,16 @@ export function Publish({
                   {!!hiddenBlockers && <p className="publish-hidden-blockers" role="status">{t(`另有 ${hiddenBlockers} 项阻塞未在搜索结果中显示，仍需修复。`, `${hiddenBlockers} blockers are outside these search results and still need attention.`, `検索結果外に未解決の問題が ${hiddenBlockers} 件あります。`)}</p>}
                 </div>}
                 <div className="publish-issue-list" role="region" aria-label={t('检查诊断', 'Check diagnostics', '確認の診断')} tabIndex={0}>
-                  {visibleIssues.length ? visibleIssues.map(({ issue, index }) => <div className="publish-issue" key={index}>
-                    <strong className="publish-issue-severity">{issue.severity === 'error' ? t('阻塞', 'Blocker', '問題') : issue.severity === 'warning' ? t('警告', 'Warning', '警告') : t('提示', 'Note', '情報')}</strong><IssueNotice issue={issue} locale={locale}/>
-                    {issueSettingsSection(issue.code, issue.message) && <Button onClick={() => locateSettings(issueSettingsSection(issue.code, issue.message)!)}>{t('查看相关设置', 'Review related settings', '関連設定を確認')}</Button>}
-                  </div>) : <p>{t('没有匹配的诊断。', 'No matching diagnostics.', '一致する診断はありません。')}</p>}
+                  {visibleIssues.length ? visibleIssues.map(({ issue, index }) => {
+                    const settings = issueSettingsSection(issue.code, issue.message);
+                    const issueSource = issue.source;
+                    return <div className="publish-issue" key={index}>
+                      <strong className="publish-issue-severity">{issue.severity === 'error' ? t('阻塞', 'Blocker', '問題') : issue.severity === 'warning' ? t('警告', 'Warning', '警告') : t('提示', 'Note', '情報')}</strong>
+                      <IssueNotice issue={issue} locale={locale} recovery={locateSource && issueSource ? { label: t('定位问题', 'Locate issue', '問題へ移動'), run: () => locateSource(issueSource) }
+                        : locateDependency && issue.actions.includes('supplyDependency') ? { label: t('定位缺少的依赖', 'Locate missing dependency', '不足している依存を表示'), run: () => locateDependency(issue) } : undefined}/>
+                      {settings && <Button onClick={() => locateSettings(settings)}>{t('查看相关设置', 'Review related settings', '関連設定を確認')}</Button>}
+                    </div>;
+                  }) : <p>{t('没有匹配的诊断。', 'No matching diagnostics.', '一致する診断はありません。')}</p>}
                 </div>
               </>}
               {!!plan.capabilityResults?.length && <details className="publish-capabilities">
@@ -565,13 +685,13 @@ export function Publish({
               </details>}
             </div>}
           </section>
-          <section className="publish-result"><h2>{t('构建结果', 'Build result', '構築結果')}</h2>
+          <section className="publish-result" ref={resultRef}><h2 tabIndex={-1}>{t('构建结果', 'Build result', '構築結果')}</h2>
             {!receipt ? <p>{t('构建完成后，在这里打开发行目录并进行本机体验。', 'After building, open the release directory and play locally here.', '構築後、ここから配布先を開いてローカルでプレイできます。')}</p> : <div className="publish-receipt">
               <strong>{receipt.releaseVersion} · {targetLabel(receipt.target)}</strong>
               {receiptPlan !== plan?.planId && <p>{t('上次构建结果 · 当前配置尚未重新构建', 'Previous build · current configuration has not been rebuilt', '前回の構築結果・現在の設定では未構築')}</p>}
               <p><Badge tone={receipt.localTest.result === 'passed' ? 'good' : receipt.localTest.result === 'failed' ? 'warm' : ''}>{t('本机体验', 'Local playtest', 'ローカルプレイ')} · {localTestLabel(receipt.localTest.result, locale)}</Badge></p>
               <div className="gc-actions publish-result-actions">
-                <Button disabled={busy} tone={plan?.planId === receiptPlan ? 'primary' : undefined} onClick={() => void run(async () => { unwrap(await bridge.files.openBuild(receiptPlan!)); })}><FolderOpen size={16}/>{t('打开输出目录', 'Open output directory', '出力先を開く')}</Button>
+                <Button disabled={busy} onClick={() => void run(async () => { unwrap(await bridge.files.openBuild(receiptPlan!)); })}><FolderOpen size={16}/>{t('打开输出目录', 'Open output directory', '出力先を開く')}</Button>
                   {(receipt.target === 'web' || receipt.target === 'windows') && <Button disabled={busy} onClick={() => void run(async () => { setReceipt(unwrap(await bridge.builds.test(receiptPlan!))); })}>{t('本机体验', 'Play locally', 'ローカルでプレイ')}</Button>}
                 <Button disabled={busy} tone="quiet" onClick={() => void run(async () => { unwrap(await bridge.builds.instructions(receiptPlan!)); })}>{t('查看交付说明', 'Open instructions', '配布説明を開く')}</Button>
               </div>
@@ -674,10 +794,10 @@ export function Publish({
           </div>
           </fieldset>
           {error && <p role="alert" className="workbench-error">{error}</p>}
-          <footer><Button onClick={() => { setSettings(null); setEngineOpen(false); }}>{t('返回检查与构建', 'Back to check & build', '確認と構築へ戻る')}</Button></footer>
+          <footer><Button onClick={returnToRelease}>{t('返回检查与构建', 'Back to check & build', '確認と構築へ戻る')}</Button></footer>
         </section>
       {engineOpen && <section className="publish-engine-document" aria-label={t('引擎版本与历史', 'Engine version & history', 'エンジンバージョンと履歴')}>
-        <header className="publish-engine-heading"><h2>{t('引擎版本与历史', 'Engine version & history', 'エンジンバージョンと履歴')}</h2><Button tone="quiet" onClick={() => setEngineOpen(false)}>{t('返回发行配置', 'Back to release configuration', '配布設定へ戻る')}</Button></header>
+        <header className="publish-engine-heading"><h2>{t('引擎版本与历史', 'Engine version & history', 'エンジンバージョンと履歴')}</h2><Button tone="quiet" onClick={returnToRelease}>{t('返回发行配置', 'Back to release configuration', '配布設定へ戻る')}</Button></header>
         <p>{t('当前引擎', 'Current engine', '現在のエンジン')} · <strong>{source.project.engineVersion}</strong></p>
         {source.anyDirty && <p role="status">{t('请先保存作品修改，再准备升级副本。', 'Save project changes before preparing an upgrade copy.', '更新用コピーを準備する前に変更を保存してください。')}</p>}
             <Field label={t('目标引擎', 'Target engine', '対象エンジン')}>
@@ -707,7 +827,7 @@ export function Publish({
         {!upgrades.some(item => item.state === 'committed') && <p>{t('尚无引擎切换历史。', 'No engine changes yet.', 'エンジン変更の履歴はありません。')}</p>}
         <footer className="dialog-actions publish-engine-actions">
           {error && <p role="alert" className="workbench-error">{error}</p>}
-          <div className="gc-actions"><Button onClick={() => setEngineOpen(false)}>{t('完成', 'Done', '完了')}</Button>
+          <div className="gc-actions"><Button onClick={returnToRelease}>{t('完成', 'Done', '完了')}</Button>
             <Button tone={upgrade ? undefined : "primary"} disabled={busy || !upgradeVersion || source.anyDirty} onClick={() => void run(async () => {
               const documents = unwrap(await bridge.documents.list());
               const operationId = createId();
@@ -734,49 +854,44 @@ export function Publish({
 
         </div>
         <footer ref={actionStripRef} className="publish-action-strip" hidden={engineOpen || !!settings} aria-label={t('发行操作','Release actions','配布操作')}>
-          <p role="status"><strong>{targetLabel(target)} · {version}</strong><span>{building ? t('正在构建…','Building…','構築中…') : plan ? canBuild ? t('检查通过，可以构建','Checks passed · ready to build','確認済み・構築できます') : t(`存在 ${issueCounts.error} 项阻塞`,`${issueCounts.error} blockers`, `問題 ${issueCounts.error} 件`) : t('先检查已保存版本','Check the saved version first','保存済みバージョンを確認')}</span></p>
+          <p role="status"><strong>{targetLabel(activeBuild?.input.target ?? target)} · {activeBuild?.input.releaseVersion ?? plan?.input.releaseVersion ?? savedSelection?.version ?? version}</strong>
+            <span>{cancelPending ? t('正在请求取消…', 'Requesting cancellation…', '中止を要求しています…')
+              : activeBuild ? t('正在构建…', 'Building…', '構築中…')
+              : checking ? t('正在检查保存版本…', 'Checking saved release…', '保存済みバージョンを確認中…')
+              : ready === null ? t('正在读取构建服务状态…', 'Reading build service status…', '構築サービスの状態を読み込み中…')
+              : ready === false ? t('构建服务尚未就绪', 'Build service unavailable', '構築サービス未準備')
+              : buildCancelled ? t('构建已取消', 'Build cancelled', '構築を中止しました')
+              : plan ? canBuild ? receiptPlan === plan.planId ? t('构建完成', 'Build complete', '構築完了') : t('检查通过，可以构建', 'Checks passed · ready to build', '確認済み・構築できます') : t(`存在 ${issueCounts.error} 项阻塞`, `${issueCounts.error} blockers`, `問題 ${issueCounts.error} 件`)
+              : savedIssues.length ? t('检查需要处理', 'Checks need attention', '確認結果を確認してください')
+              : !savedSelection && (source.anyDirty || identityDirty) ? t('请保存修改或选用上次保存版本', 'Save changes or choose the last saved release', '変更を保存するか、前回の保存済みバージョンを選択してください')
+              : t('已保存内容用于检查与构建', 'Checks and builds use saved content', '保存済みの内容を確認・構築します')}</span></p>
           <div className="gc-actions publish-build-actions">
-          <Button
-            tone={canBuild ? undefined : "primary"}
-            disabled={busy || !ready}
-            onClick={() =>
-              void run(async () => {
-                await checkSaved();
-              })
-            }
-          >
-            {t(
-              "检查已保存版本",
-              "Check saved version",
-              "保存済みバージョンを確認",
-            )}
-            <ArrowRight size={15} />
-          </Button>
-              {plan && <>
-              <Button tone={canBuild && receiptPlan !== plan.planId ? "primary" : undefined}
-                disabled={
-                  busy || plan.issues.some((i) => i.severity === "error")
-                }
-                onClick={() =>
-                  void run(async () => {
-                    setBuilding(true);
-                    try {
-                      setCompatibility(null);
-                      setReceipt(unwrap(await bridge.builds.build(plan.planId)));
-                      setReceiptPlan(plan.planId);
-                      setCompatibility(unwrap(await bridge.builds.compatibility(plan.planId)));
-                    } finally { setBuilding(false); }
-                  })
-                }
-              >
-                {building ? t('正在构建…', 'Building…', '構築中…') : t(`构建 ${targetLabel(target)}`, `Build ${targetLabel(target)}`, `${targetLabel(target)} を構築`)}
-              </Button>
-              </>}
-              {building && plan && <Button onClick={() => { void bridge.builds.cancel(plan.planId).then(result => { if (!result.ok) setError(issueText(result.error, locale)); }); }}>{t('取消构建', 'Cancel build', '構築を中止')}</Button>}
-            </div>
+            {activeBuild ? <Button disabled={cancelPending} onClick={() => cancelBuild(activeBuild.planId)}>{t('取消构建', 'Cancel build', '構築を中止')}</Button> : <>
+              <Button disabled={busy || !ready} onClick={() => checkRelease(false)}>{t('仅检查', 'Check only', '確認のみ')}</Button>
+              <Button tone="primary" disabled={busy || !ready} onClick={() => {
+                if (plan && canBuild && receiptPlan !== plan.planId) void run(() => requestBuild(plan));
+                else checkRelease(true);
+              }}>{plan && canBuild && receiptPlan !== plan.planId ? t(`构建 ${targetLabel(target)}`, `Build ${targetLabel(target)}`, `${targetLabel(target)} を構築`) : t('检查并构建', 'Check and build', '確認して構築')}<ArrowRight size={15}/></Button>
+            </>}
+          </div>
         </footer>
       </div>
-      {inspectorContainer ? documentActive && createPortal(inspector, inspectorContainer) : <aside className="publish-local-inspector" aria-label="Inspector"><header className="publish-pane-heading">{t('发行配置', 'Release configuration', '配布設定')}</header>{inspector}</aside>}
+      {replacement && <Modal title={t('替换现有发行产物？', 'Replace the existing release?', '既存の配布物を置き換えますか？')} close={() => setReplacement(null)}>
+        <p>{t('构建成功后会替换此目录的发行产物。', 'A successful build will replace the release in this directory.', '構築が成功すると、このディレクトリの配布物を置き換えます。')}</p>
+        <dl className="publish-replacement-details">
+          <dt>{t('输出目录', 'Output directory', '出力ディレクトリ')}</dt><dd>{replacement.checked.input.outputDirectory}</dd>
+          {typeof replacement.warning.messageParams?.previousVersion === 'string' && <><dt>{t('现有发行版本', 'Existing release', '既存の配布バージョン')}</dt><dd>{replacement.warning.messageParams.previousVersion}</dd></>}
+          <dt>{t('本次构建版本', 'New release', '今回の配布バージョン')}</dt><dd>{replacement.checked.input.releaseVersion} · {targetLabel(replacement.checked.input.target)}</dd>
+        </dl>
+        <footer className="dialog-actions">
+          <Button onClick={() => setReplacement(null)}>{t('取消', 'Cancel', 'キャンセル')}</Button>
+          <Button tone="danger" disabled={busy} onClick={() => {
+            const checked = replacement.checked;
+            setReplacement(null);
+            void run(() => buildChecked(checked));
+          }}>{t('确认替换并构建', 'Replace and build', '置き換えて構築')}</Button>
+        </footer>
+      </Modal>}
     </main>
   );
 }

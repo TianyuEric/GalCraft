@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { FixtureAsset, FixtureLock, FixtureProject, fixtureId } from '@galcraft/contracts/fixtures';
 import { prepareStageTarget, exercisePluginStage, stageResource } from './asset-stage-targets.mjs';
-import { EnginePreview } from './engine-preview.mjs';
+import { EnginePreview } from './engine-preview.mts';
 
 const pluginId = 'org.example.complete', resourceKey = `${pluginId}/plainGroup`, stageKey = `${pluginId}/canvas`;
 const ok = value => ({ ok: true, value, warnings: [] });

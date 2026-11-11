@@ -6,7 +6,7 @@ import { issueText } from '../components/issue-text.js';
 import { IssueNotice } from '../components/issue-notice.js';
 import { showContentPopover } from '../components/workbench/content-popover.js';
 import type { DocumentWorkspace } from '../components/workbench/document-workspace.js';
-import { createId, NativeAnimationSchema, StageWeatherPresets } from '@galcraft/contracts';
+import { createId, DefaultStudioPreferences, NativeAnimationSchema, StageWeatherPresets } from '@galcraft/contracts';
 import { readTemplateDocuments } from '@galcraft/templates';
 import { dialoguePortraitField } from './dialogue-portrait-field.js';
 import { dialogueTextField } from './dialogue-text-field.js';
@@ -44,7 +44,7 @@ import { codeBlock } from '../components/code-block.js';
 import { prepareNativeDialog } from '../components/motion.js';
 import { installTransientScrollbars } from '@galcraft/player-ui';
 /// <reference types="vite/client" />
-import type { Asset, AssetKind, AssetListIdentity, BackgroundAdoptionScope, BackgroundReference, CharacterDifference, FieldSpec, Id, Json, Ref, Result, SceneDecorLayer, SceneEntryPresentation, Source, StudioBridge, StudioPreferences } from '@galcraft/contracts';
+import type { Asset, AssetKind, AssetListIdentity, BackgroundAdoptionScope, BackgroundReference, BuildReceipt, CharacterDifference, FieldSpec, Id, Issue, Json, Ref, Result, SceneDecorLayer, SceneEntryPresentation, Source, StudioBridge, StudioPreferences } from '@galcraft/contracts';
 import { IdSchema } from '@galcraft/contracts';
 import { createCommandRegistry, parse, parseExpression, printExpression } from '@galcraft/dsl';
 import { AuthoringController, classifyAssetDrop, mergeDialoguePaste, previewDialoguePaste } from './controller.js';
@@ -90,7 +90,7 @@ import { designerText } from './designer-strings.js';
 import { designerPageName } from './designer-labels.js';
 import { createElement, createRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { flushSync } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { AuthoringWorkbench, DomRegion, authoringDockTools, openAuthorDocument, productionDocumentId, restoredAuthorDocumentId, type AuthorDocument, type AuthorDocumentRegion, type AuthorSceneCompanion, type AuthoringWorkbenchProps } from './workbench-host.js';
 import { allGroups, groups, validLayout } from '../components/workbench/zoned-layout.js';
 import './assets-workbench.css';
@@ -106,6 +106,11 @@ import './shell.css';
 import './refinements.css';
 import './creation-refinements.css';
 import { Projects, type ProjectDraft } from '../pages/Projects/Projects.js';
+import { ProjectDraftReview } from '../pages/Projects/ProjectDraftReview.js';
+import { ProjectMaintenance } from '../pages/Projects/ProjectMaintenance.js';
+import { WorkbenchPreferences } from './WorkbenchPreferences.js';
+import { ConnectionWorkbench } from '../pages/Production/ConnectionWorkbench.js';
+import { StudioOutput, type OutputFailure, type OutputState } from './StudioOutput.js';
 import { CharacterManager, type CharacterGuiDraft, type CharacterManagerProps } from './characters/CharacterManager.js';
 import { CharacterDirectory } from './characters/CharacterDirectory.js';
 import { BindCharacterDifference } from './characters/BindCharacterDifference.js';
@@ -140,14 +145,17 @@ type PersistentWorkspaceInput = {
   startup: import('./startup-editor.js').StartupGuiDraft | null;
   language: import('./project-languages.js').ProjectLanguageGuiDraft | null;
   playerName: import('./player-name.js').PlayerNameGuiDraft | null;
-  production: { gui: ProductionSession['guiDraft']; connection: Omit<NonNullable<ProductionSession['connectionGuiDraft']>, 'secret'> | null; candidateText: [string,string][] } | null;
+  production: { gui: ProductionSession['guiDraft']; connection: Omit<NonNullable<ProductionSession['connectionGuiDraft']>, 'secret'> | null; workflow?: ProductionSession['workflowGuiDraft']; candidateText: [string,string][] } | null;
   projectCreate: ProjectDraft; documents: AuthorDocument[]; active: string; page: Page; sceneId: string | null; view: AuthoringController['view'];
   forms: { id: string; title: string; fields: FieldInputDraft[]; adapter?: Json }[];
   retained?: Json | null;
 };
 
 type CharacterSessionDraft = CharacterGuiDraft & { views?: Record<Id, Pick<CharacterGuiDraft, 'section' | 'differenceId'>> };
-type Page = 'projects' | 'editor' | 'assets' | 'pages' | 'production' | 'assistant' | 'collaboration' | 'plugins' | 'publish' | `extension:${string}`;
+type Page = 'projects' | 'editor' | 'assets' | 'pages' | 'production' | 'assistant' | 'collaboration' | 'plugins' | 'connections' | 'maintenance' | 'publish' | `extension:${string}`;
+const supportPages = ['collaboration', 'plugins', 'connections', 'maintenance', 'publish'] as const;
+type SupportPage = typeof supportPages[number];
+const isSupportPage = (page: Page): page is SupportPage => (supportPages as readonly Page[]).includes(page);
 const restoredAuthorDocuments = (documents: AuthorDocument[]) => {
   const restored = new Map<string, AuthorDocument>();
   for (const document of documents) {
@@ -475,6 +483,24 @@ export class AuthoringWorkspace {
   private production: ProductionSession | null = null;
   private productionUnapplied = false;
   private publishUnapplied = false;
+  private releaseIssues: Issue[] = [];
+  private issueReturn: 'publish' | 'problems' | null = null;
+  private output: OutputState = { scrollTop: 0 };
+  private outputFailure?: OutputFailure;
+  private pendingBuild?: string;
+  private outputNode = el('div', 'studio-output-scroll');
+  private outputRoot: Root | null = null;
+  private preferencesNode = el('div', 'workbench-preferences-mount');
+  private preferencesRoot: Root | null = null;
+  private connectionOrigin: ProductionSession['selectedRecord'] = null;
+  private connectionUnapplied = false;
+  private setConnectionUnapplied = (dirty: boolean) => {
+    if (this.connectionUnapplied === dirty) return;
+    this.connectionUnapplied = dirty;
+    this.persistInputDraft();
+  };
+  private missingPlugin: { id: string; version: string } | null = null;
+  private projectCenterOrigin: string | null = null;
   private publishGuiDraft:PublishGuiDraft|null=null;
   private capturePublishGui=(draft:PublishGuiDraft)=>{this.publishGuiDraft=draft;this.persistInputDraft();};
   private setPublishUnapplied = (dirty: boolean) => { this.publishUnapplied = dirty; this.documents = this.documents.map(document => document.id === 'route:publish' ? { ...document, dirty: dirty || this.controller.source?.projectDirty } : document); this.refreshDocumentTabs();void this.reportAuthoringDrafts(); };
@@ -517,21 +543,14 @@ export class AuthoringWorkspace {
   private setProjectCreateUnapplied = (dirty: boolean) => { this.projectCreateUnapplied = dirty; };
   private projectDraft: ProjectDraft = { name: '', template: 'standard', width: 1920, height: 1080, engineVersion: '' };
   private workbenchNode = el('div', 'workbench-mount');
+  private supportNodes = new Map(supportPages.map(page => [page, el('div', 'workbench-mount')]));
   private workbench: Root | null = null;
-  private collaborationInspector = el('div','collaboration-inspector-mount');
-  private collaborationExplorer = el('div','collaboration-explorer-mount');
   private collaborationSubscriptions: (()=>void)[] = [];
   private productionInspector = el('div', 'production-inspector-mount');
   private productionDirectory = el('div', 'production-directory-mount');
   private productionDocument = el('div', 'studio-content workbench-route-host production-document-host');
   private productionNode = el('div', 'workbench-mount');
   private productionRoot: Root | null = null;
-  private projectsExplorer = el('div', 'projects-explorer-mount');
-  private projectsInspector = el('div', 'projects-inspector-mount');
-  private pluginsExplorer = el('div', 'plugins-explorer-mount');
-  private pluginsInspector = el('div', 'plugins-inspector-mount');
-  private publishExplorer = el('div', 'publish-explorer-mount');
-  private publishInspector = el('div', 'publish-inspector-mount');
   private shellNode = el('div', 'production-workbench-mount authoring-shell');
   private shellRoot: Root | null = null;
   private shellProps: AuthoringWorkbenchProps | null = null;
@@ -749,6 +768,7 @@ export class AuthoringWorkspace {
     this.page = this.controller.source ? 'editor' : 'projects';
     if (this.controller.source) {
       await this.rememberOpenProject();
+      await this.refreshEngineHealth();
       await this.loadQuickAssets(); await this.refreshStudioPlugins();
     }
     this.restoreSceneLayout();
@@ -760,6 +780,7 @@ export class AuthoringWorkspace {
     const collaborationBridge=this.services.bridge as import('../../desktop-bridge.js').DesktopBridge;
     if (collaborationBridge.onCollaborationChanged) this.collaborationSubscriptions.push(collaborationBridge.onCollaborationChanged(() => {
       void (async () => {
+        if (this.controller.engineIssue) await this.refreshEngineHealth();
         if (!await this.flushScript()) return;
         await this.controller.refresh();
         if (this.assetPage?.indexRevision !== this.controller.source?.assetIndexRevision) await this.showAssets();
@@ -825,6 +846,13 @@ export class AuthoringWorkspace {
       if (!result.ok) this.notice(result);
     }
   }
+  private async refreshEngineHealth(): Promise<void> {
+    const projectId = this.controller.source?.project.projectId;
+    if (!projectId || !this.services.bridge.engines?.health) return;
+    const health = await this.services.bridge.engines.health().catch(() => null);
+    if (health?.ok && projectId === this.controller.source?.project.projectId)
+      this.controller.engineIssue = health.value.issues.find(issue => issue.severity === 'error') ?? null;
+  }
   dispose(): void {
     this.sidebarView?.view.dispose();
     this.scriptMounts.clear();
@@ -845,6 +873,7 @@ export class AuthoringWorkspace {
     this.playerNameEditor?.dispose();this.languageRoot?.unmount(); this.startupRoot?.unmount(); this.characterRoot?.unmount(); this.graphRoot?.unmount(); this.projectsRoot?.unmount(); this.workbench?.unmount(); this.productionRoot?.unmount();
     for (const toolbar of this.sceneToolbars.values()) toolbar.root.unmount();
     this.sceneToolbars.clear();
+    this.outputRoot?.unmount(); this.preferencesRoot?.unmount();
     this.shellRoot?.unmount(); this.shellRoot = null; this.controller.close(); void this.studioPlugins?.dispose();
   }
   private presetLifecycle(args: Record<string, unknown>, preset: AppliedAnimationPreset) {
@@ -1022,8 +1051,8 @@ export class AuthoringWorkspace {
       publish: this.publishGuiDraft, resourceProcessor: this.resourceProcessorGuiDraft, character: this.characterGuiDraft,
       startup: this.startupGuiDraft, language: this.languageEditor.current?.capture() ?? this.languageGuiDraft,
       playerName: this.playerNameEditor?.capture() ?? this.playerNameGuiDraft,
-      production: this.production ? { gui: this.production.guiDraft, connection: connection ? { edit: connection.edit, provider: connection.provider, advanced: connection.advanced, baseline: connection.baseline, selection: connection.selection } : null, candidateText: [...this.production.candidateText] } : this.productionGuiResume,
-      projectCreate: this.projectDraft, documents: this.documents.filter(document => !this.formDocuments.has(document.id)), active: this.activeDocument, page: this.page,
+      production: this.production ? { gui: this.production.guiDraft, connection: connection ? { edit: connection.edit, provider: connection.provider, advanced: connection.advanced, baseline: connection.baseline, selection: connection.selection } : null, workflow: this.production.workflowGuiDraft, candidateText: [...this.production.candidateText] } : this.productionGuiResume,
+      projectCreate: this.projectDraft, documents: this.documents.filter(document => !this.formDocuments.has(document.id) || document.id.startsWith('plugin-document:')), active: this.activeDocument, page: this.page,
       sceneId: this.controller.scene?.sceneId ?? null, view: this.controller.view,
       forms: [...this.recoveredForms, ...[...this.formDocuments].filter(([,form]) => form.dirty()||!!form.capture).map(([id, form]) => ({ id, title: this.documents.find(document => document.id === id)?.title ?? id, fields: captureFieldInputs(form.node), adapter:form.capture?.() })), ...[...this.insertions].filter(([,form]) => form.dirty()).map(([id,form]) => ({ id: `insertion:${id}`, title: tr(this.controller.preferences.locale,'待插入内容','Pending insertion','挿入待ちの内容'), fields: captureFieldInputs(form.node),adapter:form.capture?.() }))],
       retained: retainedWorkspaceInput(this.retainedInput, source.project) };
@@ -1066,7 +1095,13 @@ export class AuthoringWorkspace {
         }
         this.publishGuiDraft = draft.publish; this.resourceProcessorGuiDraft = draft.resourceProcessor;
         this.characterGuiDraft = draft.character; this.characterSelected = draft.character?.selected ?? undefined;
-        this.startupGuiDraft = draft.startup; this.languageGuiDraft = draft.language; this.playerNameGuiDraft = draft.playerName;
+        this.startupGuiDraft = draft.startup && {
+          ...draft.startup,
+          displayPending: draft.startup.displayPending ?? draft.otherUnapplied ?? draft.unapplied ?? false,
+        };
+        this.startupDraft = !!this.startupGuiDraft && (Object.keys(this.startupGuiDraft.buffers).length > 0 ||
+          !!this.startupGuiDraft.displayPending && JSON.stringify(this.startupGuiDraft.display) !== JSON.stringify(source.project.display));
+        this.languageGuiDraft = draft.language; this.playerNameGuiDraft = draft.playerName;
         this.productionGuiResume = draft.production; this.projectDraft = draft.projectCreate;
         this.recoveredForms = []; this.retainedInput = retainedWorkspaceInput(draft.retained, source.project);
         this.documents = restoredAuthorDocuments(draft.documents.filter(document => document.kind !== 'scene' || source.scenes.some(scene => scene.sceneId === document.objectId)));
@@ -1213,6 +1248,8 @@ export class AuthoringWorkspace {
     this.inputDraftRestoredProject = null; this.professionalInputs.clear();this.inputOriginVersions=null;this.characterGuiDraft = null; this.startupGuiDraft = null; this.languageGuiDraft = null; this.playerNameGuiDraft = null; this.productionGuiResume = null; this.recoveredForms = []; this.retainedInput = null;this.recoveryReviewed=false;
     this.characterDocumentIds = new Map(); this.characterHistory = new Map();
     this.publishGuiDraft=null;this.publishUnapplied=false;this.resourceProcessorGuiDraft=null;this.resourceProcessorUnapplied=false;
+    this.releaseIssues = []; this.issueReturn = null; this.outputFailure = undefined; this.pendingBuild = undefined;
+    this.connectionOrigin = null; this.connectionUnapplied = false; this.missingPlugin = null; this.projectCenterOrigin = null;
     this.resourceProcessorRoot?.unmount(); this.resourceProcessorRoot=null; this.resourceProcessorInspector.replaceChildren();
     this.production?.stop(); this.production = null; this.designer?.dispose(); this.designer = null; this.designerResume = null; this.miniStage?.dispose(); this.miniStage = null;
     this.animationMiniStage?.dispose(); this.animationMiniStage = null;
@@ -1240,7 +1277,7 @@ export class AuthoringWorkspace {
     this.assetQuery = { kind: null, text: '', offset: 0, limit: 40 };
     await this.studioPlugins?.dispose(); this.studioPlugins = null; this.services.assetUi = undefined; this.assetTypes = [];
     this.assetInspectorView && disposeAssetInspector(this.assetInspectorView.node); this.assetInspectorView = null;
-    if (this.controller.source) { await this.rememberOpenProject(); await this.loadQuickAssets(); }
+    if (this.controller.source) { await this.rememberOpenProject(); await this.refreshEngineHealth(); await this.loadQuickAssets(); }
     await this.refreshStudioPlugins(); this.page = this.controller.source ? 'editor' : 'projects';
     const active = this.restoreWorkbenchDocuments();
     this.restoreAssetWorkspace();
@@ -1285,8 +1322,14 @@ export class AuthoringWorkspace {
   }
   private restoreWorkbenchDocuments(): AuthorDocument | undefined {
     const workbench = this.controller.workbench;
+    this.output = workbench?.output ?? { scrollTop: 0 };
+    this.outputNode.scrollTop = 0;
+    this.projectCenterOrigin = workbench?.projectCenterOrigin ?? null;
+    this.connectionOrigin = workbench?.connectionOrigin ?? null;
     this.documents = restoredAuthorDocuments(workbench?.documents ?? []);
-    return this.documents.find(document => document.id === restoredAuthorDocumentId(workbench?.active ?? ''));
+    const active = restoredAuthorDocumentId(workbench?.active ?? '');
+    return this.documents.find(document => document.id === active)
+      ?? (active.startsWith('plugin-document:') ? { id: active, kind: 'route', objectId: 'plugins', title: active } : undefined);
   }
   private missingDocument(document: Pick<AuthorDocument, 'kind' | 'objectId'> | undefined): boolean {
     const source = this.controller.source;
@@ -1310,6 +1353,15 @@ export class AuthoringWorkspace {
     this.dock.current?.focusView(`scene:${id}`);
   }
   private async resumeWorkbench(active: AuthorDocument | undefined): Promise<void> {
+    const pluginId = this.activeDocument.startsWith('plugin-document:') ? this.activeDocument : active?.id.startsWith('plugin-document:') ? active.id : null;
+    if (pluginId && !this.formDocuments.has(this.activeDocument)) {
+      const plugin = this.documents.find(document => document.id === pluginId)
+        ?? (active?.id === pluginId ? active : { id: pluginId, kind: 'route', objectId: 'plugins', title: pluginId } as const);
+      this.activeDocument = 'route:plugins';
+      this.page = 'plugins';
+      await this.openDocument(plugin);
+      return;
+    }
     if (active && !this.activeDocument) {
       await this.openDocument(active);
       if (this.activeDocument) return;
@@ -1324,8 +1376,8 @@ export class AuthoringWorkspace {
       return scene ? [{ sceneId, revision: scene.revision, ...context, beside: [...(this.sceneViewContexts.get(sceneId) ?? [])].map(([view, pane]) => ({ view, ...pane })) }] : [];
     });
     this.controller.rememberWorkbench({
-      documents: this.documents.filter(doc => !doc.preview && !this.formDocuments.has(doc.id)).map(({ id, title, kind, objectId }) => ({ id, title, kind, ...(objectId ? { objectId } : {}) })),
-      active: this.formDocuments.get(this.activeDocument)?.source ?? this.activeDocument,
+      documents: this.documents.filter(doc => !doc.preview && (!this.formDocuments.has(doc.id) || doc.id.startsWith('plugin-document:'))).map(({ id, title, kind, objectId }) => ({ id, title, kind, ...(objectId ? { objectId } : {}) })),
+      active: this.activeDocument.startsWith('plugin-document:') ? this.activeDocument : this.formDocuments.get(this.activeDocument)?.source ?? this.activeDocument,
       ...(this.splitSceneViews.size ? { sceneSplits: [...this.splitSceneViews].map(([sceneId, views]) => ({ sceneId, views })) } : {}),
       sceneContexts,
       pageViews: this.designer?.workbenchViews() ?? this.controller.workbench?.pageViews,
@@ -1337,6 +1389,9 @@ export class AuthoringWorkspace {
       semanticSearch: { mode, term, target, targetLabel, scope, variableAccess, offset, hasSearched, searchScrollTop },
       ...(this.dockLayout ? { dockLayout: this.dockLayout } : {}),
       assets: this.captureAssetWorkspace(),
+      output: this.output,
+      ...(this.projectCenterOrigin ? { projectCenterOrigin: this.projectCenterOrigin } : {}),
+      ...(this.connectionOrigin ? { connectionOrigin: this.connectionOrigin } : {}),
     });
   }
   private captureAssetWorkspace(): NonNullable<NonNullable<import('@galcraft/contracts').WorkspaceResume['workbench']>['assets']> {
@@ -1692,6 +1747,11 @@ export class AuthoringWorkspace {
     this.freezeDocumentRegion();
     const form = document.id && this.formDocuments.get(document.id);
     if (form) { this.page = form.page; this.activeDocument = document.id!; this.render(); return; }
+    if (document.id?.startsWith('plugin-document:') && this.studioPlugins) {
+      const result = await this.studioPlugins.reopenDocument(document.id.slice('plugin-document:'.length));
+      if (!this.notice(result)) { await this.navigate('plugins'); this.render(); }
+      return;
+    }
     if (document.kind === 'characters') {
       const characters = this.controller.source?.characters;
       const selected = this.characterSelected ?? this.characterGuiDraft?.selected;
@@ -1803,12 +1863,21 @@ export class AuthoringWorkspace {
           this.assetPreviewVersions.delete(document.objectId);
           this.disposeAssetPreview(document.objectId);
         }
-        if (this.activeDocument === id) { const next = this.documents[Math.min(index, this.documents.length - 1)]; if (next) await this.openDocument(next); else { this.activeDocument = 'empty'; this.page = 'editor'; this.render(); } } else this.render();
+        if (this.activeDocument === id) { const next = this.documents[Math.min(index, this.documents.length - 1)]; if (next) await this.openDocument(next); else { this.activeDocument = 'empty'; this.page = this.controller.source ? 'editor' : 'projects'; this.render(); } } else this.render();
         if (pageCompanion) this.dock.current?.close(pageCompanion);
         resolve(true);
       };
       const pageDraft = !!form?.dirty() || document.kind === 'page' && !!this.designer?.workbenchHasDraft(document.objectId ?? '') || (document.kind === 'characters' && this.characterDraft || document.kind === 'character' && !!this.characterGuiDraft?.drafts[document.objectId!]) || document.kind === 'startup' && this.startupDraft || document.id === 'project' && (!!this.playerNameEditor?.dirty || !!this.languageEditor.current?.dirty) || document.id === 'route:publish' && this.publishUnapplied;
-      if (document.dirty || pageDraft) {
+      if (id === 'route:connections' && this.connectionUnapplied) {
+        const locale = this.controller.preferences.locale;
+        this.documentConfirm = {
+          title: tr(locale, '关闭连接配置？', 'Close connection settings?', '接続設定を閉じますか？'),
+          description: tr(locale, '配置草稿保留在当前工作台。重开连接可继续编辑。', 'The configuration draft stays in this workbench. Reopen Connections to continue editing.', '設定の下書きは作業スペースに保持されます。接続を開くと編集を再開できます。'),
+          close: () => { this.documentConfirm = null; this.render(); resolve(false); },
+          actions: [{ label: tr(locale, '保留草稿并关闭', 'Keep draft and close', '下書きを保持して閉じる'), run: () => finish() }],
+        };
+        this.render();
+      } else if (document.dirty || pageDraft) {
         const saveAndClose = async () => {
           const scope = await this.discardScope(document);
           if (!scope) throw new Error('当前文档的保存范围不可用');
@@ -2101,7 +2170,7 @@ export class AuthoringWorkspace {
       if (this.productionUnapplied || this.publishUnapplied) {
         const discardProduction=this.productionUnapplied,discardPublish=this.publishUnapplied;
         this.workbench?.unmount(); this.workbench=null;
-        if(discardProduction&&this.production){this.production.guiDraft=null;this.production.connectionGuiDraft=null;this.production.connectionDirty=false;}
+        if(discardProduction&&this.production){this.production.guiDraft=null;this.production.connectionGuiDraft=null;this.production.connectionDirty=false;this.production.workflowGuiDraft=null;this.production.workflowDirty=false;}
         if(discardPublish)this.publishGuiDraft=null;
         this.productionUnapplied=false; this.publishUnapplied=false;
       }
@@ -2152,18 +2221,13 @@ export class AuthoringWorkspace {
     const locale = this.controller.preferences.locale, api = this.services.bridge.documents;
     try {
       const draft = await api.listRecovery(); if (!draft.ok) throw new Error(draft.error.message); if (!draft.value) { this.recoveryPending = false; return; }
-      const payload = draft.value as { savedAt?: string; documents?: { files: Record<string, string> }[] };
-      const paths = [...new Set(payload.documents?.flatMap(item => Object.keys(item.files)) ?? [])];
-      let choice = 'restore';
+      const saved = await api.list(); if (!saved.ok) throw new Error(saved.error.message);
+      let choice: 'restore' | 'discard' = 'restore';
       const result = await requestDialog({ title: tr(locale, '恢复未保存内容', 'Recover unsaved work', '未保存の作業を復元'), locale, review: true,
         description: tr(locale, '检测到上次退出时保留的草稿。恢复后仍需审阅并保存；取消会保留草稿，稍后可继续处理。', 'A draft from the previous session is available. Review and save after restoring. Cancel keeps the draft for later.', '前回の草稿があります。復元後に内容を確認して保存してください。キャンセルすると草稿を保持します。'),
-        content: createElement('div', { className: 'document-recovery' },
-          createElement('p', {}, payload.savedAt ? new Date(payload.savedAt).toLocaleString(locale) : ''),
-          createElement('ul', {}, paths.map(path => createElement('li', { key: path }, path))),
-          createElement('label', {}, createElement('input', { type: 'radio', name: 'recovery-choice', defaultChecked: true, onChange: () => { choice = 'restore'; } }), tr(locale, '恢复草稿', 'Restore draft', '草稿を復元')),
-          createElement('label', {}, createElement('input', { type: 'radio', name: 'recovery-choice', onChange: () => { choice = 'discard'; } }), tr(locale, '放弃草稿，使用已保存内容', 'Discard draft and use saved content', '草稿を破棄して保存済みの内容を使用'))),
+        content: createElement(ProjectDraftReview, { locale, saved: saved.value, draft: draft.value, onChoice: value => { choice = value; } }),
         confirmLabel: tr(locale, '应用恢复选择', 'Apply recovery choice', '復元の選択を適用'), confirm: async () => {
-          const recovered = await api.recover(choice as 'restore' | 'discard');
+          const recovered = await api.recover(choice);
           if (!recovered.ok) {
             if (recovered.error.code !== 'RECOVERY_CONFLICT') throw new Error(recovered.error.message);
             const rows = await api.getRecoveryConflict(); if (!rows.ok) throw new Error(rows.error.message);
@@ -2252,6 +2316,8 @@ export class AuthoringWorkspace {
     if (!all && !documentId) return;
     const scope: SaveReviewScope = asset ? { kind: 'objects', objects: [{ kind: 'asset', documentId: asset.documentId!, objectId: asset.objectId }] }
       : all ? { kind: 'all' } : { kind: 'current', documentId: documentId! };
+    const sourceView = asset ? `asset:${asset.objectId}` : inspectorScene ? `scene:${inspectorScene.sceneId}` : this.activeDocument;
+    const savingProject = this.controller.source?.project.projectId;
     const listed = await this.services.bridge.documents.list();
     if (!this.notice(listed)) return;
     const plan = await this.services.bridge.documents.planSave(revisionedSaveReviewScope(scope, listed.value));
@@ -2274,6 +2340,16 @@ export class AuthoringWorkspace {
     const names = Object.fromEntries(listed.value.map(document => [document.documentId, name(document.documentId)]));
     const commit = async (savePlan: SavePlan) => {
       const result = await this.controller.savePlanned(savePlan);
+      if (this.controller.source?.project.projectId === savingProject) {
+        if (result.ok) {
+          this.output.saved = { receipt: result.value, source: sourceView };
+          if (this.outputFailure?.kind === 'save') this.outputFailure = undefined;
+        } else {
+          this.outputFailure = { kind: 'save', id: savePlan.planId, issue: result.error, cancelled: false };
+        }
+        this.renderOutput();
+        this.rememberWorkbench();
+      }
       if (!result.ok && result.error.code === 'EXTERNAL_CONFLICT') {
         const api = this.services.bridge.documents, rows = await api.getConflict(savePlan.planId); if (!rows.ok) throw new Error(rows.error.message);
         const resolved = await reviewFileConflicts({ locale, conflicts: rows.value, chooseDirectory: () => this.services.chooseDirectory(), resolve: (choice, path) => api.resolveConflict(savePlan.planId, choice, path), refresh: () => api.getConflict(savePlan.planId) });
@@ -2985,11 +3061,11 @@ export class AuthoringWorkspace {
     await this.focusAsset(assetId);
     if (projectId === this.controller.source?.project.projectId) this.revealAssetReferences();
   }
-  private async locateIssue(source: Source): Promise<void> {
+  private async locateIssue(source: Source, origin?: 'publish' | 'problems'): Promise<void> {
     if (!await this.flushScript()) return;
     const scene = this.controller.source?.scenes.find(item => item.documentId === source.documentId);
     if (this.canLocateAssetReference(source) && (!scene || !source.statementId && source.field)) {
-      if (await this.openAssetReferenceTarget(source)) this.render();
+      if (await this.openAssetReferenceTarget(source)) { this.issueReturn = origin ?? null; this.render(); }
       return;
     }
     const unavailable = () => {
@@ -2997,12 +3073,57 @@ export class AuthoringWorkspace {
       this.message = tr(this.controller.preferences.locale, '此问题的来源已变化或无法打开。请重新检查作品。', 'The problem source changed or could not be opened. Run the project check again.', '問題の参照元が変わったか、開けません。作品を再確認してください。');
       this.render();
     };
-    if (!scene || scene.revision !== source.revision) return unavailable();
+    if (!scene) {
+      const project = this.controller.source;
+      const listed = await this.services.bridge.documents.list();
+      if (!listed.ok || this.controller.source?.project.projectId !== project?.project.projectId) return unavailable();
+      const owner = listed.value.find(item => item.documentId === source.documentId && item.revision === source.revision);
+      if (!owner || !project) return unavailable();
+      if ('project.json' in owner.files) {
+        if (source.field?.startsWith('/data/display/startup')) await this.openDocument({ kind: 'startup', title: tr(this.controller.preferences.locale, '启动与主页', 'Startup & home', '起動とホーム') });
+        else await this.openDocument({ kind: 'project' });
+      } else if ('dependencies.lock.json' in owner.files) {
+        await this.navigate('maintenance');
+      } else if ('assets/index.json' in owner.files && source.field) {
+        const index = /^\/data\/assets\/(\d+)(\/|$)/.exec(source.field)?.[1];
+        const asset = index === undefined ? undefined : (JSON.parse(owner.files['assets/index.json']).data.assets[Number(index)] as Asset | undefined);
+        if (!asset) return unavailable();
+        await this.previewAsset(asset.id, asset.activeVariantId);
+      } else if (Object.keys(owner.files).some(path => path.startsWith('plugins/')) && this.studioPlugins) {
+        if (!this.notice(await this.studioPlugins.reopenDocument(owner.documentId))) { this.render(); return; }
+      } else {
+        const page = Object.keys(owner.files).find(path => /^ui\/pages\/[^/]+\.json$/.test(path));
+        if (!page) return unavailable();
+        await this.openDocument({ kind: 'page', objectId: page.slice('ui/pages/'.length, -'.json'.length) });
+      }
+      this.issueReturn = origin ?? null; this.render();
+      return;
+    }
+    if (scene.revision !== source.revision) return unavailable();
     if (!await this.openSceneTarget(scene.sceneId)) return;
     if (this.controller.scene?.revision !== source.revision) return unavailable();
     this.chooseSceneView('script');
     this.revealScriptOffset(source.statementId ?? null, source.range?.start ?? 0);
+    this.issueReturn = origin ?? null;
     this.render();
+  }
+  private async locateProblem(issue: Issue, origin: 'problems' | 'publish' = 'problems'): Promise<void> {
+    if (issue.source) return this.locateIssue(issue.source, origin);
+    const details = issue.details;
+    const dependency = details && typeof details === 'object' && !Array.isArray(details) ? details.dependency : null;
+    if (dependency && typeof dependency === 'object' && !Array.isArray(dependency)
+      && dependency.kind === 'plugin' && typeof dependency.id === 'string' && typeof dependency.version === 'string') {
+      this.missingPlugin = { id: dependency.id, version: dependency.version };
+      await this.navigate('plugins');
+    } else if (issue.code.startsWith('ENGINE_')) await this.navigate('maintenance');
+    else if (issue.owner === 'M11') {
+      await this.navigate('publish');
+      if (issue.code.startsWith('BUILD_OUTPUT_')) requestAnimationFrame(() => {
+        this.supportNodes.get('publish')?.querySelector<HTMLElement>('[data-field="output"] input')?.focus();
+      });
+    }
+    else return;
+    this.issueReturn = origin; this.render();
   }
   private notice<T>(result: Result<T>, recovery?: { label: string; run(): void }): result is Extract<Result<T>, { ok: true }> {
     if (!result.ok) {
@@ -3103,7 +3224,9 @@ export class AuthoringWorkspace {
     if (previousContent && this.renderedPage) this.pageScroll.set(this.renderedPage, previousContent.scrollTop);
     const previousPage = this.renderedPage, routeChanged = previousPage !== this.page; this.renderedPage = this.page;
     const assetDocument = this.documents.find(item => item.id === this.activeDocument && item.kind === 'asset');
-    if (!['collaboration','plugins','publish'].includes(this.page)) for (const media of this.workbenchNode.querySelectorAll<HTMLMediaElement>('audio,video')) { media.pause(); media.currentTime = 0; }
+    for (const [page, node] of this.supportNodes) if (this.page !== page) {
+      for (const media of node.querySelectorAll<HTMLMediaElement>('audio,video')) media.pause();
+    }
     if (routeChanged || this.pluginRenderLocale !== this.controller.preferences.locale) this.studioPlugins?.unmountViews();
     this.pluginRenderLocale = this.controller.preferences.locale;
     if (this.designer) this.designerResume = this.designer.capture();
@@ -3112,10 +3235,13 @@ export class AuthoringWorkspace {
     const locale = this.controller.preferences.locale;
     if (this.root.lang !== locale) { this.miniStage?.dispose(); this.miniStage = null; this.animationMiniStage?.dispose(); this.animationMiniStage = null; this.stageRegion = null; if(this.designer){this.designerResume=this.designer.capture();this.designer.dispose();this.designer=null;} }
     this.root.lang = locale; this.root.dataset.theme = this.controller.preferences.theme;
+    const { fontFamily, fontSize } = this.controller.preferences.editor;
+    this.root.style.setProperty('--studio-editor-font-family', fontFamily === DefaultStudioPreferences.editor.fontFamily ? 'var(--font-sans)' : fontFamily);
+    this.root.style.setProperty('--studio-editor-font-size', `${fontSize}px`);
     let portals = document.getElementById('studio-portals');
     if (!portals) { portals = el('div'); portals.id = 'studio-portals'; document.body.append(portals); installTransientScrollbars(portals); observeFormHints(portals); }
     portals.dataset.theme = this.controller.preferences.theme; portals.lang = locale;
-    const routes = [['projects',this.t('projects'),'folder'],['editor',this.t('editor'),'edit'],['assets',this.t('assets'),'image'],['production',tr(locale,'制作','Produce','制作'),'spark'],['collaboration',tr(locale,'协作','Collaborate','連携'),'collaboration'],['pages',designerText('页面',locale),'layout'],['plugins',tr(locale,'插件','Plugins','拡張'),'package'],['publish',tr(locale,'发布','Publish','公開'),'publish']] as const;
+    const routes = [['projects',tr(locale,'项目中心','Project center','作品センター'),'folder'],['editor',this.t('editor'),'edit'],['assets',this.t('assets'),'image'],['production',tr(locale,'制作','Produce','制作'),'spark'],['collaboration',tr(locale,'协作活动','Collaboration activity','連携アクティビティ'),'collaboration'],['pages',designerText('页面',locale),'layout'],['plugins',tr(locale,'插件','Plugins','拡張'),'package'],['connections',tr(locale,'连接','Connections','接続'),'collaboration'],['maintenance',tr(locale,'作品维护','Project maintenance','作品メンテナンス'),'folder'],['publish',tr(locale,'发布','Publish','公開'),'publish']] as const;
     const railItems: RailItem[] = routes.map(([page,label,icon]) => ({key:page,label,icon,current:this.page===page,disabled:page!=='projects'&&!this.controller.source}));
     const extensions = this.studioPlugins?.workbenches() ?? [];
     if (this.controller.source && extensions.length) {
@@ -3125,7 +3251,7 @@ export class AuthoringWorkspace {
       }
     }
     const content = this.page === 'production' ? this.productionDocument
-      : el('div', 'studio-content' + (['collaboration','plugins','publish'].includes(this.page) ? ' workbench-route-host' : '') + (routeChanged ? ' route-enter' : ''));
+      : el('div', 'studio-content' + (isSupportPage(this.page) ? ' workbench-route-host' : '') + (routeChanged ? ' route-enter' : ''));
     if (this.studioPlugins?.loadError) { const error = el('p', 'workbench-error', this.studioPlugins.loadError); error.setAttribute('role', 'alert'); content.append(error); }
     if (this.message && !this.noticeIssue) { const notice = el('div', 'authoring-notice'); notice.dataset.tone = this.messageTone; notice.setAttribute('role', this.messageTone === 'error' ? 'alert' : 'status');
       const dismiss = button('', () => { this.message = ''; this.noticeText=''; this.render(); }); dismiss.ariaLabel = tr(locale, '关闭提示', 'Dismiss notification', '通知を閉じる'); dismiss.append(actionIcon('close'));
@@ -3181,6 +3307,7 @@ export class AuthoringWorkspace {
       this.productionRoot.render(createElement(Production, {
         productionHost: this.studioPlugins, onUnappliedChange: this.setProductionUnapplied, onReviewChange: this.setProductionReview,
         session, services: this.services, locale, navigate: page => void this.navigate(page as Page), changed,
+        openConnections: () => { this.connectionOrigin = session.selectedRecord; void this.navigate('connections'); },
         returnToOrigin: origin => this.returnToProductionOrigin(origin),
         bindFigure: (asset, variantId, characterId) => this.bindAssetDifference(asset, variantId, characterId),
         documentActive: this.page === 'production', inspectorContainer: this.productionInspector, revealInspector: () => this.revealInspector(),
@@ -3193,18 +3320,57 @@ export class AuthoringWorkspace {
         },
       }));
     }
-    if (source && (this.workbench || ['collaboration','plugins','publish'].includes(this.page))) {
-      this.workbench ??= createRoot(this.workbenchNode);if(['collaboration','plugins','publish'].includes(this.page))content.append(this.workbenchNode);
-      this.workbench.render(createElement('div',{className:'workbench-pages'},
-        createElement('div',{hidden:this.page!=='collaboration'},createElement(Collaboration,{bridge:(this.services.bridge as import('../../desktop-bridge.js').DesktopBridge).collaboration,locale,active:this.page==='collaboration',explorerContainer:this.collaborationExplorer,inspectorContainer:this.collaborationInspector})),
-        createElement('div',{hidden:this.page!=='plugins'},createElement(Plugins,{bridge:workbenchBridge(this.services.bridge),locale,projectId:source.project.projectId,authorHost:this.studioPlugins,explorerContainer:this.pluginsExplorer,inspectorContainer:this.pluginsInspector,documentActive:this.page==='plugins',revealInspector:()=>this.revealInspector(),changed:async()=>{await this.controller.refresh();await this.refreshStudioPlugins();this.render();}})),
-        createElement('div',{hidden:this.page!=='publish'},createElement(Publish,{onHistoryReady:this.setPublishHistory,key:this.publishDraftRevision,guiDraft:this.publishGuiDraft,onGuiDraftChange:this.capturePublishGui,services:this.services,source,locale,changed,onUnappliedChange:this.setPublishUnapplied,saveAll:()=>this.save(true),explorerContainer:this.publishExplorer,inspectorContainer:this.publishInspector,documentActive:this.page==='publish',revealInspector:()=>this.revealInspector(),locateSource:target=>{void this.locateIssue(target);}}))));
+    if (source && (this.workbench || isSupportPage(this.page))) {
+      this.workbench ??= createRoot(this.workbenchNode);
+      if (isSupportPage(this.page)) content.append(this.supportNodes.get(this.page)!);
+      const bridge = this.services.bridge as import('../../desktop-bridge.js').DesktopBridge;
+      const visit = (page: SupportPage) => this.page === page || this.documents.some(document => document.id === `route:${page}`);
+      const session = visit('connections') ? this.ensureProductionSession() : null;
+      const projectId = source.project.projectId;
+      this.workbench.render([
+        visit('collaboration') && createPortal(createElement(Collaboration, { bridge: bridge.collaboration, locale, active: this.page === 'collaboration', projectId }), this.supportNodes.get('collaboration')!, 'collaboration'),
+        visit('plugins') && createPortal(createElement(Plugins, { bridge: workbenchBridge(this.services.bridge), locale, projectId, authorHost: this.studioPlugins, missingDependency: this.missingPlugin,
+          openConnections: () => { this.connectionOrigin = null; void this.navigate('connections'); }, documentActive: this.page === 'plugins',
+          changed: async () => { await this.controller.refresh(); await this.refreshStudioPlugins(); this.render(); } }), this.supportNodes.get('plugins')!, 'plugins'),
+        session && createPortal(createElement(ConnectionWorkbench, { session, locale, active: this.page === 'connections',
+          onReturn: this.connectionOrigin ? () => { void this.returnToConnectionTask(); } : undefined,
+          onUnappliedChange: this.setConnectionUnapplied }), this.supportNodes.get('connections')!, 'connections'),
+        visit('maintenance') && bridge.upgrades && createPortal(createElement(ProjectMaintenance, { locale, source, upgrades: bridge.upgrades,
+          readDocuments: bridge.documents.list, chooseOldSaves: bridge.builds.chooseOldSaves,
+          engineRepair: bridge.engines.health && bridge.engines.repair ? bridge.engines as Required<Pick<StudioBridge['engines'], 'health' | 'repair'>> : undefined,
+          beforeProjectChange: async () => {
+            if (this.unappliedInput() || !await this.flushScript()) return false;
+            await this.flushInputDrafts(); return true;
+          },
+          onProjectChanged: () => this.refreshCollaborationProject() }), this.supportNodes.get('maintenance')!, 'maintenance'),
+        visit('publish') && createPortal(createElement(Publish, {
+          onHistoryReady: this.setPublishHistory, key: this.publishDraftRevision, guiDraft: this.publishGuiDraft, onGuiDraftChange: this.capturePublishGui,
+          services: this.services, source, locale, changed, onUnappliedChange: this.setPublishUnapplied, saveAll: () => this.save(true), documentActive: this.page === 'publish',
+          openProjectMaintenance: () => { void this.navigate('maintenance'); },
+          locateSource: target => { void this.locateIssue(target, 'publish'); },
+          locateDependency: issue => { void this.locateProblem(issue, 'publish'); },
+          onCheckIssues: issues => { if (this.controller.source?.project.projectId === projectId) { this.releaseIssues = issues; this.render(); } },
+          onBuildStarted: planId => {
+            if (this.controller.source?.project.projectId !== projectId) return;
+            this.pendingBuild = planId;
+            if (this.outputFailure?.kind === 'build') this.outputFailure = undefined;
+            this.renderOutput();
+          },
+          onBuildReceipt: (planId, receipt) => this.recordBuild(planId, receipt),
+          onBuildFailure: (planId, issue, cancelled) => {
+            if (this.controller.source?.project.projectId !== projectId) return;
+            this.pendingBuild = undefined;
+            this.outputFailure = { kind: 'build', id: planId, issue, cancelled }; this.renderOutput();
+          },
+          lastBuild: this.output.built,
+        }), this.supportNodes.get('publish')!, 'publish'),
+      ]);
     }
     if (source && this.studioPlugins) {
       if (this.page.startsWith('extension:')) this.studioPlugins.mountWorkbench(this.page.slice('extension:'.length), content);
       else {
         const slots: Partial<Record<Page, StudioSlot>> = { projects: 'project.overview', editor: 'creation.tools',
-          pages: 'player-ui.tools', assistant: 'player-ui.tools', production: 'production.tools', publish: 'publish.checks', plugins: 'plugins.configuration' };
+          pages: 'player-ui.tools', assistant: 'player-ui.tools', production: 'production.tools', publish: 'publish.checks' };
         const slot = slots[this.page]; if (slot) this.studioPlugins.mountSlot(slot, content);
       }
     }
@@ -3273,16 +3439,29 @@ export class AuthoringWorkspace {
       inspector.append(this.productionInspector);
     } else if (this.page !== 'assets') { const title = routes.find(([page]) => page === this.page)?.[1] ?? this.studioPlugins?.workbenches().find(item => `extension:${item.key}` === this.page)?.title ?? this.page;
       const document: AuthorDocument = { id: `route:${this.page}`, title: typeof title === 'string' ? title : this.page, kind: 'route', objectId: this.page }; this.documents = openAuthorDocument(this.documents, document); this.activeDocument = document.id;
-      explorer = el('div', 'gc-wb-tree-tools'); explorer.append(el('p', '', typeof title === 'string' ? title : this.page)); }
+    }
     if (assetDocument) documentContent = this.renderAssetDocument(assetDocument);
-    if (this.page === 'projects') { explorer = this.projectsExplorer; inspector = el('div', 'projects-inspector-host'); inspector.append(this.projectsInspector); }
-    if (this.page === 'collaboration') {explorer=this.collaborationExplorer;inspector=this.collaborationInspector;}
-    if (this.page === 'plugins') { explorer = this.pluginsExplorer; inspector = el('div', 'plugins-inspector-host'); inspector.append(this.pluginsInspector); }
-    if (this.page === 'publish') { explorer = this.publishExplorer; inspector = el('div', 'publish-inspector-host'); inspector.append(this.publishInspector); }
     for (const slot of content.querySelectorAll<HTMLElement>(':scope > .studio-plugin-slot')) {
       inspector ??= el('aside', 'authoring-inspector'); inspector.append(slot);
     }
     const noticeRegion = el('div');
+    if (this.controller.engineIssue && this.page !== 'maintenance') {
+      const notice = el('div', 'asset-reference-return');
+      notice.setAttribute('role', 'status');
+      notice.append(el('span', '', tr(locale, '作品只读 · 精确引擎不可用', 'Project read-only · Exact engine unavailable', '作品は読み取り専用 · エンジンを利用できません')),
+        button(tr(locale, '打开作品维护', 'Open project maintenance', '作品メンテナンスを開く'), () => this.navigate('maintenance')));
+      noticeRegion.append(notice);
+    }
+    if (this.issueReturn) {
+      const target = this.issueReturn;
+      const back = el('div', 'asset-reference-return');
+      back.append(button(target === 'publish' ? tr(locale, '返回发布检查', 'Return to release check', '配布チェックへ戻る') : tr(locale, '返回问题', 'Return to Problems', '問題に戻る'), async () => {
+        this.issueReturn = null;
+        if (target === 'publish') await this.navigate('publish');
+        else { this.render(); this.dock.current?.open(authoringDockTools.problems); }
+      }));
+      noticeRegion.append(back);
+    }
     if (this.assetReferenceOrigin) {
       const returnBar = el('div', 'asset-reference-return');
       returnBar.append(button(tr(locale, '返回素材', 'Return to assets', '素材に戻る'), () => this.returnToAssetReferenceOrigin()));
@@ -3326,7 +3505,7 @@ export class AuthoringWorkspace {
     this.shellRoot ??= createRoot(this.shellNode); if (this.shellNode.parentNode !== this.root) this.root.append(this.shellNode);
     if (formDocument) { this.activeDocument = formDocumentId; documentContent = formDocument.node; documentToolbar = null; inspector = formDocument.inspector ?? el('section','authoring-inspector',tr(locale,'输入保留在本次编辑会话；应用后进入作品工作区，再通过保存落盘。','Input is kept in this editing session. Apply it to working content, then save to disk.','入力は今回の編集セッションに保持されます。作業内容に適用してから保存してください。')); }
     documentContent.querySelector('.document-recovery-notice')?.remove();
-    if (this.recoveryPending) { const recovery = el('div', 'authoring-toolbar document-recovery-notice'); recovery.setAttribute('role', 'status'); recovery.append(el('span', '', tr(locale, '上次的未保存草稿等待处理，处理后可继续编辑。', 'Resolve the previous unsaved draft to continue editing.', '前回の未保存草稿を処理すると編集を続行できます。')), button(tr(locale, '处理恢复草稿', 'Resolve recovery draft', '復元する草稿を処理'), () => this.reviewRecovery())); documentContent.prepend(recovery); }
+    if (this.recoveryPending && this.page !== 'projects') { const recovery = el('div', 'authoring-toolbar document-recovery-notice'); recovery.setAttribute('role', 'status'); recovery.append(el('span', '', tr(locale, '上次的未保存草稿等待处理，处理后可继续编辑。', 'Resolve the previous unsaved draft to continue editing.', '前回の未保存草稿を処理すると編集を続行できます。')), button(tr(locale, '处理恢复草稿', 'Resolve recovery draft', '復元する草稿を処理'), () => this.reviewRecovery())); documentContent.prepend(recovery); }
     const activeKind = this.documents.find(item => item.id === this.activeDocument)?.kind;
     const pilot = this.page === 'editor' && (!activeKind || activeKind === 'scene' || activeKind === 'scene-graph');
     this.root.dataset.authoringPilot = String(pilot); portals.dataset.authoringPilot = String(pilot);
@@ -3368,7 +3547,7 @@ export class AuthoringWorkspace {
         action: value => { void this.shellAction(value).catch(actionFailed); },
         preferences: value => { void this.preference(p => ({ ...p, ...value })); },
         preview: source ? () => { void this.runPlaytest('stage').catch(actionFailed); } : undefined },
-      documents: this.documents, active: this.activeDocument, content: documentContent, activateScenePane, beside, retainedCompanions: companions, toolbar: documentToolbar, explorer, search: this.sceneSearch(), stage: this.stageRegion, inspector: mainInspector, problems: this.sceneProblems(), status, notice,
+      documents: this.documents, active: this.activeDocument, content: documentContent, activateScenePane, beside, retainedCompanions: companions, toolbar: documentToolbar, explorer, search: this.sceneSearch(), stage: this.stageRegion, inspector: mainInspector, problems: this.sceneProblems(), output: this.renderOutput(), status, notice,
       contextInspector: activeKind === 'character' && !this.characterAsset && !formDocument ? null : inspector,
       dock: this.dock, dockLayout: this.dockLayout, dockNotice: message => { studioToasts.add({ title: message }); },
       dockLayoutChange: layout => {
@@ -3377,6 +3556,7 @@ export class AuthoringWorkspace {
           if (groups(layout.tree).some(group => (group.active.startsWith('asset:') || group.active === productionDocumentId) && !this.documentRegions.has(group.active))) this.render();
           this.syncAssetPreviews();
           this.restoreAssetLibraryScroll();
+          if (layout.bottom.active === authoringDockTools.output && !layout.hidden.bottom) this.outputNode.scrollTop = this.output.scrollTop;
           this.refreshCommandTarget();
         });
       },
@@ -3462,7 +3642,7 @@ export class AuthoringWorkspace {
     const projectMatches = () => this.controller.source?.project.projectId === source.project.projectId;
     const revealOffset = this.scriptReveal?.documentId === scene.documentId && this.scriptReveal.revision === scene.revision ? this.scriptReveal.offset : undefined;
     if (revealOffset !== undefined) this.scriptReveal = null;
-    const input: Parameters<typeof mountScriptEditor>[0] = { container: scriptContainer, scene, engineVersion: source.project.engineVersion,
+    const input: Parameters<typeof mountScriptEditor>[0] = { container: scriptContainer, scene, engineVersion: source.project.engineVersion, readOnly: !!this.controller.engineIssue,
       wordWrap: this.controller.preferences.editor.wordWrap, fontSize: this.controller.preferences.editor.fontSize,
       selectedId: context.selection?.primaryId ?? null, documentOffset: context.caret.documentOffset,
       scroll: context.scroll, revealOffset,
@@ -3646,8 +3826,16 @@ export class AuthoringWorkspace {
     const historyUnavailable = this.workbenchHistoryUnavailable();
     const commands: CommandEntry[] = [
       ...(this.retainedInput||this.recoveredForms.length?[{id:'recovered-input',label:t('查看保留输入','Review retained input','保持した入力を確認'),group:t('文档','Documents','文書'),run:()=>this.openRecoveredInput()}]:[]),
-      ...([['save',this.t('save'),'Ctrl+S'],['saveAll',t('保存全部','Save all','すべて保存'),'Ctrl+Shift+S'],['undo',this.t('undo'),'Ctrl+Z'],['redo',this.t('redo'),'Ctrl+Shift+Z'],['preferences',t('工作台偏好','Workbench preferences','ワークスペース設定'),''],['publish',t('检查与发行','Check and publish','検証と公開'),''],['cards',this.t('cards'),''],['writing',this.t('writing'),''],['script',this.t('script'),'']] as const).map(([id,label,shortcut]) => ({id,label,shortcut,detail: ['save', 'undo', 'redo'].includes(id) ? targetLabel : undefined,group:t('应用命令','Application commands','アプリのコマンド'),disabled:projectReason ?? (id === 'undo' || id === 'redo' ? historyUnavailable : undefined),run:()=>this.shellAction(id)})),
+       ...([['save',this.t('save'),'Ctrl+S'],['saveAll',t('保存全部','Save all','すべて保存'),'Ctrl+Shift+S'],['undo',this.t('undo'),'Ctrl+Z'],['redo',this.t('redo'),'Ctrl+Shift+Z'],['preferences',t('工作台偏好','Workbench preferences','ワークスペース設定'),''],['publish',t('检查与发行','Check and publish','検証と公開'),''],['cards',this.t('cards'),''],['writing',this.t('writing'),''],['script',this.t('script'),'']] as const).map(([id,label,shortcut]) => ({id,label,shortcut,detail: ['save', 'undo', 'redo'].includes(id) ? targetLabel : undefined,group:t('应用命令','Application commands','アプリのコマンド'),disabled:id === 'preferences' ? undefined : projectReason ?? (id === 'undo' || id === 'redo' ? historyUnavailable : undefined),run:()=>this.shellAction(id)})),
       {id:'project-settings',label:t('作品设置','Project settings','作品設定'),group:t('应用命令','Application commands','アプリのコマンド'),disabled:projectReason,run:()=>this.openDocument({kind:'project',title:t('作品设置','Project settings','作品設定')})},
+       {id:'startup-home',label:t('启动与主页','Startup & home','起動とホーム'),disabled:projectReason,run:()=>this.openDocument({kind:'startup'}),group:t('工作面','Workspaces','作業スペース')},
+       {id:'project-center',label:t('项目中心','Project center','作品センター'),run:()=>this.navigate('projects'),group:t('工作面','Workspaces','作業スペース')},
+       {id:'project-maintenance',label:t('作品维护','Project maintenance','作品メンテナンス'),disabled:projectReason,run:()=>this.navigate('maintenance'),group:t('工作面','Workspaces','作業スペース')},
+       {id:'connections',label:t('连接','Connections','接続'),disabled:projectReason,run:()=>this.navigate('connections'),group:t('工作面','Workspaces','作業スペース')},
+       {id:'plugins',label:t('插件','Plugins','プラグイン'),disabled:projectReason,run:()=>this.navigate('plugins'),group:t('工作面','Workspaces','作業スペース')},
+       {id:'collaboration',label:t('协作活动','Collaboration activity','連携アクティビティ'),disabled:projectReason,run:()=>this.navigate('collaboration'),group:t('工作面','Workspaces','作業スペース')},
+       {id:'show-output',label:t('显示输出','Show output','出力を表示'),disabled:projectReason,run:()=>{this.dock.current?.open(authoringDockTools.output);},group:t('工作面','Workspaces','作業スペース')},
+       {id:'show-problems',label:t('显示问题','Show problems','問題を表示'),disabled:projectReason,run:()=>{this.dock.current?.open(authoringDockTools.problems);},group:t('工作面','Workspaces','作業スペース')},
       {id:'new-production',label:t('新建制作','New production','新しい制作'),group:t('制作','Production','制作'),disabled:projectReason,run:async()=>{if(await this.openProductionWorkbench(true))await this.production?.startQuick('script');}},
       {id:'produce-dialogue',label:t('为所选对白制作配音','Produce voice for selected dialogue','選択した台詞の音声を制作'),group:t('制作','Production','制作'),disabled:projectReason ?? (this.page === 'editor' && this.controller.selection?.statementIds.length ? undefined : t('请先选择对白','Select dialogue first','先に台詞を選択')),run:()=>this.createWithAi('voice')},
       ...(['entry','scene','statement'] as const).map((from,index)=>({id:`playtest-${from}`,label:[t('从头试玩','Playtest from start','最初から試遊'),t('从当前场景试玩','Playtest this scene','現在の場面から試遊'),t('从此句试玩','Playtest from here','この文から試遊')][index]!,group:t('试玩','Playtest','試遊'),disabled:projectReason??(this.page!=='editor'||this.documents.find(d=>d.id===this.activeDocument)?.kind!=='scene'?t('请打开场景文档','Open a scene document','場面の文書を開いてください'):from==='statement'&&!this.controller.selection?.primaryId?t('请先选择语句','Select a statement first','文を選択してください'):undefined),run:()=>this.runPlaytest(from)})),
@@ -3681,6 +3869,8 @@ export class AuthoringWorkspace {
       await this.projectChanged(); return;
     }
     if (action === 'projects' || action === 'publish') return this.navigate(action);
+    if (action === 'projectSettings') return this.openDocument({ kind: 'project' });
+    if (action === 'startupHome') return this.openDocument({ kind: 'startup' });
     if (action === 'save' || action === 'saveAll') return this.save(action === 'saveAll');
     if (action === 'undo' || action === 'redo') {
       const historyUnavailable = this.workbenchHistoryUnavailable();
@@ -3806,6 +3996,7 @@ export class AuthoringWorkspace {
       const resume = this.productionGuiResume;
       this.production.guiDraft = resume.gui;
       this.production.connectionGuiDraft = resume.connection ? { ...resume.connection, secret: '' } : null;
+      this.production.workflowGuiDraft = resume.workflow ?? null;
       this.production.candidateText = new Map(resume.candidateText);
       this.productionGuiResume = null;
     }
@@ -3831,7 +4022,9 @@ export class AuthoringWorkspace {
       if (scene) { await this.openDocument({ kind: 'scene', objectId: scene.sceneId }); return; }
       this.activeDocument = 'empty';
     }
-    if(!await this.flushScript())return;
+    if (page === 'maintenance' && this.controller.engineIssue) await this.flushInputDrafts();
+    else if (!await this.flushScript()) return;
+    if (page === 'projects' && this.page !== 'projects' && this.controller.source) this.projectCenterOrigin = this.activeDocument;
     this.rememberScene(); this.activeDocument = this.formDocuments.has(this.activeDocument) ? '' : this.activeDocument;
     if (!await this.flushProductionDraft()) return;
     await this.controller.flushResume();
@@ -3839,6 +4032,17 @@ export class AuthoringWorkspace {
     if (page !== 'pages') this.designer?.stopBehaviorPreview();
     this.page=page;this.render();
     if (page === 'pages') this.dock.current?.openCombination([authoringDockTools.pageDirectory, authoringDockTools.pageOutline]);
+  }
+  private async returnToConnectionTask(): Promise<void> {
+    const origin = this.connectionOrigin;
+    if (!origin || !await this.openProductionWorkbench()) return;
+    const session = this.production;
+    if (!session) return;
+    if (session.selectedRecord?.kind !== origin.kind || session.selectedRecord.id !== origin.id) {
+      if (origin.kind === 'task') await session.openTask(origin.id);
+      else await session.openDraft(origin.id);
+    }
+    this.dock.current?.focusView(productionDocumentId);
   }
   private async openPageUiAssets(scope: { pageIds: string[]; componentIds: string[] }) {
     const session = this.ensureProductionSession();
@@ -3969,7 +4173,14 @@ export class AuthoringWorkspace {
     this.projectsRoot.render(createElement(Projects, {
       onUnappliedChange: this.setProjectCreateUnapplied,
       locale: this.controller.preferences.locale, source: this.controller.source,
-      explorerContainer: this.projectsExplorer, inspectorContainer: this.projectsInspector, revealInspector: () => this.revealInspector(),
+      recovery: { pending: this.recoveryPending, review: () => { void this.reviewRecovery(); } },
+      openSettings: () => { void this.openDocument({ kind: 'project' }); },
+      openMaintenance: () => { void this.navigate('maintenance'); },
+      continueAuthoring: () => {
+        const origin = this.documents.find(item => item.id === this.projectCenterOrigin);
+        if (origin) void this.openDocument(origin);
+        else void this.navigate('editor');
+      },
       draft: this.projectDraft, updateDraft: draft => { this.projectDraft = draft; this.persistInputDraft(); },
       listCreationVersions: async (): Promise<Result<string[]>> => this.services.bridge.engines ? this.services.bridge.engines.listCreationVersions() : { ok: true, value: [], warnings: [] },
       navigate: page => { void this.navigate(page); },
@@ -4021,8 +4232,6 @@ export class AuthoringWorkspace {
     this.projectGeneral.replaceChildren(el('h1','',tr(locale,'作品设置','Project settings','作品設定')),el('h2','',source.project.name));
     this.projectGeneral.append(button(tr(locale,'作品资料与玩家选项','Project details and player options','作品情報とプレイヤー設定'),()=>this.openProjectSettings()));
     this.projectGeneral.append(button(tr(locale,'结构与变量','Structure and variables','構成と変数'),()=>this.openStoryStructure()));
-    const autosave=el('label','authoring-field',this.t('autosave')),toggle=el('input');toggle.type='checkbox';toggle.checked=source.project.player.autosave;
-    toggle.onchange=()=>{void this.controller.setAutosave(toggle.checked).then(result=>{if(this.notice(result))this.render();});};autosave.append(toggle);this.projectGeneral.append(autosave);
     const hadEditor=!!this.playerNameEditor;
     this.playerNameEditor??=createPlayerNameEditor(this.controller,()=>this.render(),dirty=>{this.documents=this.documents.map(document=>document.id==='project'?{...document,dirty:dirty||!!this.controller.source?.projectDirty}:document);this.refreshDocumentTabs();},()=>{void this.openDocument({kind:'characters',title:tr(locale,'角色与路线','Characters & routes','キャラクターとルート')});},this.playerNameGuiDraft);
     if(hadEditor)this.playerNameEditor?.refresh();
@@ -4352,8 +4561,9 @@ export class AuthoringWorkspace {
         if (!this.notice(result)) throw new Error(result.error.message); } });
   }
   private scenePane(source: NonNullable<AuthoringController['source']>, scene: NonNullable<AuthoringController['scene']>, view: AuthoringController['view'], split: boolean): HTMLElement {
-    const center = el('section', 'authoring-center'); center.style.fontFamily = this.controller.preferences.editor.fontFamily;
-    center.style.fontSize = `${this.controller.preferences.editor.fontSize}px`;
+    const center = el('section', 'authoring-center');
+    center.style.fontFamily = 'var(--studio-editor-font-family)';
+    center.style.fontSize = 'var(--studio-editor-font-size)';
     const selection = this.scenePaneContext(scene.sceneId, view).selection;
     const ownsEditFocus = () => this.followedScene()?.documentId === scene.documentId;
     center.dataset.sceneView = view;
@@ -4367,7 +4577,7 @@ export class AuthoringWorkspace {
     if (split) center.append(el('h2', 'authoring-pane-title', this.t(view)));
     {
       const current = this.controller.parsed(view, scene);
-      if (current?.readOnly) {
+      if (current?.readOnly && !this.controller.engineIssue) {
         const locale = this.controller.preferences.locale, revision = current.lastValidRevision;
         const notice = el('div', 'authoring-notice');
         notice.dataset.sceneBaseline = revision === null ? 'missing' : String(revision);
@@ -4846,45 +5056,74 @@ export class AuthoringWorkspace {
     return inspector;
   }
   private workbenchPreferences(): HTMLElement {
-    const preferences = el('details', 'authoring-settings workbench-preferences'); preferences.open = true; preferences.append(el('summary', '', tr(this.controller.preferences.locale, '工作台偏好', 'Workbench preferences', 'ワークスペース設定')));
-    const setting = (label: string, input: HTMLInputElement, unit = '') => {
-      const row = el('label', 'authoring-field'); input.ariaLabel = label;
-      const caption = el('span', '', label), output = el('output', '', input.type === 'range' ? `${input.value} ${unit}` : '');
-      caption.append(output); row.append(caption, input); preferences.append(row);
-      input.addEventListener('input', () => { if (input.type === 'range') output.value = `${input.value} ${unit}`; });
-    };
-    const locale = this.controller.preferences.locale;
-    const font = el('input'); font.type = 'number'; font.min = '8'; font.max = '48'; font.value = String(this.controller.preferences.editor.fontSize);
-    font.addEventListener('change', () => { if (font.reportValidity()) void this.preference(p => ({ ...p, editor: { ...p.editor, fontSize: Number(font.value) } })); });
-    setting(tr(locale, '编辑器字号（px）', 'Editor font size (px)', 'エディター文字サイズ（px）'), font);
-    const family = el('input'); family.value = this.controller.preferences.editor.fontFamily;
-    family.addEventListener('change', () => { void this.preference(p => ({ ...p, editor: { ...p.editor, fontFamily: family.value } })); });
-    setting(tr(locale, '编辑器字体', 'Editor font', 'エディターフォント'), family);
-    const wrap = el('input'); wrap.type = 'checkbox'; wrap.checked = this.controller.preferences.editor.wordWrap;
-    wrap.addEventListener('change', () => { void this.preference(p => ({ ...p, editor: { ...p.editor, wordWrap: wrap.checked } })); });
-    setting(tr(locale, '自动换行', 'Word wrap', '折り返し'), wrap);
-    const sizeLabels = { left: tr(locale, '左侧场景栏宽度', 'Scene panel width', 'シーンパネルの幅'), right: tr(locale, '右侧属性栏宽度', 'Inspector width', 'プロパティの幅'), bottom: tr(locale, '底部问题栏高度', 'Problems panel height', '問題パネルの高さ') };
-    for (const part of ['left', 'right', 'bottom'] as const) {
-      const range = el('input'); range.type = 'range'; range.min = part === 'bottom' ? '100' : '160'; range.max = part === 'bottom' ? '400' : '520'; range.step = '10';
-      range.value = String(this.controller.preferences.layout[part]);
-      range.addEventListener('change', () => { void this.preference(p => ({ ...p, layout: { ...p.layout, [part]: Number(range.value) } })); });
-      setting(sizeLabels[part], range, 'px');
-    }
-    preferences.append(button(tr(locale, '恢复默认布局', 'Reset layout', 'レイアウトをリセット'), () => this.shellAction('resetLayout')));
-    return preferences;
+    this.preferencesRoot ??= createRoot(this.preferencesNode);
+    this.preferencesRoot.render(createElement(WorkbenchPreferences, {
+      preferences: this.controller.preferences,
+      onChange: async update => {
+        const result = await this.controller.setPreference(update);
+        if (result.ok) this.render();
+        return result;
+      },
+      onResetLayout: () => this.shellAction('resetLayout'),
+    }));
+    return this.preferencesNode;
   }
   private sceneProblems(): HTMLElement | null {
     if (!this.controller.source) return null;
     const locale = this.controller.preferences.locale, status = this.controller.status;
+    const issues = [...new Map([...status.issues, ...this.releaseIssues, ...(this.controller.engineIssue ? [this.controller.engineIssue] : [])].map(issue => [JSON.stringify([issue.code, issue.source, issue.message]), issue])).values()];
     const problemList = el('div', 'authoring-diagnostic-content');
-    const count = el('h2', 'authoring-problem-count', `${this.t('problems')} · ${status.issues.length}`);
+    const count = el('h2', 'authoring-problem-count', `${this.t('problems')} · ${issues.length}`);
     count.setAttribute('aria-live', 'polite');
     problemList.append(count);
-    if (status.issues.length) for (const issue of status.issues) problemList.append(issue.source
-      ? button(issueText(issue, locale), () => this.locateIssue(issue.source!), 'authoring-diagnostic-link')
-      : el('p', '', issueText(issue, locale)));
+    if (issues.length) for (const issue of issues) {
+      const text = issueText(issue, locale);
+      const row = issue.source || issue.owner === 'M11' || issue.owner === 'M09' && issue.details
+        ? button(text, () => this.locateProblem(issue), 'authoring-diagnostic-link')
+        : el('p', '', text);
+      row.dataset.issueCode = issue.code;
+      row.title = issue.message;
+      problemList.append(row);
+    }
     else problemList.append(el('p', '', this.t('noProblems')));
     return problemList;
+  }
+  private renderOutput(): HTMLElement | null {
+    if (!this.controller.source) return null;
+    const builds = (this.services.bridge as Partial<import('../../desktop-bridge.js').DesktopBridge>).builds;
+    if (!this.outputRoot) {
+      this.outputRoot = createRoot(this.outputNode);
+      this.outputNode.addEventListener('scroll', () => {
+        if (!this.outputNode.isConnected || this.outputNode.closest('[hidden]')) return;
+        this.output = { ...this.output, scrollTop: this.outputNode.scrollTop };
+        this.rememberWorkbench();
+      });
+    }
+    this.outputRoot.render(createElement(StudioOutput, {
+      locale: this.controller.preferences.locale, output: { ...this.output }, failure: this.outputFailure, pendingBuild: this.pendingBuild,
+      openDocument: id => {
+        const document = this.documents.find(item => item.id === id);
+        if (document) { void this.openDocument(document); return; }
+        if (id.startsWith('scene:')) void this.openDocument({ kind: 'scene', objectId: id.slice(6) });
+        else if (id.startsWith('asset:')) void this.openDocument({ kind: 'asset', objectId: id.slice(6) });
+        else if (id.startsWith('route:')) void this.navigate(id.slice(6) as Page);
+        else if (id === 'startup') void this.openDocument({ kind: 'startup' });
+        else void this.openDocument({ kind: 'project' });
+      },
+      openPublish: () => { void this.navigate('publish'); },
+      openInstructions: builds ? (id: string) => {
+        void builds.instructions(id).then(result => { if (!this.notice(result)) this.render(); });
+      } : undefined,
+    }));
+    return this.outputNode;
+  }
+  private recordBuild(planId: string, receipt: BuildReceipt): void {
+    if (receipt.projectId !== this.controller.source?.project.projectId) return;
+    this.pendingBuild = undefined;
+    this.output = { ...this.output, built: { planId, receipt } };
+    if (this.outputFailure?.kind === 'build') this.outputFailure = undefined;
+    this.renderOutput();
+    this.rememberWorkbench();
   }
   private effectsDialog(spec: FieldSpec, value: unknown, editTarget: StatementEditTarget) {
     this.effectEditor?.dispose(); this.effectEditor = null;

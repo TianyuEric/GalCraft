@@ -17,7 +17,7 @@ import { StudioProduction } from '../main/production-providers.mts';
 import { StudioBuilds } from '../main/build-providers.mjs';
 import { StudioUpgrades } from '../main/upgrade-providers.mjs';
 import { upgradeValidator } from '../main/upgrade-validation.mjs';
-import { EnginePreview } from '../main/engine-preview.mjs';
+import { EnginePreview } from '../main/engine-preview.mts';
 import { installBundledEngine } from '../main/bundled-engine.mjs';
 import { bundledEngineVersion } from '../main/bundled-engine-version.mjs';
 import { readBundledPlugins, readBundledServicePackages, installBundledPlugins } from '../main/bundled-plugins.mjs';

@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { CircleAlert, FileText, Folder, Images, Layers, ListTree, MonitorPlay, Plus, Search, Settings, SlidersHorizontal, UsersRound, Network, ClipboardList, WandSparkles } from 'lucide-react';
+import { CircleAlert, FileText, Folder, Images, Layers, ListTree, MonitorPlay, Plus, Search, Settings, SlidersHorizontal, UsersRound, Network, ClipboardList, WandSparkles, Terminal } from 'lucide-react';
 import { TooltipProvider } from '../components/ui/tooltip.js';
 import { Button } from '../components/controls.js';
 import { Input } from '../components/ui/input.js';
@@ -47,6 +47,7 @@ export type AuthoringWorkbenchProps = {
   contextSelected?: string[];
   documents: AuthorDocument[]; active: string; content: HTMLElement; toolbar?: HTMLElement | null; explorer?: HTMLElement | null; search?: HTMLElement | null; stage?: HTMLElement | null; inspector?: HTMLElement | null; problems?: HTMLElement | null; status: HTMLElement;
   activateScenePane?(): void;
+  output?: HTMLElement | null;
   beside?: AuthorSceneCompanion;
   retainedCompanions?: ReadonlyMap<string, AuthorSceneCompanion>;
   notice?: ReactNode; layout: WorkbenchLayout; selected: string[];
@@ -78,6 +79,7 @@ export const authoringDockTools = {
   assetInspector: 'studio-asset-inspector', assets: 'studio-assets', characters: 'studio-character-directory',
   pageDirectory: 'studio-page-directory', pageOutline: 'studio-page-outline',
   productionDirectory: 'studio-production-directory',
+  output: 'studio-output',
 } as const;
 export const productionDocumentId = 'route:production';
 export const restoredAuthorDocumentId = (id: string) => id === 'route:assistant' ? productionDocumentId : id;
@@ -137,7 +139,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     scroll.addEventListener('scroll', remember);
     return () => { visibility.disconnect(); scroll.removeEventListener('scroll', remember); };
   }, [explorerKey]);
-  const routeTitles:Record<string,string>={projects:t('作品库','Projects','作品一覧'),assets:t('素材','Assets','素材'),production:t('制作','Production','制作'),assistant:t('制作','Production','制作'),collaboration:t('协作','Collaborate','連携'),plugins:t('插件','Plugins','プラグイン'),publish:t('发布','Publish','配布')};
+  const routeTitles:Record<string,string>={projects:t('项目中心','Project center','作品センター'),assets:t('素材','Assets','素材'),production:t('制作','Production','制作'),assistant:t('制作','Production','制作'),collaboration:t('协作活动','Collaboration activity','連携アクティビティ'),plugins:t('插件','Plugins','プラグイン'),connections:t('连接','Connections','接続'),maintenance:t('作品维护','Project maintenance','作品メンテナンス'),publish:t('发布','Publish','配布')};
   const documentTitle=(document:AuthorDocument)=>document.kind==='page'?(props.pageNodes?.find(node=>node.id===(document.objectId??document.id.slice(5)))?.name??document.title)
     :document.kind==='characters'?t('角色与路线','Characters & routes','キャラクターとルート'):document.kind==='scene-graph'?t('场景关系图','Scene graph','シーン関係図'):document.kind==='startup'?t('启动与主页','Startup & home','起動とホーム')
     :document.kind==='route'?(document.id.startsWith('route:')?routeTitles[document.objectId??document.id.replace(/^route:/,'')]??document.title:document.title):document.kind==='project'?document.objectId==='preferences'?t('工作台偏好','Workbench preferences','ワークスペース設定'):t('作品设置','Project settings','作品設定'):document.title;
@@ -182,6 +184,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     [dockTools.search]: { title: t('语义查找','Semantic search','セマンティック検索'), icon: <Search/>, zone: 'left', allowedZones: sidebarZones, content: props.search ? <DomRegion node={props.search} className="gc-studio-dock-search"/> : <p className="gc-dock-missing-view">{t('打开场景工作区以查找正文或引用。','Open the scene workspace to find dialogue or references.','シーンの作業スペースで本文や参照を検索できます。')}</p> },
     [dockTools.inspector]: { title: t('属性','Inspector','プロパティ'), icon: <SlidersHorizontal/>, zone: 'right', allowedZones: sidebarZones, content: <DomRegion node={props.inspectorAvailable === false ? null : props.inspector}/> },
     [dockTools.problems]: { title: t('问题','Problems','問題'), icon: <CircleAlert/>, zone: 'bottom', allowedZones: problemZones, content: <DomRegion node={props.problems}/> },
+    [dockTools.output]: { title: t('输出','Output','出力'), icon: <Terminal/>, zone: 'bottom', allowedZones: problemZones, content: <DomRegion node={props.output}/> },
     [dockTools.stage]: { title: t('舞台','Stage','ステージ'), icon: <MonitorPlay/>, zone: 'center', allowedZones: editorZones, content: <DomRegion node={props.stage}/> },
     [dockTools.assetDirectory]: { title: t('素材目录','Asset directory','素材一覧'), icon: <Folder/>, zone: 'left', allowedZones: sidebarZones, content: props.assetDirectory ? <DomRegion node={props.assetDirectory}/> : waitingForAssets },
     [dockTools.assetInspector]: { title: t('素材属性','Asset properties','素材プロパティ'), icon: <SlidersHorizontal/>, zone: 'right', allowedZones: sidebarZones, content: props.assetInspector ? <DomRegion node={props.assetInspector}/> : waitingForAssets },
@@ -253,6 +256,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     { id: 'show-inspector', label: t('显示属性','Show inspector','プロパティを表示'), disabled: props.inspectorAvailable === false, run: () => props.dock.current?.open(dockTools.inspector) },
     { id: 'show-stage', label: t('显示舞台','Show stage','ステージを表示'), disabled: !props.stage, run: () => props.dock.current?.open(dockTools.stage) },
     { id: 'show-problems', label: t('显示问题','Show problems','問題を表示'), disabled: !props.problems, run: () => props.dock.current?.open(dockTools.problems) },
+    { id: 'show-output', label: t('显示输出','Show output','出力を表示'), disabled: !props.output, run: () => props.dock.current?.open(dockTools.output) },
     { id: 'show-asset-directory', label: t('显示素材目录','Show asset directory','素材一覧を表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.assetDirectory) },
     { id: 'show-assets', label: t('显示素材库','Show asset library','素材ライブラリを表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.assets) },
     { id: 'show-asset-inspector', label: t('显示素材属性','Show asset properties','素材プロパティを表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.assetInspector) },

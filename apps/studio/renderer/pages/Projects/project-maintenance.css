@@ -1,0 +1,13 @@
+.project-maintenance { display: grid; align-content: start; gap: 16px; width: min(100%, 840px); margin-inline: 0 auto; }
+.project-maintenance h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
+.project-maintenance h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
+.project-maintenance h3 { margin: 4px 0 0; font-size: 14px; line-height: 22px; font-weight: 600; }
+.project-maintenance p { margin: 4px 0 0; color: var(--muted-foreground); white-space: pre-line; }
+.project-maintenance-section { display: grid; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; overflow-wrap: anywhere; }
+.project-maintenance-section > .gc-field { max-width: 360px; }
+.project-maintenance-section .gc-actions { flex-wrap: wrap; }
+.project-maintenance-section ul { max-height: 18rem; overflow: auto; padding-inline-start: 20px; }
+.project-maintenance-section details > summary { cursor: pointer; min-height: 28px; }
+.project-maintenance-section dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; }
+.project-maintenance-section dd { margin: 0; }
+.project-maintenance-checks, .project-maintenance-history { display: grid; gap: 8px; margin: 0; }

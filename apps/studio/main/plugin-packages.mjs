@@ -226,7 +226,7 @@ export class StudioPluginPackages {
         const exact = await this.exactDirectory(dependency.id, dependency.version);
         if (!exact.ok) {
           if (!dependency.required) continue;
-          return exact;
+          return { ...exact, error: dependencyIssue(exact.error, dependency), issues: exact.issues.map(issue => dependencyIssue(issue, dependency)) };
         }
         const { directory, manifest } = exact.value;
         if (!lock.plugins.some(item => item.id === manifest.id) && manifest.contributions.length && manifest.contributions.every(item => item.kind === 'targetBuilder') && !manifest.studio?.length) continue;
@@ -263,3 +263,4 @@ export class StudioPluginPackages {
     await this.#host.dispose();
   }
 }
+import { dependencyIssue } from './restore-dependency.mts';

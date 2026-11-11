@@ -183,6 +183,7 @@ export function queryDialogueText(source: AuthoringSource, term: string, offset 
 export class AuthoringController {
   private currentParses = new Map<Id, ParseResult>();
   source: AuthoringSource | null = null;
+  engineIssue: Issue | null = null;
   preferences: StudioPreferences = structuredClone(DefaultStudioPreferences);
   scene: SceneSource | null = null;
   selection: AuthoringSelection | null = null;
@@ -234,6 +235,7 @@ export class AuthoringController {
     this.currentParses.clear();
     if (this.resumeTimer) { clearTimeout(this.resumeTimer); this.resumeTimer = null; }
     this.source = null; this.scene = null; this.selection = null; this.workbench = undefined;
+    this.engineIssue = null;
     this.booleanOrigins.clear();this.historyLabel='';this.lastOperationDocumentId=null;
     this.lastValid.clear(); this.status = { dirty: false, save: 'idle', savedRevision: 0, preview: 'none', issues: [],
       compilation: { state: 'none', snapshotId: null, documents: [] } };
@@ -249,9 +251,9 @@ export class AuthoringController {
     }
     if (!parsed.issues.some(issue => issue.severity === 'error')) {
       this.lastValid.set(documentId, parsed);
-      return { parsed, readOnly: false, lastValidRevision: null };
+      return { parsed, readOnly: !!this.engineIssue, lastValidRevision: this.engineIssue ? revision : null };
     }
-    if (view === 'script') return { parsed, readOnly: false, lastValidRevision: null };
+    if (view === 'script') return { parsed, readOnly: !!this.engineIssue, lastValidRevision: null };
     let baseline = this.lastValid.get(documentId);
     if (lastValidSceneSource && (!baseline || baseline.revision < lastValidSceneSource.revision)) {
       const stored = parse({ documentId, ...lastValidSceneSource });

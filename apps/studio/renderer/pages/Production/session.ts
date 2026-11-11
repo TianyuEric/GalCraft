@@ -20,13 +20,17 @@ export type QuickScope = { sceneId?: string | null; statementId?: string | null;
 export type ContinuationView = { sourceId: string; mode: 'write' | 'performance' | 'discuss'; instruction: string; summary: string };
 export type ProductionDirectoryState = NonNullable<NonNullable<WorkspaceResume['workbench']>['productionDirectory']>;
 export type ProductionRecord = NonNullable<ProductionDirectoryState['record']>;
+export type WorkflowGuiDraft = {
+  workflowDocuments: { id: string; text: string; importText?: string; baseline?: string; paste?: string; pasteBaseline?: string; title: string; dirty: boolean; draftRevision?: number | null; expectedRevision: number | null; closeRequest: number; draftSource?: boolean }[];
+  activeWorkflow: string;
+  search?: string;
+};
 export type ProductionGuiDraft = {
-  workflowDocuments: {id:string;text:string;importText?:string;baseline?:string;paste?:string;title:string;dirty:boolean;draftRevision?:number|null;expectedRevision:number|null;closeRequest:number}[];
-  activeWorkflow:string; tab:string; recipe:CreationRecipe|null; recipeBaseline:string;
+  tab:string; recipe:CreationRecipe|null; recipeBaseline:string;
   uiProposal:import('@galcraft/authoring/production').UIPlanProposal|null;
   uiSource:Pick<Parameters<WorkbenchBridge['production']['prepareUIPlan']>[0],'candidateId'|'expected'|'scope'|'draft'>|null;
   uiBaseline:string;
-};
+} & WorkflowGuiDraft;
 
 export class ProductionSession {
   data: Overview = {
@@ -45,8 +49,18 @@ export class ProductionSession {
   };
   draft: ProductionFormDraft | null = null;
   guiDraft: ProductionGuiDraft | null = null;
+  workflowGuiDraft: WorkflowGuiDraft | null = null;
+  workflowDirty = false;
   connectionGuiDraft:{edit:import('@galcraft/contracts').ConnectionConfig|null;provider:string;secret:string;advanced:string|null;baseline:string;selection:string[]}|null=null;
   connectionDirty=false;
+  discardConnectionWorkbench() {
+    this.connectionGuiDraft = null;
+    this.connectionDirty = false;
+    this.workflowGuiDraft = null;
+    this.workflowDirty = false;
+    if (this.guiDraft) this.guiDraft = { ...this.guiDraft, workflowDocuments: [], activeWorkflow: '' };
+    this.changed();
+  }
   taskId: string | null = null;
   overviewLoaded = false;
   private overviewTaskId: string | null = null;

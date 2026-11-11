@@ -150,7 +150,7 @@ export function StudioChrome({ locale, theme, project, dirty, action, preference
         <Search aria-hidden="true"/><span>{searchLabel}</span><kbd>Ctrl+P</kbd>
       </Button>}
       actions={<>
-        <Button tone="quiet" className="gc-studio-chrome-preferences" aria-label={preferencesLabel} title={preferencesLabel} disabled={!project} data-focus-key="studio:preferences" onClick={() => action('preferences')}>
+        <Button tone="quiet" className="gc-studio-chrome-preferences" aria-label={preferencesLabel} title={preferencesLabel} data-focus-key="studio:preferences" onClick={() => action('preferences')}>
           <Settings2 aria-hidden="true"/><span>{preferencesLabel}</span>
         </Button>
         <Button tone="quiet" className="gc-studio-chrome-icon" aria-label={themeLabel} title={themeLabel} data-focus-key="studio:theme" onClick={() => preferences({ theme: theme === 'light' ? 'dark' : 'light' })}>

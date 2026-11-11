@@ -308,6 +308,7 @@ export class ProjectSession {
   readonly resolveRequiredRef?: ReferenceResolver;
   readonly requiredReferences?: SessionOptions['requiredReferences'];
   recoveryConflicts: Conflict[] = [];
+  writeBlocked: Issue | null = null;
   #sequence = 0;
   #saving = false;
   #saveFinished: Promise<void> = Promise.resolve();
@@ -509,6 +510,7 @@ export class ProjectSession {
   }
 
   #prepareEdit(input: EditInput, discard: boolean): Result<EditPlan> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging) return fail('DIRECTORY_BUSY', '作品目录正在提交');
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     if (this.#pendingRecovery) return fail('RECOVERY_UNRESOLVED', 'A recovery draft still needs a choice', ['compare']);
@@ -605,6 +607,7 @@ export class ProjectSession {
   }
 
   #applyEdit(planId: Id, expected: VersionRef[], discard: boolean): Result<EditReceipt> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging) return fail('DIRECTORY_BUSY', '作品目录正在提交');
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const plan = this.editPlans.get(planId);
@@ -801,6 +804,7 @@ export class ProjectSession {
   }
 
   planUndo(documentId: Id, operationId?: Id, paths?: string[]): Result<UndoPlan> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const target = operationId
       ? this.operations.find(operation => operation.id === operationId && operation.state === 'applied' && operation.members.includes(documentId))
@@ -829,6 +833,7 @@ export class ProjectSession {
   }
 
   planRedo(documentId: Id, paths?: string[]): Result<UndoPlan> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const requested = (paths ?? ['*']).map(path => ({ documentId, path }));
     const candidates = [...this.undoPlans.values()].filter(plan => sameVersions(this.documents, plan.expected) &&
@@ -839,6 +844,7 @@ export class ProjectSession {
   }
 
   undo(planId: Id): Result<EditReceipt> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging) return fail('DIRECTORY_BUSY', '作品目录正在提交');
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const plan = this.undoPlans.get(planId);
@@ -865,6 +871,7 @@ export class ProjectSession {
   }
 
   redo(planId: Id): Result<EditReceipt> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging) return fail('DIRECTORY_BUSY', '作品目录正在提交');
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const plan = this.undoPlans.get(planId);
@@ -975,6 +982,7 @@ export class ProjectSession {
     if (this.#saving) return fail('SAVE_BUSY', 'A save is already running');
     const plan = this.savePlans.get(planId);
     if (!plan) return fail('SAVE_PLAN_MISSING', 'Save plan is unavailable');
+    if (this.writeBlocked && plan.files.length) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     const expected = this.saveExpected.get(planId);
     if (!expected || expected.length !== this.documents.size || !sameVersions(this.documents, expected)) return fail('SAVE_PLAN_STALE', 'Working revision changed before save', ['compare']);
     const selected = new Set(plan.objects.map(object => object.key)), objects = dirtySaveObjects(this.documents);
@@ -1214,6 +1222,7 @@ export class ProjectSession {
   }
 
   async recover(choice: 'restore' | 'discard'): Promise<Result<Id[]>> {
+    if (this.writeBlocked && choice === 'restore') return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging || this.#disposed) return fail('DIRECTORY_BUSY', '作品会话正在提交目录');
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const draft = await this.loadDraft();
@@ -1231,6 +1240,7 @@ export class ProjectSession {
   }
 
   async resolveRecoveryConflict(choice: 'local' | 'disk' | 'copy', copyPath?: string): Promise<Result<Id[]>> {
+    if (this.writeBlocked && choice === 'local') return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging || this.#disposed) return fail('DIRECTORY_BUSY', '作品会话正在提交目录');
     const draft = await this.loadDraft();
     if (!draft || !this.recoveryConflicts.length) return fail('RECOVERY_CONFLICT_MISSING', 'No recovery conflict is pending');

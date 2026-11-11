@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { DomainSchema, IdSchema, JsonSchema, RevisionSchema, UtcTimeSchema, VersionSchema } from './common.js';
+import { SaveReceiptSchema } from './documents.js';
+import { BuildReceiptSchema } from './release.js';
 import type { CancelResult, Id, Issue, Json, Lock, Operation, Ref, Result, Revision, Source, Target, VersionRef } from './common.js';
 import type { Asset, AssetIdsResult, AssetPage, AssetPickerPage, AssetPickerQuery, AssetQuery, AssetReference, AssetTypeCatalogEntry, AssetTypeEditInput } from './assets.js';
 import { AssetKindSchema } from './assets.js';
@@ -131,6 +133,13 @@ export const WorkspaceResumeSchema = z.strictObject({
     }).optional(),
     dockLayout: JsonSchema.optional(),
     assets: WorkspaceAssetStateSchema.optional(),
+    output: z.strictObject({
+      saved: z.strictObject({ receipt: SaveReceiptSchema, source: z.string().optional() }).optional(),
+      built: z.strictObject({ planId: z.string(), receipt: BuildReceiptSchema }).optional(),
+      scrollTop: finite.nonnegative(),
+    }).optional(),
+    projectCenterOrigin: z.string().optional(),
+    connectionOrigin: z.strictObject({ kind: z.enum(['task', 'draft']), id: IdSchema }).optional(),
   }).optional(),
 });
 export type WorkspaceResume = z.infer<typeof WorkspaceResumeSchema>;
@@ -209,6 +218,8 @@ export interface StudioBridge {
   onCloseRequested?(callback: () => Promise<'save' | 'discard' | 'cancel'>): () => void;
   engines: {
     listCreationVersions(): Promise<Result<string[]>>;
+    health?(): Promise<Result<{ version: string; issues: Issue[] }>>;
+    repair?(): Promise<Result<{ version: string; issues: Issue[] } | null>>;
     importLive2D(withMotionSync: boolean): Promise<Result<{ sdkRelease: string; coreVersion: string; motionSyncCoreVersion: string | null } | null>>;
     resolvePreview(snapshot: Snapshot): Promise<Result<{ handleId: Id; engineVersion: string; url: string;
       live2d?: { url: string; expected: { coreVersion: string; motionSyncCoreVersion: string | null } } }>>;

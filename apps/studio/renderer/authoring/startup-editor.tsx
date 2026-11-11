@@ -14,7 +14,7 @@ import type { AuthoringServices } from './controller.js';
 
 export type StartupAssetField = 'splash' | 'titleBackground' | 'titleMusic' | 'titleVideo';
 export type StartupPreviewKind = 'splash' | 'home' | 'startup';
-export type StartupGuiDraft = { display: Project['display']; buffers: Record<string, string>; tab: 'splash' | 'home' };
+export type StartupGuiDraft = { display: Project['display']; displayPending?: boolean; buffers: Record<string, string>; tab: 'splash' | 'home' };
 export type StartupEditorProps = {
   project: Project; locale: string; assets: Asset[]; active?: boolean; inspectorContainer?: HTMLElement;
   chooseAsset(field: StartupAssetField): Promise<string | null>;
@@ -29,14 +29,14 @@ export type StartupEditorProps = {
 /** This editor submits the existing Project document; it owns no parallel settings store. */
 export function StartupEditor({ project, locale, assets, active = true, inspectorContainer, chooseAsset, onChange, preview, onDraftChange, guiDraft, onGuiDraftChange, history, runtimeAssets }: StartupEditorProps) {
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
-  const [display, setDisplay] = useState(guiDraft?.display ?? project.display);
+  const [display, setDisplay] = useState(guiDraft?.displayPending === false ? project.display : guiDraft?.display ?? project.display);
   const current = useRef(display), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<'splash' | 'home'>(guiDraft?.tab ?? 'splash'), [playing, setPlaying] = useState(false);
   const [buffers, setBuffers] = useState<Record<string, string>>(guiDraft?.buffers ?? {}), [issues, setIssues] = useState<Record<string, string>>({});
-  useEffect(() => { onGuiDraftChange?.({ display, buffers, tab }); }, [display, buffers, tab, onGuiDraftChange]);
   const host = useRef<HTMLDivElement>(null), stop = useRef<(() => void) | null>(null);
-  const queue = useRef(Promise.resolve()), localDirty = useRef(!!guiDraft && JSON.stringify(guiDraft.display) !== JSON.stringify(project.display)), previewGeneration = useRef(0);
+  const queue = useRef(Promise.resolve()), localDirty = useRef(JSON.stringify(display) !== JSON.stringify(project.display)), previewGeneration = useRef(0);
   const mounted = useRef(true), activeRef = useRef(active), pendingInputs = useRef(new Set<string>(Object.keys(guiDraft?.buffers ?? {})));
+  useEffect(() => { onGuiDraftChange?.({ display, displayPending: localDirty.current, buffers, tab }); }, [display, buffers, tab, busy, onGuiDraftChange]);
   activeRef.current = active;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; previewGeneration.current++; stop.current?.(); }; }, []);
   useEffect(() => { if (!active) { previewGeneration.current++; stop.current?.(); stop.current = null; setPlaying(false); } }, [active]);
@@ -125,7 +125,7 @@ export function StartupEditor({ project, locale, assets, active = true, inspecto
       {tab === 'home' && display.titleMusic && music.loop && runtimeAssets && <LeasedAudioLoopEditor asset={asset(display.titleMusic)} resources={runtimeAssets} locale={locale} active={active && !playing} readonly={busy} value={musicLoop} onDraftChange={dirty => { if (dirty) pendingInputs.current.add('music.loop-workbench'); else pendingInputs.current.delete('music.loop-workbench'); onDraftChange?.(localDirty.current || pendingInputs.current.size > 0); }}
         onChange={async next => { const latest = TitleMusicPlaybackSchema.parse(current.current.titleMusicPlayback ?? {}); const applied = await commit({ titleMusicPlayback: { ...latest, loopStartSec: next.loopStartSec ?? 0, loopEndSec: next.loopEndSec } }); if (!applied) throw new Error(t('循环区间尚未应用，请检查当前输入后重试。', 'Loop range was not applied. Check the current input and retry.', 'ループ区間が未適用です。入力を確認して再試行してください。')); }}/ >}
       {tab === 'splash' && (display.startupSequence ? <StartupSequenceEditor sequence={display.startupSequence} locale={locale} assets={assets} chooseAsset={() => chooseAsset('splash')}
-        onChange={startupSequence => commit({ startupSequence })} onDraftChange={onDraftChange}
+        onChange={startupSequence => commit({ startupSequence })} onDraftChange={dirty => onDraftChange?.(dirty || localDirty.current || pendingInputs.current.size > 0)}
         preview={clip => void startPreview('splash', { ...current.current, startupSequence: { ...display.startupSequence!, revealMs: 0, clips: [{ ...clip, startMs: 0 }] } })}/>
         : <Button onClick={() => commit({ startupSequence: StartupSequenceSchema.parse({ clips: [StartupClipSchema.parse({ id: createId(), kind: 'text', name: t('作者说明', 'Author notice', '作者の案内'), text: { [locale]: project.name } })] }) })}>{t('编排原生开屏序列', 'Create native startup sequence', '起動シーケンスを作成')}</Button>)}
     </div>{placeInspector(<aside className="startup-inspector">

@@ -12,6 +12,19 @@
 .project-inspector-actions { display:flex; gap:8px; flex-wrap:wrap; }
 .project-inspector-actions .gc-button { max-width:100%; }
 .project-library-hint { margin:12px; color:var(--muted-foreground); line-height:1.6; }
+.project-recovery-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--secondary);
+}
+.project-recovery-notice p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 13px; }
 .project-library-item.inspected { outline:2px solid var(--primary); outline-offset:-2px; }
 .gc-workbench .project-workbench { padding:16px; }
 .gc-workbench .project-welcome h1 { font-size:20px; letter-spacing:0; }

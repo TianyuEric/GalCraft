@@ -42,6 +42,10 @@ export function Projects({
   openRecent,
   reveal,
   navigate,
+  continueAuthoring,
+  openSettings,
+  openMaintenance,
+  recovery,
   create,
   listCreationVersions,
   draft,
@@ -62,6 +66,10 @@ export function Projects({
   openRecent?(directory: string): Promise<void>;
   reveal(): Promise<void>;
   navigate(page: "editor" | "pages" | "production"): void;
+  continueAuthoring?(): void;
+  openSettings?(): void;
+  openMaintenance?(): void;
+  recovery?: { pending: boolean; review(): void };
   create(value: ProjectDraft): Promise<boolean>;
   listCreationVersions(): Promise<Result<string[]>>;
   draft: ProjectDraft;
@@ -161,15 +169,15 @@ export function Projects({
           <h1>
             {t(
               "作品中心",
-              "Project library",
-              "作品ライブラリ",
+              "Project center",
+              "作品センター",
             )}
           </h1>
           <p>
             {t(
-              "打开最近作品，或创建新的作品。",
-              "Open a recent project or create a new one.",
-              "最近の作品を開くか、新しい作品を作成します。",
+              "继续上次的编辑，或打开、新建和恢复作品。",
+              "Pick up where you left off, or open, create, and restore projects.",
+              "前回の編集を続けるか、作品を開く・作成・復元できます。",
             )}
           </p>
         </div>
@@ -185,6 +193,11 @@ export function Projects({
           </Button>
         </div>
       </header>
+      {recovery?.pending && <section className="project-recovery-notice" aria-label={t('保留的作品草稿', 'Retained project draft', '保持した作品の草稿')}>
+        <div><strong>{t('此作品有保留的草稿', 'This project has a retained draft', 'この作品には保持した草稿があります')}</strong>
+          <p>{t('比较草稿与已保存内容，然后选择恢复或丢弃。', 'Compare the draft with saved content, then restore or discard it.', '草稿を保存済みの内容と比較し、復元または破棄を選びます。')}</p></div>
+        <Button onClick={() => recovery.review()}>{t('比较与恢复草稿', 'Compare and recover draft', '草稿を比較して復元')}</Button>
+      </section>}
       {preparingCreate && <p role="status" className="project-library-hint">{t('正在准备作品模板与本机引擎…','Preparing templates and local engines…','テンプレートとローカルエンジンを準備中…')}</p>}
       {actionError && <p className="project-library-error" role="alert">{actionError}</p>}
       {creating && <nav className="project-section-navigation" aria-label={t('作品中心内容','Project library content','作品ライブラリの内容')}><Button tone="quiet" aria-pressed={!creatingActive} onClick={() => setCreatingActive(false)}>{t('返回作品库','Back to library','ライブラリに戻る')}</Button><Button tone="quiet" aria-pressed={creatingActive} onClick={() => setCreatingActive(true)}>{t('新建作品草稿','New project draft','新規作品の下書き')}{createDirty && ' ·'}</Button></nav>}
@@ -228,10 +241,12 @@ export function Projects({
               </div>
             </dl>
             <div className="project-actions">
-              <Button tone="primary" onClick={() => navigate("editor")}>
+              <Button tone="primary" onClick={continueAuthoring ?? (() => navigate("editor"))}>
                 {t("继续创作", "Continue authoring", "制作を続ける")}
                 <ArrowRight size={16} />
               </Button>
+              {openSettings && <Button tone="quiet" onClick={openSettings}>{t('作品设置', 'Project settings', '作品設定')}</Button>}
+              {openMaintenance && <Button tone="quiet" onClick={openMaintenance}>{t('作品维护', 'Project maintenance', '作品のメンテナンス')}</Button>}
               <Button tone="quiet" onClick={() => void run(reveal)}>
                 <FolderOpen size={15} />
                 {t("所在目录", "Project folder", "作品フォルダー")}

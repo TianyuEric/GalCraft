@@ -63,11 +63,11 @@ it('preserves blank credentials and removes only unreferenced secrets', async ()
   const vault = new ConnectionVault(directory, { isEncryptionAvailable: () => true, encryptString: text => Buffer.from(text), decryptString: bytes => bytes.toString() });
   try {
     const id = randomUUID();
-    await vault.save({ id, credentialId: null, name: 'first' }, 'fixture-secret');
-    await vault.save({ id, credentialId: null, name: 'edited' });
+    await vault.save({ id, revision: 1, credentialId: null, name: 'first' }, 'fixture-secret');
+    await vault.save({ id, revision: 2, credentialId: null, name: 'edited' });
     const original = await vault.read(id);
     expect(original.secret).toBe('fixture-secret');
-    const copy = { ...original.config, id: randomUUID() };
+    const copy = { ...original.config, id: randomUUID(), revision: 1 };
     await vault.save(copy);
     await vault.remove(id);
     expect((await vault.read(copy.id)).secret).toBe('fixture-secret');
@@ -81,10 +81,29 @@ it('editing a copied connection key leaves the original key intact', async () =>
   const directory = await mkdtemp(join(tmpdir(), 'galcraft-vault-'));
   const vault = new ConnectionVault(directory, { isEncryptionAvailable: () => true, encryptString: text => Buffer.from(text), decryptString: bytes => bytes.toString() });
   try {
-    const id = randomUUID(); await vault.save({ id, credentialId: null }, 'original');
+    const id = randomUUID(); await vault.save({ id, revision: 1, credentialId: null }, 'original');
     const source = await vault.read(id), copy = { ...source.config, id: randomUUID() };
-    await vault.save(copy); await vault.save(copy, 'replacement');
+    await vault.save(copy); await vault.save({ ...copy, revision: 2 }, 'replacement');
     expect((await vault.read(id)).secret).toBe('original');
     expect((await vault.read(copy.id)).secret).toBe('replacement');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+it('checks concurrent connection revisions before changing configuration or credentials', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'galcraft-vault-'));
+  const vault = new ConnectionVault(directory, { isEncryptionAvailable: () => true, encryptString: text => Buffer.from(text), decryptString: bytes => bytes.toString() });
+  try {
+    const id = randomUUID();
+    const config = { id, revision: 1, credentialId: null, name: 'initial' };
+    await vault.save(config, 'original');
+    const next = { ...config, revision: 2 };
+    const results = await Promise.allSettled([
+      vault.save({ ...next, name: 'accepted' }, 'current'),
+      vault.save({ ...next, name: 'stale' }, 'stale'),
+    ]);
+    expect(results).toMatchObject([{ status: 'fulfilled' }, { status: 'rejected', reason: { code: 'CONNECTION_CONFLICT' } }]);
+    expect(await vault.read(id)).toMatchObject({ config: { name: 'accepted', revision: 2 }, secret: 'current' });
+    await vault.save({ ...next, revision: 3, name: 'after conflict' });
+    expect(await vault.read(id)).toMatchObject({ config: { name: 'after conflict', revision: 3 }, secret: 'current' });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

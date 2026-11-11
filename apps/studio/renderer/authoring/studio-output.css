@@ -1,0 +1,10 @@
+.studio-output{min-width:0;font-size:13px;line-height:20px}
+.studio-output-scroll{height:100%;min-height:0;overflow:auto}
+.studio-output-row{display:grid;grid-template-columns:minmax(10rem,auto) minmax(0,1fr);align-items:baseline;gap:4px 16px;padding:8px 12px;border-bottom:1px solid var(--border)}
+.studio-output-row>code,.studio-output-path{overflow-wrap:anywhere}
+.studio-output-row>p,.studio-output-empty{margin:0;color:var(--foreground-secondary)}
+.studio-output-row>p,.studio-output-actions{grid-column:1/-1}
+.studio-output-row[role=alert]>strong{color:var(--danger-foreground)}
+.studio-output-actions{display:flex;flex-wrap:wrap;gap:4px}
+.studio-output-actions:empty{display:none}
+.studio-output-empty{padding:12px}
