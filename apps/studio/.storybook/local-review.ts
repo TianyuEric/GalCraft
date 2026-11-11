@@ -9,24 +9,35 @@ interface LocalReviewConfiguration {
   vite?: string;
 }
 
-// Optional local review extensions own their dependencies and source material.
-// A normal checkout never imports or scans an extension's implementation.
-const configuredPath = process.env.STORYBOOK_LOCAL_CONFIG;
-const configurationPath = configuredPath ? resolve(studioDirectory, configuredPath) : undefined;
-const local: LocalReviewConfiguration = configurationPath && existsSync(configurationPath)
-  ? JSON.parse(readFileSync(configurationPath, 'utf8')) as LocalReviewConfiguration
-  : {};
+const absolute = (file: string) => resolve(studioDirectory, file).replaceAll('\\', '/');
 
-export const reviewStories = [
-  ...globSync('renderer/**/*.stories.tsx', {
+export function formalStories(): string[] {
+  return globSync('renderer/**/*.stories.tsx', {
     cwd: studioDirectory,
-    exclude: ['renderer/stories/review/**/baseline/**', '**/PropertyComparison.stories.tsx', '**/TreeComparison.stories.tsx'],
-  }).map(file => resolve(studioDirectory, file).replaceAll('\\', '/')),
-  ...(local.stories ?? []).map(file => resolve(dirname(configurationPath!), file).replaceAll('\\', '/')),
-];
+    exclude: ['renderer/stories/review/**', 'renderer/stories/candidates/**', 'renderer/review/**'],
+  }).map(absolute);
+}
 
-export async function localReviewViteConfig(): Promise<UserConfig> {
-  if (!local.vite || !configurationPath) return {};
-  const module = await import(pathToFileURL(resolve(dirname(configurationPath), local.vite)).href);
-  return typeof module.default === 'function' ? await module.default() : module.default;
+// Only the explicit Review entry reads local extensions. Its source and dependencies
+// remain outside the default Storybook discovery and Vite configuration.
+export function loadReviewConfiguration() {
+  const configuredPath = process.env.STORYBOOK_LOCAL_CONFIG;
+  const configurationPath = configuredPath ? resolve(studioDirectory, configuredPath) : undefined;
+  const local: LocalReviewConfiguration = configurationPath && existsSync(configurationPath)
+    ? JSON.parse(readFileSync(configurationPath, 'utf8')) as LocalReviewConfiguration
+    : {};
+  return {
+    stories: [
+      ...globSync(['renderer/stories/review/**/*.stories.tsx', 'renderer/stories/candidates/**/*.stories.tsx', 'renderer/review/**/*.stories.tsx'], {
+        cwd: studioDirectory,
+        exclude: ['**/baseline/**'],
+      }).map(absolute),
+      ...(local.stories ?? []).map(file => resolve(dirname(configurationPath!), file).replaceAll('\\', '/')),
+    ],
+    async viteConfig(): Promise<UserConfig> {
+      if (!local.vite || !configurationPath) return {};
+      const module = await import(pathToFileURL(resolve(dirname(configurationPath), local.vite)).href);
+      return typeof module.default === 'function' ? await module.default() : module.default;
+    },
+  };
 }

@@ -15,6 +15,8 @@
     "test:tools": "pnpm --filter @galcraft/authoring... --if-present run build && node --test tools/*.test.mjs tests/e2e/fixtures.test.mjs",
     "storybook": "pnpm --filter @galcraft/studio storybook",
     "storybook:build": "pnpm --filter @galcraft/studio build-storybook",
+    "storybook:review": "pnpm --filter @galcraft/studio storybook:review",
+    "storybook:review:build": "pnpm --filter @galcraft/studio build-storybook:review",
     "desktop:package": "node tools/package-studio.mjs",
     "studio:npm": "node tools/package-studio-npm.mjs",
     "sample:package": "node tools/package-practice.mjs"

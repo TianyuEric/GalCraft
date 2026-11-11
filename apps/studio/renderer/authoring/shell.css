@@ -1,5 +1,5 @@
 html, body, #app { margin: 0; height: 100%; overflow: hidden; }
-.authoring-shell { min-height: 0; height: 100dvh; font-family: var(--font-sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+.authoring-shell { min-height: 0; height: 100dvh; font-family: var(--font-sans); font-size: 14px; line-height: 20px; -webkit-font-smoothing: antialiased; }
 .authoring-shell, [data-theme='dark'] .authoring-shell, #studio-portals {
   --surface: var(--background); --panel: var(--card); --ink: var(--foreground); --muted: var(--muted-foreground); --line: var(--border); --accent: var(--primary); --soft: var(--secondary);
 }

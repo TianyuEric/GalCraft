@@ -57,7 +57,7 @@
   --warning-border: var(--warning-foreground);
   --success-border: var(--success-foreground);
   --info-border: var(--info-foreground);
-  --radius: .75rem;
+  --radius: 8px;
   --font-sans: 'Geist Variable', 'Segoe UI', 'Microsoft YaHei', sans-serif;
   --shadow: 0 8px 24px rgb(24 43 67 / 16%);
   color-scheme: light;

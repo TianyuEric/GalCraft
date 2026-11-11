@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
 
 const slash = value => value.replaceAll('\\', '/');
-const skipped = new Set(['node_modules', 'dist', 'dist-storybook', 'package', '.git', 'test-results', 'tmp']);
+const skipped = new Set(['node_modules', 'dist', 'dist-storybook', 'dist-storybook-review', 'package', '.git', 'test-results', 'tmp']);
 const testFile = /(?:\.test\.|\.stories\.|\.acceptance\.|(?:^|\/)(?:tests?|__tests__|fixtures)\/)/;
 // These existing real-host acceptance entrypoints intentionally assemble app adapters.
 const hostFixtures = new Set([

@@ -38,4 +38,4 @@ PlayerSelect 支持鼠标、方向键、Home/End、文字检索、Enter 和 Esca
 
 M08 公开组件、M07 动作和正式 Storybook 提供共享实现。Studio 设计模式的视觉 Player 样例从朗读树隐藏，内部焦点交回设计画布；组件树和 Inspector 承担编辑。导航预览保持真实 Player 交互，作品样式与 Studio 主题各在自身作用域生效。
 
-新公共模式先进入正式 Storybook，再由实际页面复用。浏览器观察比例、焦点与输入，真实 Windows 观察客户区及磁盘，独立目标观察发行运行。产品行为及平台范围见[运行与发行](../reference/runtime-and-publishing.md)。
+Player 的可见 UI 调整沿[审核与晋升](components.md#审核与晋升)，先在受影响 Story 展示并取得用户确认，再承接为正式基线。浏览器观察比例、焦点与输入，真实 Windows 观察客户区及磁盘，独立目标观察发行运行。Studio 排版与密度规则作用于编辑器，作品画布和 Player 继续使用本页规则。产品行为及平台范围见[运行与发行](../reference/runtime-and-publishing.md)。

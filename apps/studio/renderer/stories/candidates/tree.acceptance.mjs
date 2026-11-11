@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { chromium, _electron } from 'playwright';
 
-const base = process.env.STORYBOOK_URL || 'http://127.0.0.1:6007';
+const base = process.env.STORYBOOK_URL || 'http://127.0.0.1:6008';
 const evidence = process.env.TREE_EVIDENCE || 'test-results/ui-candidates-batch2-20261018';
 await mkdir(evidence, { recursive: true });
 const native = process.env.TREE_ELECTRON ? await _electron.launch({ executablePath: createRequire(import.meta.url)('electron'), args: [fileURLToPath(new URL('./tests/electron-host.cjs', import.meta.url))] }) : null;

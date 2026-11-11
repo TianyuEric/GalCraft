@@ -10,8 +10,9 @@ import type { WorkbenchBridge } from '../pages/Production/bridge.js';
 import { expect, fireEvent, userEvent, waitFor, within } from 'storybook/test';
 
 type Page = 'projects' | 'editor' | 'assets' | 'pages' | 'production' | 'plugins' | 'publish';
+type InitialDocument = 'character' | 'project' | 'startup';
 
-function StudioPage({ page, state='normal', locale='zh-CN', theme='light', components=false, productionResume=false }: { page: Page; state?:ProductState; locale?:'zh-CN'|'en'|'ja';theme?:'light'|'dark';components?:boolean; productionResume?: boolean }) {
+function StudioPage({ page, state='normal', locale='zh-CN', theme='light', components=false, productionResume=false, initialDocument }: { page: Page; state?:ProductState; locale?:'zh-CN'|'en'|'ja';theme?:'light'|'dark';components?:boolean; productionResume?: boolean; initialDocument?: InitialDocument }) {
   const root = useRef<HTMLDivElement>(null);
   const reopen = useRef<(() => Promise<void>) | null>(null);
   const [error, setError] = useState('');
@@ -61,6 +62,7 @@ function StudioPage({ page, state='normal', locale='zh-CN', theme='light', compo
         if (!active) mounted.dispose();
       };
       if (page !== 'editor') await workspace.navigate(page);
+      if (initialDocument) await workspace.openDocument({ kind: initialDocument, ...(initialDocument === 'character' ? { objectId: productSnapshot().characters[0]!.id } : {}) });
       if(components)await workspace.openDocument({kind:'page',objectId:'component-workspace',title:'基础组件'});
       if (deferredState && active) {
         fixture.setState(state);
@@ -74,16 +76,21 @@ function StudioPage({ page, state='normal', locale='zh-CN', theme='light', compo
       mounted?.dispose();container.remove();
       if(ownsPortals)portals.remove();else portals.replaceChildren();
     };
-  }, [page,state,locale,theme,components,productionResume]);
+  }, [page,state,locale,theme,components,productionResume,initialDocument]);
   return <>{error && <div className="product-story-error" role="alert">{error}</div>}{productionResume && <button type="button" style={{ position: 'fixed', insetBlockEnd: 4, insetInlineEnd: 20, zIndex: 20 }} onClick={() => void reopen.current?.().catch(reason => setError(String(reason)))}>重新打开工作台</button>}<div ref={root} className="product-story" /></>;
 }
 
-const meta = { title: 'Product/Studio/Authoring/Pages', component: StudioPage,args:{state:'normal',locale:'zh-CN',theme:'light'},argTypes:{state:{control:'select',options:['normal','empty','failed','loading']},locale:{control:'select',options:['zh-CN','en','ja']},theme:{control:'select',options:['light','dark']}}, parameters: { layout: 'fullscreen' } } satisfies Meta<typeof StudioPage>;
+// Preserve existing script and evidence links while making the real Studio entry discoverable.
+const meta = { id: 'product-studio-authoring-pages', title: 'Product/Studio/Workbench/Studio', component: StudioPage,args:{state:'normal',locale:'zh-CN',theme:'light'},argTypes:{state:{control:'select',options:['normal','empty','failed','loading']},locale:{control:'select',options:['zh-CN','en','ja']},theme:{control:'select',options:['light','dark']}}, parameters: { layout: 'fullscreen', docs: { description: { component: '现行 Studio 的真实 mountAuthoring 装配，共用正式工作台与编辑器。服务使用内存作品与确定性夹具；磁盘、原生导入、实际生成与采用、完整插件目录和构建由真实宿主验证。可在相同 CSS 视口比较浅色与暮色；本入口不模拟桌面外框和本机服务生命周期。' } } } } satisfies Meta<typeof StudioPage>;
 export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Projects: Story = { args: { page: 'projects' } };
-export const Editor: Story = { args: { page: 'editor' } };
+export const Editor: Story = { name: '现行 Studio · 写作', args: { page: 'editor' } };
+export const EditorDusk: Story = { name: '现行 Studio · 暮色写作', args: { page: 'editor', theme: 'dark' } };
+export const CharacterDocument: Story = { args: { page: 'editor', initialDocument: 'character' } };
+export const ProjectDocument: Story = { args: { page: 'editor', initialDocument: 'project' } };
+export const StartupAndHome: Story = { args: { page: 'editor', initialDocument: 'startup' } };
 export const Assets: Story = { args: { page: 'assets' } };
 export const AssetsDark: Story = { args: { page: 'assets', theme: 'dark' } };
 export const AssetToCharacter: Story = {

@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
 import { TreeComparison } from './TreeComparison.js';
 
-const meta = { title: 'Product/Studio/Component Comparison/Batch 2', component: TreeComparison, parameters: { layout: 'fullscreen' } } satisfies Meta<typeof TreeComparison>;
+const meta = { id: 'product-studio-component-comparison-batch-2', title: 'Review/History/Component Comparison/Batch 2', component: TreeComparison, parameters: { layout: 'fullscreen', docs: { description: { component: '历史对象树方案对照；保留原实现与候选用于比较，不代表当前 Studio 的完整界面。' } } } } satisfies Meta<typeof TreeComparison>;
 export default meta;
 type Story = StoryObj<typeof meta>;
 export const TryCandidates: Story = { name: '第二批 · 开始体验', play: async ({ canvasElement }) => {

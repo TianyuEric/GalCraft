@@ -1,9 +1,0 @@
-.gc-candidate .candidate-controls-specimen { display:grid; grid-template-columns:minmax(0,360px) minmax(0,1fr); grid-template-areas:'directory editor' 'state editor'; gap:16px; padding-top:16px; align-items:start; }
-.gc-candidate .candidate-controls-specimen > div { min-width:0; border:1px solid var(--border); border-radius:var(--candidate-control-radius); overflow:hidden; }
-.gc-candidate .candidate-controls-specimen-directory { grid-area:directory; }
-.gc-candidate .candidate-controls-specimen-editor { grid-area:editor; }
-.gc-candidate .candidate-controls-specimen-state { grid-area:state; }
-.gc-candidate .candidate-controls-specimen-editor .gc-candidate-section-content { display:grid; gap:12px; }
-.gc-candidate .candidate-controls-specimen-editor .gc-candidate-field:has(input[inputmode=decimal]) { max-width:160px; }
-.gc-candidate .candidate-controls-specimen-editor .gc-candidate-field:has([role=combobox]) { max-width:280px; }
-@media(max-width:760px) { .gc-candidate .candidate-controls-specimen { grid-template-columns:minmax(0,1fr); grid-template-areas:'directory' 'editor' 'state'; } }

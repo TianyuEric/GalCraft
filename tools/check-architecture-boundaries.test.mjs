@@ -1,6 +1,29 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { importViolation, staticImports } from './check-architecture-boundaries.mjs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join, relative, resolve } from 'node:path';
+import { checkArchitecture, importViolation, staticImports } from './check-architecture-boundaries.mjs';
+
+test('source discovery checks source while excluding formal and Review Storybook outputs', async t => {
+  const temporary = resolve('tmp/testing/architecture-boundaries');
+  await mkdir(temporary, { recursive: true });
+  const root = await mkdtemp(join(temporary, 'source-discovery-'));
+  t.after(async () => {
+    const within = relative(temporary, root);
+    assert(within && !within.startsWith('..') && !within.includes(':'));
+    await rm(root, { recursive: true, force: true });
+  });
+  await Promise.all(['apps/studio/renderer', 'packages', 'plugins',
+    'apps/studio/dist-storybook', 'apps/studio/dist-storybook-review'].map(path => mkdir(join(root, path), { recursive: true })));
+  await writeFile(join(root, 'apps/studio/renderer/main.ts'), "import 'node:fs';");
+  // Generated bundles are outside source discovery, including during a rebuild.
+  for (const output of ['dist-storybook', 'dist-storybook-review'])
+    await writeFile(join(root, 'apps/studio', output, 'bundle.js'), 'unfinished generated JavaScript {');
+  const result = await checkArchitecture(root);
+  assert.equal(result.checked, 1);
+  assert.deepEqual(result.violations.map(({ file, rule }) => ({ file, rule })),
+    [{ file: 'apps/studio/renderer/main.ts', rule: 'renderer-to-node' }]);
+});
 
 test('actual static import forms expose dependency violations', () => {
   const source = `import { x } from '../../../apps/studio/renderer/main.js';
