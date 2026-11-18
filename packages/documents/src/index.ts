@@ -6,12 +6,13 @@ import {
   EditInputSchema, IdSchema, RelativePathSchema, SaveScopeSchema, DiscardScopeSchema,
 } from '@galcraft/contracts';
 import type {
-  EditInput, EditPlan, EditReceipt, Id, Issue, Json, Patch, Ref, Result,
+  DocumentView, EditInput, EditPlan, EditReceipt, Id, Issue, Json, LastValidSceneSource as SceneSource, Patch, Ref, Result,
   SavePlan, SaveReceipt, SaveScope, SaveObject, VersionRef, DiscardScope, DiscardPlan,
 } from '@galcraft/contracts';
 import { commitFiles, recoverTransactions, renameWithSharingRetry } from './file-transaction.js';
 import type { FileChange } from './file-transaction.js';
 import { dirtySaveObjects, patchSaveObjects, savedProjection, saveObjectKey, sourceSaveObject } from './logical-save.js';
+import { invalidSceneEdit, readSavedSceneSource, savedSceneSourceChange, sceneEventEditIssue, sceneSource, sceneSourceIssue, sceneSourcePath, verifiedPriorSceneSource } from './scene-sources.js';
 
 type Format = 'dsl' | 'json';
 export type WorkingDocument = { documentId: Id; revision: number; savedRevision: number; format: Format;
@@ -28,9 +29,10 @@ export async function deleteExternalEditReviews(root:string,sessionIds:string[])
   return ids;
 }
 type DocumentState = WorkingDocument;
-type Operation = { id: Id; groupId: Id; sequence: number; label: string; members: Id[];
+type Operation = { id: Id; groupId: Id; sequence: number; label: string; origin: EditInput['origin']; members: Id[];
   patches: Patch[]; inverse: Patch[]; state: 'applied' | 'undone'; after?: VersionRef[]; requiredRefs?: Ref[];
-  savedStates?: Record<string, 'applied' | 'undone'> };
+  savedStates?: Record<string, 'applied' | 'undone'>;
+  sourceBefore?: Map<Id, SceneSource | null>; sourceAfter?: Map<Id, SceneSource | null> };
 export type UndoPlan = { planId: Id; requestedOperationId: Id; reverseOrder: Id[]; members: Id[];
   expected: VersionRef[]; label: string; operations?: { operationId: Id; label: string; members: Id[] }[] };
 type SaveCapture = { plan: SavePlan; documents: Map<Id, DocumentState>;
@@ -38,7 +40,7 @@ type SaveCapture = { plan: SavePlan; documents: Map<Id, DocumentState>;
   recoveredGroups: { group: Draft['groups'][number]; remaining: string[] }[] };
 export type Conflict = { path: string; base: string | null; local: string | null; disk: string | null };
 type DraftDocument = { documentId: Id; raw: string; format: Format; files: Record<string, string>;
-  baseFiles: Record<string, string>; baseRevision: number; workingRevision: number };
+  baseFiles: Record<string, string>; baseRevision: number; workingRevision: number; lastValidSceneSource?: SceneSource | null };
 type ExternalEdit = { input: EditInput; result: Result<EditReceipt> };
 type Draft = { trackedEdits?: Record<string,EditReceipt>; externalCalls?: Record<string,ExternalEdit>; schemaVersion: 1; projectId: Id; savedAt: string; documents: DraftDocument[];
   groups: { id: Id; members: Id[]; objects?: string[] }[] };
@@ -65,7 +67,7 @@ async function readOptional(path: string): Promise<string | null> {
   }
 }
 async function copyProjectDirectory(root: string, target: string,
-  overlays: { files: Record<string, string>; savedFiles: Record<string, string> }[]): Promise<void> {
+  overlays: { files: Record<string, string>; savedFiles: Record<string, string> }[], sceneSources: FileChange[]): Promise<void> {
   if (resolve(target) === resolve(root) || resolve(target).startsWith(resolve(root) + sep))
     throw new Error('Copy directory must be outside the project');
   if (await stat(target).then(() => true, () => false)) throw new Error('Copy directory already exists');
@@ -82,6 +84,11 @@ async function copyProjectDirectory(root: string, target: string,
         if (content === undefined) await rm(destination, { force: true });
         else { await mkdir(dirname(destination), { recursive: true }); await writeFile(destination, content, 'utf8'); }
       }
+    }
+    for (const { path, content } of sceneSources) {
+      const destination = join(temporary, path);
+      if (content === null) await rm(destination, { force: true });
+      else { await mkdir(dirname(destination), { recursive: true }); await writeFile(destination, content, 'utf8'); }
     }
     await renameWithSharingRetry(temporary, target);
   } catch (error) { await rm(temporary, { recursive: true, force: true }); throw error; }
@@ -263,7 +270,7 @@ type FieldScope = { documentId: Id; path: string };
 const overlaps = (a: string, b: string) => a === '*' || b === '*' || a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 const scopes = (patches: Patch[]): FieldScope[] => patches.flatMap(patch => patch.kind === 'json' ? patch.changes.map(change => ({ documentId: patch.documentId, path: change.path })) : [{ documentId: patch.documentId, path: patch.kind === 'document' ? '*' : patch.kind === 'text' ? '#source' : `@${patch.path}` }]);
 const intersects = (left: FieldScope[], right: FieldScope[]) => left.some(a => right.some(b => a.documentId === b.documentId && overlaps(a.path, b.path)));
-function resetPatches(document: WorkingDocument): Patch[] {
+function resetPatches(document: WorkingDocument, resetSceneBaseline = false): Patch[] {
   if (!document.dirty) return [];
   const { documentId, format, files, savedFiles } = document;
   const image = (value: Record<string, string>): Json => ({ format, files: value });
@@ -279,6 +286,8 @@ function resetPatches(document: WorkingDocument): Patch[] {
     } else if (path.endsWith('.gal') && before !== undefined && after !== undefined) patches.push({ kind: 'text', documentId, edits: [{ start: 0, end: before.length, before, after }] });
     else patches.push({ kind: 'file', documentId, path, before: before ?? null, after: after ?? null });
   }
+  // A provenance-only discard still advances the source revision and has a history entry.
+  if (resetSceneBaseline && !patches.some(patch => patch.kind === 'text')) patches.push({ kind: 'text', documentId, edits: [] });
   return patches;
 }
 
@@ -299,6 +308,7 @@ export class ProjectSession {
   readonly resolveRequiredRef?: ReferenceResolver;
   readonly requiredReferences?: SessionOptions['requiredReferences'];
   recoveryConflicts: Conflict[] = [];
+  writeBlocked: Issue | null = null;
   #sequence = 0;
   #saving = false;
   #saveFinished: Promise<void> = Promise.resolve();
@@ -311,6 +321,8 @@ export class ProjectSession {
   #draftTimer: NodeJS.Timeout | null = null;
   #draftSince = 0;
   #draftWrite: Promise<void> = Promise.resolve();
+  #sceneSources = new Map<Id, { current: SceneSource; error: Issue | null; lastValid: SceneSource | null }>();
+  #savedSceneSources = new Map<Id, SceneSource>();
   draftError: string | null = null;
 
   constructor(root: string, projectId: Id, options: SessionOptions = {}) {
@@ -345,6 +357,14 @@ export class ProjectSession {
       }
     }
     await scan(root);
+    for (const document of session.documents.values()) {
+      if (!session.#sceneSources.get(document.documentId)?.error) continue;
+      const stored = await readOptional(join(root, sceneSourcePath(document.documentId)));
+      const source = stored && readSavedSceneSource(projectId, document, stored);
+      if (!source) continue;
+      session.#savedSceneSources.set(document.documentId, source);
+      session.#rememberSceneSource(document, source);
+    }
     const externalJournal=await readOptional(join(root,'.galcraft/external-results.json'));
     if(externalJournal)session.externalCalls=JSON.parse(externalJournal);
     const templateDocument = [...session.documents.values()].find(document => 'ui/template.json' in document.files);
@@ -376,7 +396,9 @@ export class ProjectSession {
     for (const path of Object.keys(input.files)) RelativePathSchema.parse(path);
     reserveIds(input);
     const files = clone(input.files);
-    this.documents.set(input.documentId, { ...input, files, savedFiles: clone(files), savedRevision: input.revision, dirty: false });
+    const document = { ...input, files, savedFiles: clone(files), savedRevision: input.revision, dirty: false };
+    this.documents.set(input.documentId, document);
+    this.#rememberSceneSource(document);
   }
 
   static async createProject(root: string, projectId: Id, inputs: NewDocument[], options: SessionOptions = {}): Promise<ProjectSession> {
@@ -412,6 +434,61 @@ export class ProjectSession {
     return copy;
   }
 
+  /** Adds display provenance to the working view while saved snapshots retain the authored files. */
+  readAuthoringDocument(documentId: Id): DocumentView | null {
+    const document = this.readDocument(documentId);
+    if (!document) return null;
+    const lastValidSceneSource = this.#fallbackSceneSource(document);
+    return lastValidSceneSource ? { ...document, lastValidSceneSource: clone(lastValidSceneSource) } : document;
+  }
+
+  #rememberSceneSource(document: DocumentState, baseline?: SceneSource | null): void {
+    const current = sceneSource(document);
+    if (!current) return;
+    const previous = this.#sceneSources.get(document.documentId);
+    const error = previous && previous.current.revision === current.revision && previous.current.text === current.text
+      ? previous.error : sceneSourceIssue(document.documentId, current);
+    const prior = baseline === undefined ? previous?.lastValid : baseline;
+    const lastValid = error ? prior && prior.revision < current.revision ? prior : null : current;
+    this.#sceneSources.set(document.documentId, { current, error, lastValid });
+    document.dirty ||= this.#sceneBaselineDirty(document);
+  }
+
+  #sceneBaselineDirty(document: DocumentState): boolean {
+    // Reintroducing the same invalid bytes can still change the last parseable revision.
+    const state = this.#sceneSources.get(document.documentId);
+    const saved = sceneSource({ ...document, files: document.savedFiles, revision: document.savedRevision });
+    return !!state?.error && state.current.revision === document.revision && saved?.text === state.current.text && document.revision > document.savedRevision &&
+      !equal(state.lastValid, this.#savedSceneSources.get(document.documentId) ?? null);
+  }
+
+  #historySceneBaselines(members: Id[]): Map<Id, SceneSource | null> {
+    const sources = new Map<Id, SceneSource | null>();
+    for (const id of members) {
+      const document = this.documents.get(id);
+      if (sceneSource(document) && this.#sceneSources.get(id)?.error) sources.set(id, this.#fallbackSceneSource(document!));
+    }
+    return sources;
+  }
+
+  #fallbackSceneSource(document: Pick<WorkingDocument, 'documentId' | 'revision' | 'format' | 'files'>): SceneSource | null {
+    const state = this.#sceneSources.get(document.documentId), source = sceneSource(document);
+    return state?.error && source?.revision === state.current.revision && source.text === state.current.text ? state.lastValid : null;
+  }
+
+  #guardSceneEdit(input: EditInput): Result<never> | null {
+    for (const patch of input.patches) {
+      if (patch.kind !== 'text' && patch.kind !== 'json') continue;
+      if (patch.kind === 'text' && input.origin === 'script') continue;
+      const document = this.documents.get(patch.documentId), source = sceneSource(document);
+      if (!document || !source) continue;
+      const state = this.#sceneSources.get(patch.documentId);
+      const invalid = state?.current.revision === source.revision && state.current.text === source.text ? state.error : sceneSourceIssue(patch.documentId, source);
+      if (invalid) return invalidSceneEdit(invalid);
+    }
+    return null;
+  }
+
   readRaw(documentId: Id, version: 'working' | 'saved' = 'working'): { raw: string; revision: number } | null {
     const document = this.readDocument(documentId, version);
     if (!document || document.format !== 'dsl' || !Object.keys(document.files).some(path => path.endsWith('.gal'))) return null;
@@ -429,6 +506,11 @@ export class ProjectSession {
   }
 
   planEdit(input: EditInput): Result<EditPlan> {
+    return this.#prepareEdit(input, false);
+  }
+
+  #prepareEdit(input: EditInput, discard: boolean): Result<EditPlan> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging) return fail('DIRECTORY_BUSY', '作品目录正在提交');
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     if (this.#pendingRecovery) return fail('RECOVERY_UNRESOLVED', 'A recovery draft still needs a choice', ['compare']);
@@ -441,9 +523,13 @@ export class ProjectSession {
       return fail('UNKNOWN_DOCUMENT', 'Edit member is missing', ['edit']);
     if (!sameVersions(this.documents, input.expected) || members.some(id => this.documents.has(id) && !input.expected.some(value => value.ref.id === id)))
       return fail('EDIT_CONFLICT', 'Working revision changed', ['compare']);
+    const invalid = !discard && this.#guardSceneEdit(input);
+    if (invalid) return invalid;
     const copy = clone(this.documents);
     try { for (const patch of input.patches) applyPatch(copy, patch); }
     catch (error) { return fail('PATCH_CONFLICT', String(error), ['compare']); }
+    const eventIssue = !discard && input.origin !== 'script' && sceneEventEditIssue(this.documents, copy, members);
+    if (eventIssue) return { ok: false, error: eventIssue, issues: [eventIssue] };
     const plan: EditPlan = { planId: createId([this.documents, this.operations]), input: clone(input), members, issues: [],
       before: Object.fromEntries(members.map(id => [id, this.documents.get(id)?.revision ?? 0])), preview: [] };
     this.editPlans.set(plan.planId, clone(plan));
@@ -493,9 +579,10 @@ export class ProjectSession {
     const planned=this.planEdit(input);if(!planned.ok)return planned;
     await mkdir(dirname(path),{recursive:true});await writeFile(`${path}.tmp`,JSON.stringify(planned.value));await renameWithSharingRetry(`${path}.tmp`,path);return planned;
   }
-  async applyExternalEdit(planId:Id,expected:VersionRef[],context:import('@galcraft/contracts').CollaborationContext):Promise<Result<EditReceipt>> {
+  async applyExternalEdit(planId:Id,expected:VersionRef[],context:import('@galcraft/contracts').CollaborationContext,beforeApply?:()=>Result<void>):Promise<Result<EditReceipt>> {
     const previous=await this.lookupExternalCall(context);if(previous)return previous;
     const plan=this.editPlans.get(planId);if(!plan)return fail('EDIT_PLAN_MISSING','外部修改计划已失效，请重新准备');
+    const allowed=beforeApply?.();if(allowed&&!allowed.ok)return allowed;
     const result=this.applyEdit(planId,expected);if(!result.ok)return result;
     this.externalCalls[`${context.sessionId}/${context.callId}`]={input:clone(plan.input),result:clone(result)};
     // The working documents and the receipt enter the same atomic recovery image.
@@ -516,6 +603,11 @@ export class ProjectSession {
     return result;
   }
   applyEdit(planId: Id, expected: VersionRef[]): Result<EditReceipt> {
+    return this.#applyEdit(planId, expected, false);
+  }
+
+  #applyEdit(planId: Id, expected: VersionRef[], discard: boolean): Result<EditReceipt> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging) return fail('DIRECTORY_BUSY', '作品目录正在提交');
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const plan = this.editPlans.get(planId);
@@ -524,10 +616,14 @@ export class ProjectSession {
       plan.members.some(id => this.documents.has(id)
       ? !expected.some(value => value.ref.id === id && value.revision === plan.before[id])
       : expected.some(value => value.ref.id === id))) return fail('EDIT_CONFLICT', 'Working revision changed', ['compare']);
+    const invalid = !discard && this.#guardSceneEdit(plan.input);
+    if (invalid) return invalid;
     const copy = clone(this.documents);
     const inverses: Patch[] = [];
     try { for (const patch of plan.input.patches) { inverses.unshift(inverse(patch, copy)); applyPatch(copy, patch); } }
     catch (error) { return fail('PATCH_CONFLICT', String(error), ['compare']); }
+    const eventIssue = !discard && plan.input.origin !== 'script' && sceneEventEditIssue(this.documents, copy, plan.members);
+    if (eventIssue) return { ok: false, error: eventIssue, issues: [eventIssue] };
     for (const required of plan.input.requiredRefs) {
       if (required.kind === 'project' && required.id === this.projectId) continue;
       if (required.kind === 'document' && Object.keys(copy.get(required.id)?.files ?? {}).length) continue;
@@ -537,11 +633,17 @@ export class ProjectSession {
       } catch (error) { return fail('REF_CHECK_FAILED', String(error), ['retry']); }
       return fail('REQUIRED_REF_MISSING', `Required ${required.kind} ${required.id} is unavailable`, ['locate']);
     }
+    const sourceBefore = this.#historySceneBaselines(plan.members);
     this.documents.clear();
     for (const [id, document] of copy) this.documents.set(id, document);
+    for (const id of plan.members) {
+      const resetSource = discard && plan.input.patches.some(patch => patch.documentId === id && (patch.kind === 'text' || patch.kind === 'document'));
+      this.#rememberSceneSource(copy.get(id)!, resetSource ? this.#savedSceneSources.get(id) ?? null : undefined);
+    }
     const operation: Operation = { id: createId([this.documents, this.operations]), groupId: createId([this.documents, this.operations]), sequence: ++this.#sequence,
-      label: plan.input.label, members: plan.members, patches: clone(plan.input.patches),
-      inverse: inverses, state: 'applied', after: versions(this.documents, plan.members), requiredRefs: clone(plan.input.requiredRefs) };
+      label: plan.input.label, origin: plan.input.origin, members: plan.members, patches: clone(plan.input.patches),
+      inverse: inverses, state: 'applied', after: versions(this.documents, plan.members), requiredRefs: clone(plan.input.requiredRefs),
+      sourceBefore, sourceAfter: this.#historySceneBaselines(plan.members) };
     this.operations.push(operation);
     for (const [id, history] of this.undoPlans) if (history.reverseOrder.some(operationId => {
       const existing = this.operations.find(item => item.id === operationId);
@@ -562,7 +664,7 @@ export class ProjectSession {
     if (!checked.success) return fail('INVALID_DISCARD_SCOPE', checked.error.message, ['edit']);
     if (!this.documents.has(scope.documentId)) return fail('UNKNOWN_DOCUMENT', '放弃范围的文档不存在');
     if (scope.objects || scope.objectId || !scope.paths?.length) return this.planDiscardObject(scope);
-    const resets = [...this.documents.values()].flatMap(resetPatches), dirtyScopes = scopes(resets), objects = dirtySaveObjects(this.documents);
+    const resets = [...this.documents.values()].flatMap(document => resetPatches(document, this.#sceneBaselineDirty(document))), dirtyScopes = scopes(resets), objects = dirtySaveObjects(this.documents);
     const requested = (scope.paths?.length ? scope.paths : ['*']).map(path => ({ documentId: scope.documentId, path }));
     const selected = dirtyScopes.filter(item => intersects([item], requested));
     const add = (items: FieldScope[]) => { let changed = false; for (const item of items) if (!selected.some(value => value.documentId === item.documentId && value.path === item.path)) { selected.push(item); changed = true; } return changed; };
@@ -667,7 +769,10 @@ export class ProjectSession {
       }
     } catch (error) { return fail('REF_CHECK_FAILED', String(error), ['retry']); }
     const members = [...new Set(objects().map(object => object.documentId))], expected = versions(this.documents, this.documents.keys());
-    const patches = members.flatMap(id => resetPatches({ ...clone(this.documents.get(id)!), savedFiles: projected.get(id)!.files }));
+    const patches = members.flatMap(id => {
+      const document = this.documents.get(id)!;
+      return resetPatches({ ...clone(document), savedFiles: projected.get(id)!.files }, this.#sceneBaselineDirty(document));
+    });
     const references = this.requiredReferences?.(projected) ?? [];
     const plan: DiscardPlan = { planId: createId([this.documents, this.operations]), scope: clone(scope), members, expected,
       requestedObjects: requested.map(object => object.key), objects: clone(objects()), reasons,
@@ -691,14 +796,15 @@ export class ProjectSession {
         return fail('DISCARD_REF_CONFLICT', `放弃范围的 ${required.kind} ${required.id} 引用已失效`, ['compare']);
       }
     } catch (error) { return fail('REF_CHECK_FAILED', String(error), ['retry']); }
-    const planned = this.planEdit(capture.edit);
+    const planned = this.#prepareEdit(capture.edit, true);
     if (!planned.ok) return planned;
-    const result = this.applyEdit(planned.value.planId, capture.edit.expected);
+    const result = this.#applyEdit(planned.value.planId, capture.edit.expected, true);
     if (result.ok) this.discardPlans.delete(planId);
     return result;
   }
 
   planUndo(documentId: Id, operationId?: Id, paths?: string[]): Result<UndoPlan> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const target = operationId
       ? this.operations.find(operation => operation.id === operationId && operation.state === 'applied' && operation.members.includes(documentId))
@@ -727,6 +833,7 @@ export class ProjectSession {
   }
 
   planRedo(documentId: Id, paths?: string[]): Result<UndoPlan> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const requested = (paths ?? ['*']).map(path => ({ documentId, path }));
     const candidates = [...this.undoPlans.values()].filter(plan => sameVersions(this.documents, plan.expected) &&
@@ -737,16 +844,25 @@ export class ProjectSession {
   }
 
   undo(planId: Id): Result<EditReceipt> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging) return fail('DIRECTORY_BUSY', '作品目录正在提交');
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const plan = this.undoPlans.get(planId);
     if (!plan || !sameVersions(this.documents, plan.expected) || plan.reverseOrder.some(id => this.operations.find(operation => operation.id === id)?.state !== 'applied')) return fail('UNDO_CONFLICT', 'Undo plan is stale', ['compare']);
     const resumable = [...this.undoPlans.values()].filter(saved => saved !== plan && sameVersions(this.documents, saved.expected) && saved.reverseOrder.every(id => this.operations.find(op => op.id === id)?.state === 'undone'));
-    const copy = clone(this.documents);
+    const copy = clone(this.documents), sourceBaselines = new Map<Id, SceneSource | null>();
     try {
-      for (const id of plan.reverseOrder) for (const patch of this.operations.find(op => op.id === id)!.inverse) applyPatch(copy, patch);
+      for (const id of plan.reverseOrder) {
+        const operation = this.operations.find(op => op.id === id)!;
+        for (const patch of operation.inverse) applyPatch(copy, patch);
+        operation.sourceBefore?.forEach((source, documentId) => sourceBaselines.set(documentId, source));
+      }
     } catch (error) { return fail('UNDO_CONFLICT', String(error), ['compare']); }
+    const eventIssue = plan.reverseOrder.every(id => this.operations.find(op => op.id === id)?.origin !== 'script') &&
+      sceneEventEditIssue(this.documents, copy, plan.members, false);
+    if (eventIssue) return { ok: false, error: eventIssue, issues: [eventIssue] };
     this.documents.clear(); for (const [id, document] of copy) this.documents.set(id, document);
+    for (const id of plan.members) this.#rememberSceneSource(copy.get(id)!, sourceBaselines.get(id));
     for (const id of plan.reverseOrder) this.operations.find(op => op.id === id)!.state = 'undone';
     plan.expected = versions(this.documents, plan.members);
     for (const saved of resumable) saved.expected = versions(this.documents, saved.members);
@@ -755,6 +871,7 @@ export class ProjectSession {
   }
 
   redo(planId: Id): Result<EditReceipt> {
+    if (this.writeBlocked) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging) return fail('DIRECTORY_BUSY', '作品目录正在提交');
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const plan = this.undoPlans.get(planId);
@@ -768,11 +885,17 @@ export class ProjectSession {
       return restoring.some(operation => predecessor.sequence < operation.sequence &&
         intersects(scopes(predecessor.patches), scopes(operation.patches)));
     }))) return fail('REDO_CONFLICT', 'Restore earlier related edits first', ['compare']);
-    const copy = clone(this.documents);
+    const copy = clone(this.documents), sourceBaselines = new Map<Id, SceneSource | null>();
     try {
-      for (const id of [...plan.reverseOrder].reverse()) for (const patch of this.operations.find(op => op.id === id)!.patches) applyPatch(copy, patch);
+      for (const operation of [...restoring].reverse()) {
+        for (const patch of operation.patches) applyPatch(copy, patch);
+        operation.sourceAfter?.forEach((source, documentId) => sourceBaselines.set(documentId, source));
+      }
     } catch (error) { return fail('REDO_CONFLICT', String(error), ['compare']); }
+    const eventIssue = restoring.every(operation => operation.origin !== 'script') && sceneEventEditIssue(this.documents, copy, plan.members, false);
+    if (eventIssue) return { ok: false, error: eventIssue, issues: [eventIssue] };
     this.documents.clear(); for (const [id, document] of copy) this.documents.set(id, document);
+    for (const id of plan.members) this.#rememberSceneSource(copy.get(id)!, sourceBaselines.get(id));
     for (const id of plan.reverseOrder) this.operations.find(op => op.id === id)!.state = 'applied';
     this.undoPlans.delete(planId);
     for (const saved of resumable) if (saved.reverseOrder.every(id => this.operations.find(op => op.id === id)?.state === 'undone')) saved.expected = versions(this.documents, saved.members);
@@ -859,6 +982,7 @@ export class ProjectSession {
     if (this.#saving) return fail('SAVE_BUSY', 'A save is already running');
     const plan = this.savePlans.get(planId);
     if (!plan) return fail('SAVE_PLAN_MISSING', 'Save plan is unavailable');
+    if (this.writeBlocked && plan.files.length) return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     const expected = this.saveExpected.get(planId);
     if (!expected || expected.length !== this.documents.size || !sameVersions(this.documents, expected)) return fail('SAVE_PLAN_STALE', 'Working revision changed before save', ['compare']);
     const selected = new Set(plan.objects.map(object => object.key)), objects = dirtySaveObjects(this.documents);
@@ -867,6 +991,12 @@ export class ProjectSession {
         objects: patchSaveObjects(operation.state === 'undone' ? operation.inverse : operation.patches, plan.objects) })),
       recoveredGroups: this.recoveredGroups.map(group => ({ group, remaining: objects.filter(object =>
         (group.objects ? group.objects.includes(object.key) : group.members.includes(object.documentId)) && !selected.has(object.key)).map(object => object.key) })) };
+    const sceneBaselines = new Map<Id, SceneSource | null>();
+    for (const [id, document] of capture.documents) {
+      if (document.format !== 'dsl') continue;
+      const baseline = this.#fallbackSceneSource(document);
+      if (baseline || this.#savedSceneSources.has(id)) sceneBaselines.set(id, baseline);
+    }
     this.#saving = true;
     let finishSave!: () => void; this.#saveFinished = new Promise(resolve => { finishSave = resolve; });
     try {
@@ -885,12 +1015,17 @@ export class ProjectSession {
         this.conflicts.set(planId, conflicts);
         return fail('EXTERNAL_CONFLICT', `External changes in ${conflicts.map(value => value.path).join(', ')}`, ['compare']);
       }
+      for (const [id, baseline] of sceneBaselines) changes.push(savedSceneSourceChange(this.projectId, capture.documents.get(id)!, baseline));
       const transactionId = changes.length ? await commitFiles(this.root, this.projectId, changes) : createId([this.documents, this.operations]);
       for (const [id, saved] of capture.documents) {
+        const baseline = sceneBaselines.get(id);
+        if (baseline) this.#savedSceneSources.set(id, baseline);
+        else if (sceneBaselines.has(id)) this.#savedSceneSources.delete(id);
         const current = this.documents.get(id)!;
         current.savedFiles = clone(saved.files);
         current.savedRevision = saved.revision;
         current.dirty = dirty(current);
+        this.#rememberSceneSource(current);
       }
       for (const { operation, state, objects } of capture.operations) for (const key of objects) {
         (operation.savedStates ??= {})[key] = state;
@@ -952,7 +1087,10 @@ export class ProjectSession {
     if (choice === 'copy') {
       if (!copyPath) return fail('COPY_PATH_REQUIRED', 'Copy path is required');
       try {
-        await copyProjectDirectory(this.root, copyPath, [...this.documents.values()].filter(document => document.dirty));
+        const overlays = [...this.documents.values()].filter(document => document.dirty);
+        const sources = overlays.filter(document => document.format === 'dsl').map(document =>
+          savedSceneSourceChange(this.projectId, document, this.#fallbackSceneSource(document)));
+        await copyProjectDirectory(this.root, copyPath, overlays, sources);
       } catch (error) { return fail('COPY_FAILED', String(error)); }
     } else for (const conflict of conflicts) {
       const id = plan.files.find(file => file.path === conflict.path)?.documentId;
@@ -964,6 +1102,7 @@ export class ProjectSession {
       }
       if (conflict.disk === null) delete document.savedFiles[conflict.path]; else document.savedFiles[conflict.path] = conflict.disk;
       document.dirty = dirty(document);
+      this.#rememberSceneSource(document, choice === 'disk' ? this.#savedSceneSources.get(document.documentId) ?? null : undefined);
     }
     this.conflicts.delete(planId);
     this.savePlans.delete(planId);
@@ -987,11 +1126,13 @@ export class ProjectSession {
       ...this.operations.map(operation => {
         return { id: operation.groupId, members: operation.members, objects: this.operationSaveObjects(operation, objects) };
       })].filter(group => group.objects.length);
-    const value = { trackedEdits: this.trackedEdits, externalCalls: this.externalCalls, schemaVersion: 1, projectId: this.projectId, savedAt: new Date().toISOString(),
+    const value: Draft = { trackedEdits: this.trackedEdits, externalCalls: this.externalCalls, schemaVersion: 1, projectId: this.projectId, savedAt: new Date().toISOString(),
       documents: dirtyDocuments.map(document => ({ documentId: document.documentId, baseRevision: document.savedRevision,
         workingRevision: document.revision,
-        raw: Object.keys(document.files).length ? document.files[documentPath(document, document.format)] : '',
-        format: document.format, files: document.files, baseFiles: document.savedFiles })), groups };
+        raw: Object.keys(document.files).length ? document.files[documentPath(document, document.format)]! : '',
+        format: document.format, files: document.files, baseFiles: document.savedFiles,
+        lastValidSceneSource: sceneSource(document) && this.#sceneSources.get(document.documentId)?.error
+          ? this.#fallbackSceneSource(document) : undefined })), groups };
     await mkdir(dirname(path), { recursive: true });
     const temporary = `${path}.tmp`;
     await writeFile(temporary, JSON.stringify(value), 'utf8');
@@ -1033,6 +1174,14 @@ export class ProjectSession {
     return conflicts;
   }
 
+  #draftSceneSource(draft: Draft, item: DraftDocument): SceneSource | null | undefined {
+    if (draft.projectId !== this.projectId || item.format !== 'dsl') return undefined;
+    if (item.lastValidSceneSource === null) return null;
+    const base = sceneSource({ ...item, revision: item.baseRevision, files: item.baseFiles });
+    return verifiedPriorSceneSource(item.documentId, item.workingRevision, item.lastValidSceneSource)
+      ?? verifiedPriorSceneSource(item.documentId, item.workingRevision, base) ?? undefined;
+  }
+
   private applyDraft(draft: Draft, useDisk: Set<string> = new Set()): Id[] {
     const restored: Id[] = [];
     for (const item of draft.documents) {
@@ -1061,6 +1210,8 @@ export class ProjectSession {
         } catch { /* Preserve invalid raw source. */ }
       }
       document.dirty = dirty(document);
+      const scriptFromDisk = [...useDisk].some(path => path.endsWith('.gal') && (path in item.files || path in item.baseFiles));
+      this.#rememberSceneSource(document, scriptFromDisk ? this.#savedSceneSources.get(item.documentId) ?? null : this.#draftSceneSource(draft, item));
       restored.push(item.documentId);
     }
     this.externalCalls={...this.externalCalls,...draft.externalCalls};
@@ -1071,6 +1222,7 @@ export class ProjectSession {
   }
 
   async recover(choice: 'restore' | 'discard'): Promise<Result<Id[]>> {
+    if (this.writeBlocked && choice === 'restore') return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging || this.#disposed) return fail('DIRECTORY_BUSY', '作品会话正在提交目录');
     if (this.#disposed) return fail('SESSION_CLOSED', 'Project session is closed');
     const draft = await this.loadDraft();
@@ -1088,6 +1240,7 @@ export class ProjectSession {
   }
 
   async resolveRecoveryConflict(choice: 'local' | 'disk' | 'copy', copyPath?: string): Promise<Result<Id[]>> {
+    if (this.writeBlocked && choice === 'local') return { ok: false, error: this.writeBlocked, issues: [this.writeBlocked] };
     if (this.#directoryChanging || this.#disposed) return fail('DIRECTORY_BUSY', '作品会话正在提交目录');
     const draft = await this.loadDraft();
     if (!draft || !this.recoveryConflicts.length) return fail('RECOVERY_CONFLICT_MISSING', 'No recovery conflict is pending');
@@ -1098,8 +1251,15 @@ export class ProjectSession {
     }
     if (choice === 'copy') {
       if (!copyPath) return fail('COPY_PATH_REQUIRED', 'Copy path is required');
-      try { await copyProjectDirectory(this.root, copyPath, draft.documents.map(item =>
-        ({ files: item.files, savedFiles: item.baseFiles }))); }
+      try {
+        const overlays = draft.documents.map(item => ({ files: item.files, savedFiles: item.baseFiles }));
+        const sources = draft.documents.filter(item => item.format === 'dsl').map(item => {
+          const document = { ...item, revision: item.workingRevision }, source = sceneSource(document);
+          const baseline = source && sceneSourceIssue(item.documentId, source) ? this.#draftSceneSource(draft, item) ?? null : null;
+          return savedSceneSourceChange(this.projectId, document, baseline);
+        });
+        await copyProjectDirectory(this.root, copyPath, overlays, sources);
+      }
       catch (error) { return fail('COPY_FAILED', String(error)); }
       await rm(join(this.root, '.galcraft', 'recovery', 'draft.json'), { force: true });
       this.recoveryConflicts = [];

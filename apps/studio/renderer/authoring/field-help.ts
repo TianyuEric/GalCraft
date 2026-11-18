@@ -22,12 +22,16 @@ export const names: Record<string, [string, string, string]> = {
   characterId: ['角色', 'Character', 'キャラクター'], objectId: ['舞台对象标识', 'Stage object ID', 'ステージオブジェクトID'], soundId: ['音效标识', 'Sound ID', '効果音ID'], styleId: ['样式', 'Style', 'スタイル'], effectId: ['特效标识', 'Effect ID', 'エフェクトID'],
   options: ['选项', 'Options', '選択肢'], previewDefault: ['预览默认选项', 'Preview default', 'プレビューの既定値'],
   speaker: ['说话者', 'Speaker', '話者'], kind: ['类型', 'Kind', '種類'], id: ['标识', 'ID', 'ID'], text: ['正文', 'Text', '本文'],
+  events: ['句内事件', 'Dialogue events', '台詞内イベント'], event: ['事件', 'Event', 'イベント'], offset: ['正文位置', 'Text position', '本文位置'],
+  autoWaitMs: ['自动等待（毫秒）', 'Auto wait (ms)', '自動待機（ミリ秒）'], expressionName: ['表情名称', 'Expression name', '表情名'],
   textLocale: ['正文语言', 'Text language', '本文の言語'], keepName: ['保留姓名', 'Keep name', '名前を保持'], append: ['续接文本', 'Append text', '本文を続ける'],
   target: ['目标', 'Target', '対象'], voice: ['配音', 'Voice', '音声'], voiceByLocale: ['多语言配音', 'Voices by language', '言語別音声'],
   voiceVolume: ['配音音量', 'Voice volume', '音声音量'], fontSize: ['字号', 'Font size', '文字サイズ'], avatar: ['头像', 'Avatar', 'アバター'],
   op: ['操作', 'Operation', '操作'], assetId: ['素材', 'Asset', '素材'], fit: ['适配方式', 'Fit', '表示方法'],
   positionX: ['水平位置', 'Horizontal position', '水平位置'], positionY: ['垂直位置', 'Vertical position', '垂直位置'],
   transition: ['转场', 'Transition', 'トランジション'], volume: ['音量', 'Volume', '音量'], loop: ['循环', 'Loop', 'ループ'],
+  ruleImage: ['规则图过渡', 'Rule image transition', 'ルール画像トランジション'],
+  reverse: ['反向播放', 'Reverse direction', '逆方向'],
   durationMs: ['时长（毫秒）', 'Duration (ms)', '時間（ミリ秒）'], sceneId: ['场景', 'Scene', 'シーン'],
   labelId: ['标签', 'Label', 'ラベル'], when: ['执行条件', 'Condition', '実行条件'], note: ['备注', 'Note', 'メモ'],
   continue: ['继续执行', 'Continue', '続行'], skippable: ['允许跳过', 'Skippable', 'スキップ可能'],
@@ -105,9 +109,15 @@ export function fieldHint(spec: FieldSpec, label: string, locale: string, comman
   const meaning=meanings[spec.path]?.[locale==='en'?1:locale==='ja'?2:0];
   return meaning ?? formHint(locale, label, spec.type, { ...spec, unit: (spec.unit && spec.unit !== 'none' ? spec.unit : /Ms$/.test(spec.path) ? 'ms' : /Sec$/.test(spec.path) ? 's' : undefined) });
 }
-export function initialFieldValue(spec: FieldSpec): unknown {
-  if (spec.path === 'id' && spec.refKind === 'statement') return createId();
-  if (spec.type === 'object') return Object.fromEntries((spec.children ?? []).filter(c => c.required || c.default != null).map(c => [c.path, initialFieldValue(c)]));
+export function initialFieldValue(spec: FieldSpec, creatingCommand = false): unknown {
+  if (spec.path === 'id' && spec.refKind === 'statement') return creatingCommand ? undefined : createId();
+  if (spec.type === 'object') return Object.fromEntries((spec.children ?? [])
+    .filter(child => child.required || child.default != null)
+    .flatMap(child => {
+      if (creatingCommand && spec.path === 'segment' && child.path === 'effects') return [];
+      const value = initialFieldValue(child, creatingCommand);
+      return creatingCommand && value == null && !child.nullable || value === undefined ? [] : [[child.path, value]];
+    }));
   return spec.default;
 }
 

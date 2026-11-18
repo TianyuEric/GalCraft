@@ -1,0 +1,126 @@
+.gc-dock-tabs {
+  position: relative;
+  align-self: stretch;
+  flex: 1 1 0;
+  min-block-size: 36px;
+  min-inline-size: 0;
+  container-type: inline-size;
+  overflow: auto hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+  --dock-tab-fade-start: 0px;
+  --dock-tab-fade-end: 0px;
+}
+
+.gc-dock-tabs:is([data-fade-start], [data-fade-end]) {
+  mask-image: linear-gradient(to right,
+    transparent, black var(--dock-tab-fade-start),
+    black calc(100% - var(--dock-tab-fade-end)), transparent);
+}
+
+.gc-dock-tabs[data-fade-start] { --dock-tab-fade-start: 24px; }
+.gc-dock-tabs[data-fade-end] { --dock-tab-fade-end: 24px; }
+
+.gc-dock-tabs-content {
+  display: flex;
+  inline-size: max-content;
+  min-block-size: 100%;
+}
+
+.gc-dock-tab {
+  position: relative;
+  display: flex;
+  flex: none;
+  max-inline-size: 100cqi;
+  border-inline-end: 1px solid var(--border);
+  color: var(--foreground-secondary);
+  user-select: none;
+}
+
+.gc-dock-tab:hover {
+  background: var(--workbench-editor);
+  color: var(--foreground);
+}
+
+.gc-dock-tab[data-current=true] {
+  background: color-mix(in srgb, var(--primary) 8%, var(--workbench-explorer));
+  color: var(--foreground);
+}
+
+.gc-dock-tab[data-global-current=true] {
+  background: color-mix(in srgb, var(--primary) 15%, var(--workbench-explorer));
+  box-shadow: inset 0 1px var(--primary);
+}
+
+.gc-dock-tab-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-inline-size: 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: 400 14px/20px var(--font-sans);
+  cursor: default;
+}
+
+.gc-dock-tab[data-has-action] .gc-dock-tab-trigger { padding-inline-end: 36px; }
+
+.gc-dock-tab-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: 16px;
+  block-size: 16px;
+}
+
+.gc-dock-tab-label {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gc-dock-tab[data-retention=preview] .gc-dock-tab-label { font-style: italic; }
+.gc-dock-tab-error { display: inline-flex; flex: none; color: var(--danger-foreground); }
+
+.gc-dock-tab-action {
+  position: absolute;
+  inset-inline-end: 12px;
+  inset-block-start: 50%;
+  display: grid;
+  place-items: center;
+  inline-size: 16px;
+  block-size: 16px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.gc-dock-tab-close {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+  cursor: default;
+  pointer-events: auto;
+}
+
+.gc-dock-tab-close:hover { background: var(--surface-selected); }
+.gc-dock-tab[data-current=true]:not([data-dirty]) .gc-dock-tab-close,
+.gc-dock-tab:hover .gc-dock-tab-close,
+.gc-dock-tab-close:focus-visible { opacity: 1; }
+.gc-dock-tab-action:has(.gc-dock-tab-close:focus-visible) .gc-dock-tab-dirty,
+.gc-dock-tab:hover .gc-dock-tab-action:has(.gc-dock-tab-close) .gc-dock-tab-dirty { opacity: 0; }
+
+:is(.gc-dock-tab-trigger, .gc-dock-tab-close):focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}

@@ -5,21 +5,23 @@ import { Button, Choice, Field } from '../../components/controls.js';
 import { CodeBlock } from '../../components/code-block.js';
 
 type Feedback = {phase:'busy'|'success'|'error'|'neutral';message:string};
-type Props = {bridge:CollaborationBridge;locale:string;endpoint:string|null;projectId?:string|null;harness:HarnessConfiguration['harness'];destination:'personal'|'project';purpose:'mcp'|'skill';onHarness(value:Props['harness']):void;onDestination(value:Props['destination']):void;onPurpose(value:Props['purpose']):void};
+type Props = {bridge:CollaborationBridge;locale:string;endpoint:string|null;projectId?:string|null;harness:HarnessConfiguration['harness'];destination:'personal'|'project';purpose:'mcp'|'skill';onHarness(value:Props['harness']):void;onDestination(value:Props['destination']):void;onPurpose(value:Props['purpose']):void;openService():void};
 const unwrap=<T,>(result:Result<T>):T=>{if(!result.ok)throw new Error(result.error.message);return result.value;};
 const reason=(error:unknown)=>error instanceof Error?error.message:String(error);
 
 /** Configuration facts come from the host; action feedback belongs to this operation. */
-export function HarnessConfigurationPanel({bridge,locale,endpoint,projectId,harness,destination,purpose,onHarness,onDestination,onPurpose}:Props){
+export function HarnessConfigurationPanel({bridge,locale,endpoint,projectId,harness,destination,purpose,onHarness,onDestination,onPurpose,openService}:Props){
   const t=(zh:string,en:string,ja:string)=>locale==='en'?en:locale==='ja'?ja:zh;
   const [configuration,setConfiguration]=useState<HarnessConfiguration|null>(null),[reading,setReading]=useState(false),[readError,setReadError]=useState(''),[feedback,setFeedback]=useState<Feedback|null>(null),[feedbackAction,setFeedbackAction]=useState('');
   const [workspaces,setWorkspaces]=useState<Record<string,string>>(()=>{try{return JSON.parse(localStorage.getItem('galcraft.collaboration.codexWorkspaces')??'{}');}catch{return {};}}),[choosing,setChoosing]=useState(false);
   const request=useRef(0);
   const codexMcp=harness==='codex'&&purpose==='mcp';
+  const chooseDestination=harness==='dsh'&&purpose==='mcp';
+  const needsService=purpose==='mcp'&&!endpoint;
   const workspaceDirectory=codexMcp&&projectId?workspaces[projectId]:undefined;
   const setWorkspace=(directory:string|null)=>{if(!projectId)return;const next={...workspaces};if(directory)next[projectId]=directory;else delete next[projectId];localStorage.setItem('galcraft.collaboration.codexWorkspaces',JSON.stringify(next));setWorkspaces(next);};
-  const available=(purpose==='skill'||!!endpoint)&&(harness==='dsh'&&purpose==='mcp'&&destination==='personal'||!!projectId);
-  const input={harness,purpose,destination:harness==='dsh'&&purpose==='mcp'?destination:'project' as const,...(workspaceDirectory?{workspaceDirectory}:{})};
+  const available=!needsService&&(chooseDestination&&destination==='personal'||!!projectId);
+  const input={harness,purpose,destination:chooseDestination?destination:'project' as const,...(workspaceDirectory?{workspaceDirectory}:{})};
   const read=async()=>unwrap(await bridge.configuration(input));
   useEffect(()=>{
     const id=++request.current;setConfiguration(null);setReadError('');setFeedback(null);setReading(available);
@@ -53,18 +55,23 @@ export function HarnessConfigurationPanel({bridge,locale,endpoint,projectId,harn
   const state=configuration?.readback.state;
   const stateLabel=state==='notInstalled'?t('未安装','Not installed','未導入'):state==='current'?(purpose==='skill'?t('已安装 · 与当前版本一致','Installed · Up to date','導入済み・最新版'):t('配置已写入','Configuration written','設定は保存済み')):state==='localEdits'?t('保留本地编辑','Local edits preserved','ローカルの編集を保持'):t('可更新','Update available','更新できます');
   const canWrite=!!configuration?.changes?.length;
-  return <section className="collaboration-config-panel"><h2>{t('Harness 配置','Harness configuration','Harness 設定')}</h2>
+  return <section className="collaboration-config-panel"><h2>{t('助手配置','Assistant configuration','アシスタントの設定')}</h2>
     <div className="collaboration-config-fields">
       <Field label={t('安装内容','Install','導入する内容')}><Choice disabled={busy} label={t('安装内容','Install','導入する内容')} value={purpose} options={[{value:'mcp',label:t('MCP 连接','MCP connection','MCP 接続')},{value:'skill',label:t('项目创作 skill','Project creation skill','作品の制作 skill')}]} onChange={value=>onPurpose(value as Props['purpose'])}/></Field>
-      <Field label="Harness"><Choice disabled={busy} label="Harness" value={harness} options={[{value:'dsh',label:'DSH'},{value:'claude',label:'Claude Code'},{value:'codex',label:'Codex'}]} onChange={value=>onHarness(value as Props['harness'])}/></Field>
-      <Field label={t('配置位置','Configuration location','設定先')}><Choice disabled={busy} label={t('配置位置','Configuration location','設定先')} value={harness==='dsh'&&purpose==='mcp'?destination:'project'} options={harness==='dsh'&&purpose==='mcp'?[{value:'personal',label:t('个人 profile','Personal profile','個人プロファイル')},{value:'project',label:t('作品 patch','Project patch','作品パッチ')}]:[{value:'project',label:t('项目配置','Project configuration','プロジェクト設定')}]} onChange={value=>onDestination(value as Props['destination'])}/></Field>
+      <Field label={t('助手客户端','Assistant client','アシスタントクライアント')}><Choice disabled={busy} label={t('助手客户端','Assistant client','アシスタントクライアント')} value={harness} options={[{value:'dsh',label:'DSH'},{value:'claude',label:'Claude Code'},{value:'codex',label:'Codex'}]} onChange={value=>onHarness(value as Props['harness'])}/></Field>
+      {chooseDestination ? <Field label={t('配置位置','Configuration location','設定先')}><Choice disabled={busy} label={t('配置位置','Configuration location','設定先')} value={destination} options={[{value:'personal',label:t('个人 profile','Personal profile','個人プロファイル')},{value:'project',label:t('作品 patch','Project patch','作品パッチ')}]} onChange={value=>onDestination(value as Props['destination'])}/></Field>
+        : <dl className="collaboration-config-location"><dt>{t('配置位置','Configuration location','設定先')}</dt><dd>{t('项目配置','Project configuration','プロジェクト設定')}</dd></dl>}
     </div>
     {codexMcp&&<div className="collaboration-workspace-directory">
       <Field label={t('助手工作区目录','Assistant workspace directory','アシスタントの作業ディレクトリ')}><p className="collaboration-config-path">{workspaceDirectory??configuration?.workspaceDirectory??t('默认使用当前作品目录','Defaults to the current project directory','既定は現在の作品ディレクトリ')}</p><div className="gc-actions"><Button disabled={busy||!projectId} onClick={()=>void chooseWorkspace()}>{choosing?t('正在选择目录…','Choosing a directory…','ディレクトリを選択中…'):t('选择工作区目录','Choose workspace directory','作業ディレクトリを選択')}</Button>{workspaceDirectory&&<Button disabled={busy} onClick={()=>setWorkspace(null)}>{t('使用当前作品目录','Use current project directory','現在の作品ディレクトリを使用')}</Button>}</div></Field>
       <p className="collaboration-meta">{t('选择 Codex 实际打开的工作目录。多个作品可共用上级工作区的 MCP 连接；当前作品接入信息保持独立。','Choose the working directory opened in Codex. Projects can share an MCP connection in a parent workspace; project connection details stay separate.','Codex で開く作業ディレクトリを選択してください。親の作業ディレクトリで複数の作品が MCP 接続を共有でき、作品ごとの接続情報は個別に扱います。')}</p>
     </div>}
-    <div className="gc-actions collaboration-preview-actions"><Button disabled={busy||!available} onClick={()=>void preview()}>{reading?t('正在读取配置…','Reading configuration…','設定を読み込み中…'):t('生成配置预览','Preview configuration','設定をプレビュー')}</Button>{configuration&&<span className="collaboration-config-state" data-state={state}>{stateLabel}</span>}</div>
-    {!available&&<p>{purpose==='mcp'&&!endpoint?t('先在本机服务页开启服务。','Start the service first.','先にサービスを開始してください。'):t('先打开作品，再读取项目配置。','Open a project to read its configuration.','作品を開いて設定を読み込んでください。')}</p>}
+    <div className="gc-actions collaboration-preview-actions">
+      {available && <Button disabled={busy} onClick={()=>void preview()}>{reading?t('正在读取配置…','Reading configuration…','設定を読み込み中…'):t('生成配置预览','Preview configuration','設定をプレビュー')}</Button>}
+      {configuration&&<span className="collaboration-config-state" data-state={state}>{stateLabel}</span>}
+      {needsService && <Button onClick={openService}>{t('前往本机服务','Open local service','ローカルサービスを開く')}</Button>}
+    </div>
+    {!available&&<p role="status">{needsService?t('开启本机服务后即可预览 MCP 连接配置。','Start the local service to preview the MCP connection configuration.','ローカルサービスを開始すると MCP 接続設定をプレビューできます。'):t('先打开作品，再读取项目配置。','Open a project to read its configuration.','作品を開いて設定を読み込んでください。')}</p>}
     {readError&&<p className="collaboration-feedback" role="alert">{readError}</p>}
     {configuration&&<div className="collaboration-configuration">
       <p className="collaboration-config-path">{t('配置文件：','Configuration file: ','設定ファイル：')}{configuration.path}</p>

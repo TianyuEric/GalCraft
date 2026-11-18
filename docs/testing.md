@@ -1,6 +1,6 @@
 # 测试与维护入口
 
-负责人根据本次变更选择最小有效检查，检查通过后交付结果。新失败、关联实现变化或用户明确要求决定扩展范围。负责人在 PR 中简述具体变化、实际验证和适用范围。
+负责人根据本次变更选择最小有效检查，满足所属验证和确认要求后交付结果。新失败、关联实现变化或用户明确要求决定扩展范围。负责人在 PR 中简述具体变化、实际验证和适用范围。
 
 ## 日常检查
 
@@ -8,14 +8,18 @@
 
 | 变更 | 适用入口 |
 | --- | --- |
-| 文档、文案与链接 | 核对本次正文、示例、页面和引用 |
+| 文档与链接 | 核对本次正文、示例、页面和引用；产品可见文案同时沿 UI 审核流程 |
 | 局部实现 | `pnpm --filter <包名> test` 和该包的 `typecheck` |
 | 包出口、共享契约、IPC、插件或宿主接线 | 构建提供方依赖，检查提供方及实际消费者；`pnpm check:architecture` 检查工程边界 |
-| UI 和 Storybook | 查看受影响 Story 或实际页面；`pnpm storybook:build` 检查注册和组装 |
+| UI 和 Storybook | 受影响 Story 经用户确认，再核对实际页面；`pnpm storybook:build` 检查 Components/Product 注册和组装，Review 变化执行 `pnpm storybook:review:build` |
 | 共享工具 | `pnpm test:tools` 检查架构解析、目标选择、迁移工具、CI 选择器及自足作品夹具 |
 | 全部源码范围 | `pnpm typecheck`、`pnpm test`；根 typecheck 已包含架构检查 |
 
 开发者用 `pnpm --filter <包名>... build` 先构建所需依赖。根 `test:tools` 在干净树上先构建 authoring 的依赖闭包，再运行 `tools/*.test.mjs` 和 `tests/e2e/fixtures.test.mjs`。后者通过实际 `ProjectDocuments` 打开自制磁盘作品，再交给实际 DSL 编译器。
+
+Studio `typecheck` 包含 renderer 与 `typecheck:host`，宿主检查可用 `pnpm --filter @galcraft/studio typecheck:host` 单独执行。提供方或宿主变更同时检查受影响的服务、preload、Worker 和实际 Player 消费者；保留 JS 业务的范围按所属配置和实际入口说明。
+
+UI 审核沿[共用规范](ui/components.md#审核与晋升)。记录 Story 入口、当前改动、用户确认与实际产品复核，保留可表达本轮变化的最小状态。完整流程 Story 使用真实组件时，内存事务或不可用端口仍按夹具边界报告；磁盘、原生服务、生成和独立 Player 分别使用实际环境。开发者记录实际 CSS 视口、内容、主题和来源版本，按变化选择 1440×900、900×768，以及必要的 1920×1080。正式与 Review 的注册、隔离和构建各检查对应入口。
 
 ## 跨应用场景
 

@@ -125,6 +125,42 @@ describe('Player stage diagnostics', () => {
     await action.dispatchPageAction({kind:'confirm',requestId:id,accepted:true,remember:true});
     expect(data.current()!.preferences.confirmations.load).toBe(false);expect(data.current()!.preferences.confirmations.overwrite).toBe(true);expect(resolved).toHaveBeenCalledWith(true);
   });
+  it('preserves a committed remember preference without closing a newer frame after blueprint cancellation', async () => {
+    const { view, data, commit } = await setup();
+    let settle!: (result: Awaited<ReturnType<PlayerHost['storage']['commit']>>) => void;
+    commit.mockImplementationOnce(() => new Promise(resolve => { settle = resolve; }));
+    const navigate = vi.fn(), resolve = vi.fn(), pending = { id: 'R3Ask1', message: 'Load', confirmation: 'load', resolve };
+    const subject = view as unknown as { pendingConfirm: typeof pending | null; finishConfirmation(accepted: boolean, remember: boolean): Promise<void> };
+    Object.assign(view, { pendingConfirm: pending, transition: { busy: false, navigate } });
+    const confirming = subject.finishConfirmation(true, true);
+    await vi.waitFor(() => expect(commit).toHaveBeenCalledOnce());
+    subject.pendingConfirm = null;
+    resolve(false);
+    settle(success({ revision: 1 }));
+    await confirming;
+    expect(data.current()!.preferences.confirmations.load).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(resolve).toHaveBeenCalledExactlyOnceWith(false);
+  });
+  it('discards a prepared session and its deferred stage failure after a blueprint is stopped', async () => {
+    const { view, session, stage, inspection } = await setup();
+    view.options.snapshot.project.player.name = null;
+    const prepared = { id: 'R3Prep', sessionId: inspection.sessionId, state: inspection.state, voiceBinding: null };
+    const disposePrepared = vi.fn();
+    Object.assign(session, { disposePrepared });
+    session.prepareSession.mockResolvedValue(success(prepared));
+    let settle!: () => void;
+    stage.prepareStage.mockImplementation(() => new Promise(resolve => { settle = () => resolve(failure('Old stage preparation failed')); }));
+    const controller = new AbortController(), subject = view as unknown as { startGame(name: undefined, afterstory: undefined, signal: AbortSignal): Promise<unknown> };
+    view.setStageError('Current page diagnostic');
+    const starting = subject.startGame(undefined, undefined, controller.signal);
+    await vi.waitFor(() => expect(stage.prepareStage).toHaveBeenCalledOnce());
+    controller.abort(); settle(); await starting;
+    expect(disposePrepared).toHaveBeenCalledExactlyOnceWith(prepared.id);
+    expect(view.message.textContent).toContain('Current page diagnostic');
+    expect(view.message.textContent).not.toContain('Old stage preparation failed');
+    expect(session.activate).not.toHaveBeenCalled();
+  });
   it('invokes the installed SDK named action with the repeated item context',async()=>{const{view}=await setup(),invoke=vi.fn(async()=>success({done:true}));view.options.pluginPlatforms=[{key:'org.example.test/external',targets:['windows'],actions:[{name:'ping',fields:[]}],invoke}];await(view as unknown as {instanceAction(action:unknown,context:unknown):Promise<void>}).instanceAction({kind:'plugin',key:'org.example.test/external:ping',arguments:{record:{source:'item',path:'id'}}},{data:{},local:{},item:{id:'Record1'}});expect(invoke).toHaveBeenCalledWith('ping',{record:'Record1'},view.options.data.domain);expect(view.message.textContent).toBe('');});
   it('accepts the first fresh Ctrl press after focus was lost without a keyup', async () => {
     const {view}=await setup();

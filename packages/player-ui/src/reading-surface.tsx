@@ -17,19 +17,21 @@ function RevealedText({progress,runs,start,shown,scale,paragraphGap}:{progress?:
   return <DialogueText runs={sliceDialogueRuns(runs,start,count)} scale={scale} paragraphGap={paragraphGap}/>;
 }
 /** The complete reading structure shared by live play and independent reading samples. */
-export function ReadingSurface({ panel, name, nameText, body, text, speaker, portrait, runs, start = 0, shown, scale, paragraphGap, nvl = false, legacy = false, children, compose, progress }: {
+export function ReadingSurface({ panel, name, nameText, body, text, speaker, portrait, runs, start = 0, shown, scale, paragraphGap, nvl = false, legacy = false, children, compose, progress, pause }: {
   panel?: ElementProps<HTMLElement>; name?: ElementProps<HTMLHeadingElement>; body?: ElementProps<HTMLDivElement>; text?: ElementProps<HTMLSpanElement>;
   nameText?: ElementProps<HTMLSpanElement>; speaker: string; portrait?: ReactNode; runs: DialogueSegment[]; start?: number; shown: number; scale: number; paragraphGap?: number;
   nvl?: boolean; legacy?: boolean; children?: ReactNode;
   compose?(parts:ReadingSurfaceParts):ReactNode;
   progress?:ReturnType<typeof textProgress>;
+  pause?: { kind: 'input' | 'timed'; label: string };
 }) {
+  const pauseMark = pause && <span className="gc-dialogue-pause" data-kind={pause.kind} role="status" aria-label={pause.label}/>;
   if(compose)return compose({
     panel:content=><section {...panel} data-gc-page="story" className={`${legacy?'gc-reading-legacy':'gc-reading-panel'}${nvl?' gc-nvl':''}${panel?.className?` ${panel.className}`:''}`}>{content}</section>,
     name:content=><h2 {...name} hidden={nvl||name?.hidden} className="gc-speaker">{content}</h2>,
     nameText:content=><span {...nameText}>{speaker||(legacy?'':'\u00a0')}{content}</span>,
     body:content=><div {...body} className="gc-body" onWheel={event=>{if(!nvl)event.stopPropagation();}}>{!nvl&&<span className="gc-dialogue-measure" aria-hidden="true"><DialogueText runs={runs} scale={scale}/></span>}{content}</div>,
-    text:content=><span {...text} className="gc-dialogue-visible"><RevealedText progress={progress} runs={runs} start={start} shown={shown} scale={scale} paragraphGap={paragraphGap}/>{content}</span>,
+    text:content=><span {...text} className="gc-dialogue-visible"><RevealedText progress={progress} runs={runs} start={start} shown={shown} scale={scale} paragraphGap={paragraphGap}/>{pauseMark}{content}</span>,
     portrait:content=><div className="gc-dialogue-portrait">{!nvl&&portrait}{content}</div>,
     children:content=><>{children}{content}</>,
   });
@@ -38,7 +40,7 @@ export function ReadingSurface({ panel, name, nameText, body, text, speaker, por
     <h2 {...name} hidden={nvl || name?.hidden} className="gc-speaker"><span {...nameText}>{speaker || (legacy ? '' : '\u00a0')}</span></h2>
     <div {...body} className="gc-body" onWheel={event => { if (!nvl) event.stopPropagation(); }}>
       {!nvl && <span className="gc-dialogue-measure" aria-hidden="true"><DialogueText runs={runs} scale={scale}/></span>}
-      <span {...text} className="gc-dialogue-visible"><RevealedText progress={progress} runs={runs} start={start} shown={shown} scale={scale} paragraphGap={paragraphGap}/></span>
+      <span {...text} className="gc-dialogue-visible"><RevealedText progress={progress} runs={runs} start={start} shown={shown} scale={scale} paragraphGap={paragraphGap}/>{pauseMark}</span>
     </div>
     {children}
   </section>;

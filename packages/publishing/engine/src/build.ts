@@ -31,6 +31,8 @@ export function sameSavedVersions(a: VersionRef[], b: VersionRef[]): boolean {
   const left = vector(a), right = vector(b);
   return left.size === a.length && right.size === b.length && left.size === right.size && [...left].every(([key, revision]) => right.get(key) === revision);
 }
+type OutputBaseline = Pick<ReleaseManifest, 'version' | 'builtAt'> | null;
+const sameOutput = (left: OutputBaseline, right: OutputBaseline) => left?.builtAt === right?.builtAt && left?.version === right?.version;
 export type BuildMaterial = {
   project: Project; snapshot: Snapshot; savedVersions: VersionRef[]; engine: ResolvedEngine;
   files: PackageFile[]; textFiles: Record<string, string>; capabilities: TargetCapability[]; issues: Issue[];
@@ -38,6 +40,7 @@ export type BuildMaterial = {
   compatibilityFiles?: { file: string; bytes: number[] }[];
   live2dRuntime?: ReleaseManifest['live2dRuntime'];
   windowsBrand?: { icon: string | null };
+  outputBaseline?: OutputBaseline;
 };
 type FrozenPlan = { summary: BuildPlanSummary; material: BuildMaterial };
 export type BuildPhase = 'staging' | 'verifying' | 'committing' | 'completed' | 'failed' | 'cancelled';
@@ -58,22 +61,25 @@ export class ReleaseBuilder {
     private readonly signWindows?: (file: string, selection: NonNullable<BuildInput['windowsSigning']>, signal: AbortSignal) => Promise<NonNullable<ReleaseManifest['signature']>>,
     private readonly targetBuild?: TargetBuildRunner) {}
 
-  async checkOutput(input: Pick<BuildInput, 'outputDirectory' | 'projectId' | 'target'>): Promise<Result<void>> {
+  async checkOutput(input: Pick<BuildInput, 'outputDirectory' | 'projectId' | 'target'>): Promise<Result<OutputBaseline>> {
     const output = resolve(input.outputDirectory);
     if (!isAbsolute(input.outputDirectory) || output === dirname(output)) return fail('BUILD_OUTPUT_INVALID', '请选择专用发行目录');
     try {
       const info = await stat(output);
       if (!info.isDirectory()) return fail('BUILD_OUTPUT_INVALID', '输出路径是文件，请选择专用发行目录');
-      if (!(await readdir(output)).length) return ok(undefined);
+      if (!(await readdir(output)).length) return ok(null);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ok(undefined);
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ok(null);
       return fail('BUILD_OUTPUT_INVALID', '无法读取输出目录，请检查路径和访问权限');
     }
     let manifest: ReleaseManifest;
     try { manifest = ReleaseManifestSchema.parse(JSON.parse(await readFile(join(output, 'release.manifest.json'), 'utf8'))); }
     catch { return fail('BUILD_OUTPUT_NOT_RELEASE', '输出目录非空，且没有有效的发行清单。请选择新的空目录，或同一作品、同一目标的已有发行目录'); }
     if (manifest.projectId !== input.projectId || manifest.target !== input.target) return fail('BUILD_OUTPUT_MISMATCH', '输出目录属于其他作品或目标，请为当前作品和目标选择专用发行目录');
-    return ok(undefined);
+    return { ok: true, value: { version: manifest.version, builtAt: manifest.builtAt }, warnings: [{
+      ...buildIssue('BUILD_OUTPUT_REPLACE', `此目录包含当前作品的 ${manifest.version} 发行产物。新构建提交后将替换该版本。`),
+      severity: 'warning', messageParams: { previousVersion: manifest.version }, details: { version: manifest.version, target: manifest.target },
+    }] };
   }
 
   planBuild(rawInput: unknown, material: BuildMaterial): Result<BuildPlanSummary> {
@@ -149,6 +155,10 @@ export class ReleaseBuilder {
     try {
       await this.recover(output);
       const checked = await this.checkOutput(input); if (!checked.ok) { this.changed(planId, 'failed'); return checked; }
+      if (material.outputBaseline !== undefined && !sameOutput(material.outputBaseline, checked.value)) {
+        this.changed(planId, 'failed');
+        return fail('BUILD_PLAN_STALE', '发行目录中的版本已变化，请重新检查');
+      }
       cancelled(); this.changed(planId, 'staging'); await mkdir(staging, { recursive: true });
       const files: ReleaseManifest['files'] = [];
       const put = async (path: string, content: string) => { cancelled(); const destination = join(staging, path); await mkdir(dirname(destination), { recursive: true }); await writeFile(destination, content); files.push({ path, size: Buffer.byteLength(content) }); };
@@ -223,6 +233,14 @@ export class ReleaseBuilder {
         };
         manifest.files = await scan(staging);
         await writeFile(join(staging, 'release.manifest.json'), json(ReleaseManifestSchema.parse(manifest)));
+      }
+      if (material.outputBaseline !== undefined) {
+        const latest = await this.checkOutput(input);
+        if (!latest.ok || !sameOutput(material.outputBaseline, latest.value)) {
+          await rm(staging, { recursive: true, force: true });
+          this.changed(planId, 'failed');
+          return fail('BUILD_PLAN_STALE', '发行目录中的版本已变化，请重新检查');
+        }
       }
       cancelled(); task.committing = true; this.changed(planId, 'committing');
       const log: CommitLog = { output, staging, previous, phase: 'prepared' };

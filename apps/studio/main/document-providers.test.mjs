@@ -92,6 +92,43 @@ afterAll(async () => {
 });
 
 describe('Studio document host integration', () => {
+  it('reopens saved invalid scene source with the last valid working revision only in the authoring projection', async () => {
+    const path = join(legacyRoot, 'last-valid-source');
+    await legacyProject(path);
+    const documentId = FixtureIds.streetDocument, sourcePath = `scenes/${FixtureIds.street}/script.gal`;
+    const writer = new ProjectDocuments(new ProjectAccess());
+    const reader = new ProjectDocuments(new ProjectAccess());
+    const listedScene = host => host.list().value.find(document => document.documentId === documentId);
+    const replace = (host, text) => {
+      const scene = listedScene(host), before = scene.files[sourcePath];
+      const expected = [{ ref: { kind: 'document', id: documentId }, revision: scene.revision }];
+      const plan = host.planEdit({ label: 'Edit raw source', origin: 'script', expected, preparedAssets: [], requiredRefs: [],
+        patches: [{ kind: 'text', documentId, edits: [{ start: 0, end: before.length, before, after: text }] }] });
+      expect(plan.ok).toBe(true);
+      expect(host.applyEdit(plan.value.planId, expected).ok).toBe(true);
+      return listedScene(host).revision;
+    };
+    try {
+      expect((await writer.open(path)).ok).toBe(true);
+      expect(listedScene(writer)).toMatchObject({ revision: 1, files: { [sourcePath]: '' } });
+      expect(listedScene(writer).lastValidSceneSource).toBeUndefined();
+      const valid = 'label {name:"Ready",labelId:"LabelA"} @StateA;\r\n';
+      const revision = replace(writer, valid), invalid = `${valid}say {text:`;
+      const invalidRevision = replace(writer, invalid);
+      expect((await writer.close(writer.currentSessionId, 'save')).ok).toBe(true);
+      expect(await readFile(join(path, sourcePath), 'utf8')).toBe(invalid);
+      expect((await reader.open(path)).ok).toBe(true);
+      expect(listedScene(reader)).toMatchObject({ revision: invalidRevision, savedRevision: invalidRevision, dirty: false,
+        files: { [sourcePath]: invalid }, lastValidSceneSource: { revision, text: valid } });
+      const saved = await reader.currentSession.withSavedSnapshot(async documents => documents.find(document => document.documentId === documentId));
+      expect(saved.files[sourcePath]).toBe(invalid);
+      expect(saved.lastValidSceneSource).toBeUndefined();
+      replace(reader, valid);
+      expect(listedScene(reader).lastValidSceneSource).toBeUndefined();
+    } finally {
+      for (const host of [writer, reader]) if (host.currentSessionId) await host.close(host.currentSessionId, 'discard');
+    }
+  });
   it.each(['restore','discard','conflict'])('normalizes removed authoring fields after legacy %s recovery without changing saved files',async choice=>{
     const path=join(legacyRoot,`authoring-${choice}`);await legacyProject(path,null,true);
     if(choice==='conflict'){const changed=JSON.parse(await readFile(join(path,'project.json'),'utf8'));changed.data.name='磁盘改名';await writeFile(join(path,'project.json'),JSON.stringify(changed));}

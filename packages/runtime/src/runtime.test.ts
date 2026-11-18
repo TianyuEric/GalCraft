@@ -112,6 +112,114 @@ it('NVL preserves page boundaries, current-statement continuation, history and s
   expect(inspection.state.presentation.text.parts).toHaveLength(1); expect(inspection.history).toHaveLength(5);
 });
 
+it('holds an event on the NVL page boundary before paging or executing continue', async () => {
+  const fixture = setup(), scene = fixture.snapshot.scenes[0]!, base = scene.instructions[0]!;
+  const step = (statementId: string, opcode: string, args: Instruction['args'], continuation: Instruction['continuation']): Instruction =>
+    ({ ...base, statementId, opcode, args, continuation, source: { ...base.source, statementId } });
+  scene.instructions = [step('ModeAA', 'readingMode', { mode: 'nvl' }, 'continue'),
+    step('LineAA', 'say', { speaker: { kind: 'narrator' }, text: '甲乙丙丁', events: [
+      { id: 'PageAA', kind: 'wait', offset: 2, durationMs: null }, { id: 'LastAA', kind: 'wait', offset: 4, durationMs: null, autoWaitMs: 0 },
+    ] }, 'continue'), step('NextAA', 'say', { speaker: { kind: 'narrator' }, text: '继续' }, 'wait')];
+  unwrap(await ready(fixture));
+  const session = fixture.controller, token = session.inspect()!.token!;
+  unwrap(session.updateNvlLayout({ token, start: 0, end: 2 }));
+  expect(unwrap(await session.dispatch({ kind: 'advance', token })).state.wait).toMatchObject({
+    textShown: 2, textComplete: false, inline: { waiting: { eventId: 'PageAA' } },
+  });
+  expect(session.dialogueAutoWaitMs('PageAA')).toBeUndefined();
+  expect(unwrap(await session.dispatch({ kind: 'advance', token })).state.wait).toMatchObject({ textShown: 2, textComplete: true });
+  expect(unwrap(await session.dispatch({ kind: 'advance', token })).state.presentation.text.reading).toMatchObject({ start: 2, end: null });
+  unwrap(session.updateNvlLayout({ token, start: 2, end: 4 }));
+  const last = unwrap(await session.updateTextProgress({ token, textShown: 4 }));
+  expect(last.state.wait).toMatchObject({ textShown: 4, textComplete: false, inline: { waiting: { eventId: 'LastAA' } } });
+  expect(session.dialogueAutoWaitMs('LastAA')).toBe(0);
+  const continued = unwrap(await session.releaseDialogueWait({ token, eventId: 'LastAA', expectedSequence: last.sequence, mode: 'auto' }));
+  expect(continued.state.position.statementId).toBe('NextAA');
+  expect(continued.state.presentation.text.parts).toHaveLength(2);
+});
+
+it('retries a labeled rule scene at its first standalone wait without replaying the opening', async () => {
+  const fixture = setup(), [source, destination] = fixture.snapshot.scenes;
+  const base = source!.instructions[0]!;
+  const step = (statementId: string, opcode: string, args: Instruction['args'], continuation: Instruction['continuation'] = 'continue'): Instruction =>
+    ({ ...base, statementId, opcode, args, continuation, source: { ...base.source, statementId } });
+  const rule = { assetId: FixtureIds.background, variantId: FixtureIds.variant, durationMs: 500 };
+  source!.instructions = [step('Change', 'changeScene', { sceneId: destination!.scene.id, labelId: 'Target', ruleImage: rule })];
+  destination!.labels = { Target: 'OpenAA' };
+  destination!.instructions = [step('OtherA', 'wait', { durationMs: 9 }, 'wait'),
+    step('OpenAA', 'changeBg', { assetId: FixtureIds.background }),
+    step('CamCut', 'setTransform', { target: { kind: 'stage' }, effects: { x: 1 }, durationMs: 0 }, 'wait'),
+    step('WaitAA', 'wait', { durationMs: 3000 }, 'wait')];
+  let openings = 0, attempts = 0, publications = 0;
+  fixture.ports.stage.prepare = async input => {
+    if (input.opcode === 'changeBg') openings++;
+    return { ok: true, value: { state: input.state, delta: null }, warnings: [] };
+  };
+  fixture.ports.prepareProviderCommands = async input => {
+    expect(input.sceneRule).toMatchObject(rule);
+    if (++attempts === 1) return { ok: false, error: { code: 'ASSET_MISSING', message: 'not ready', severity: 'error',
+      owner: 'M06', related: [], actions: ['retry'] }, issues: [] };
+    return { ok: true, value: { state: input.state, commit: () => {
+      publications++; return { ok: true, value: undefined, warnings: [] };
+    }, dispose: () => {} }, warnings: [] };
+  };
+  const failed = await ready(fixture);
+  expect(failed.ok).toBe(false);
+  if (!failed.ok) expect(failed.error.source?.statementId).toBe('Change');
+  expect(fixture.controller.inspect()!.state.position.statementId).toBe('Change');
+  expect(fixture.controller.canRetryRuleScene).toBe(true);
+  const entered = unwrap(await fixture.controller.retryRuleScene());
+  expect(entered.state.position).toEqual({ sceneId: destination!.scene.id, statementId: 'WaitAA' });
+  expect(entered.state.wait).toMatchObject({ kind: 'timer', remainingMs: 3000 });
+  expect(entered.trace.map(({ token }) => token.statementId)).toEqual(['Change', 'OpenAA', 'CamCut', 'WaitAA']);
+  expect([openings, attempts, publications]).toEqual([1, 2, 1]);
+});
+
+it('anchors appended events after the already-visible body and before the new grapheme', async () => {
+  const fixture = setup(), scene = fixture.snapshot.scenes[0]!, [first, second] = scene.instructions;
+  const speaker = { kind: 'character', id: FixtureIds.an };
+  first!.args = { speaker, text: '甲' };
+  second!.args = { speaker, text: '👩‍🚀乙', append: true, events: [{ id: 'Append', kind: 'wait', offset: 0, durationMs: null }] };
+  scene.instructions = [first!, second!];
+  unwrap(await ready(fixture));
+  const session = fixture.controller;
+  await completeSay(session);
+  const appended = session.inspect()!;
+  expect(appended.state.presentation.text.text).toBe('「甲👩‍🚀乙」');
+  expect(appended.state.wait).toMatchObject({ textShown: 2, textComplete: false, inline: { waiting: { eventId: 'Append' } } });
+  expect(unwrap(await session.dispatch({ kind: 'advance', token: appended.token! })).state.wait).toMatchObject({ textShown: 5, textComplete: true });
+});
+
+it('prepares a named expression before committing a narrator line at anchor zero', async () => {
+  const fixture = setup(), first = fixture.snapshot.scenes[0]!.instructions[0]!;
+  first.args = { speaker: { kind: 'narrator' }, text: '舞台', events: [
+    { id: 'FaceAA', kind: 'live2dExpression', offset: 0, objectId: 'ActorA',
+      assetId: FixtureIds.background, variantId: FixtureIds.variant, expressionName: 'exp_06' },
+  ] };
+  fixture.ports.stage.prepare = async input => ({ ok: true, warnings: [], value: { state: input.state,
+    delta: { objects: [], effects: [], audio: [], providerCommands: [{ objectId: 'ActorA', command: { expression: 'exp_06' } }] } } });
+  let applied = 0, settled = false;
+  fixture.ports.prepareProviderCommands = async input => {
+    const command = input.commands[0]?.command as { settleExpression?: boolean } | undefined;
+    if (command?.settleExpression) settled = true;
+    else expect(input.commands).toMatchObject([{ objectId: 'ActorA', command: { expression: 'exp_06' }, source: { eventId: 'FaceAA' } }]);
+    return { ok: true, warnings: [], value: { state: input.state, commit: () => {
+      applied++; return { ok: true, value: undefined, warnings: [] };
+    }, dispose: () => {} } };
+  };
+  const shown = unwrap(await ready(fixture));
+  expect(shown.state.wait).toMatchObject({ kind: 'say', textShown: 0, inline: { cursor: 1 } });
+  expect(applied).toBe(1);
+  const entry = scenario(fixture.snapshot);
+  const preview = unwrap(await fixture.controller.prepareSession({ snapshot: fixture.snapshot,
+    domain: { projectId: fixture.snapshot.projectId, kind: 'sample', instance: 'face-inspection' },
+    source: { kind: 'entry', scenario: entry }, target: entry.target, targetPhase: 'after', evaluateTarget: true }));
+  const inspected = unwrap(await fixture.controller.prepareDialogueInspection(preview.id, 'FaceAA'));
+  expect(inspected.wait).toMatchObject({ kind: 'say', textShown: 0, inline: { cursor: 1 } });
+  expect(settled).toBe(true);
+  expect(applied).toBe(1);
+});
+
 const id = (suffix: number) => `00000000-0000-4000-8000-${suffix.toString(16).padStart(12, '0')}`;
 const scenario = (snapshot: Snapshot, entry = snapshot.project.entry.sceneId, statementId = snapshot.scenes[0]!.instructions[0]!.statementId): DebugScenario => ({
   schemaVersion: 1, id: id(901), name: '路径测试', projectId: snapshot.projectId,

@@ -1,11 +1,12 @@
-import { createId } from '@galcraft/contracts';
-import { BuiltinPlayerMenuLocales, ProjectLanguagesSchema, DebugScenarioSchema, DialogueContentSchema, dialoguePlainText, dialogueSegments, ExprSchema, hasSceneParameterDefault, IdSchema, NativeAnimationSchema, SnapshotSchema } from '@galcraft/contracts';
-import type { Asset, AssetReference, Character, CommandSpec, CompiledScene, DebugScenario, Expr, FieldSpec, Flow, GalleryEntry, Id, Instruction, Issue, Json, Lock, Project, ResolvedAsset, RuntimeTemplate, Scene, Snapshot, Source, SourceMapEntry, Variable, VersionRef } from '@galcraft/contracts';
+import { blueprintReferenceIssues, blueprintTopologyIssues, createId } from '@galcraft/contracts';
+import type { ComponentConfig } from '@galcraft/contracts';
+import { BuiltinPlayerMenuLocales, ProjectLanguagesSchema, DebugScenarioSchema, DialogueContentSchema, DialogueEventSchema, dialoguePlainText, dialogueSegments, ExprSchema, hasSceneParameterDefault, IdSchema, NativeAnimationSchema, retiredImageModelFields, RuleImageTransitionSchema, sceneEntryPresentations, SnapshotSchema, stageCommandAssetBindings } from '@galcraft/contracts';
+import type { Asset, AssetReference, Character, CommandSpec, CompiledDialogueEvent, CompiledScene, DebugScenario, Expr, FieldSpec, Flow, GalleryEntry, Id, Instruction, Issue, Json, Lock, Project, ResolvedAsset, RuntimeTemplate, Scene, Snapshot, Source, SourceMapEntry, Variable, VersionRef } from '@galcraft/contracts';
 import { createCommandRegistry } from './catalog.js';
 import { expressionType, parseExpression, variableReads } from './expression.js';
 import type { ExprType } from './expression.js';
 import { dialogueInterpolations } from './interpolation.js';
-import { fieldAt, parse, parseSteps } from './parser.js';
+import { dialogueEventSource, fieldAt, parse, parseSteps } from './parser.js';
 import type { FieldNode, ParseResult, StatementNode, ValueNode } from './parser.js';
 
 export type CompileDocument = { documentId: Id; revision: number; kind: string; text: string; sceneId?: Id; flowId?: Id };
@@ -25,6 +26,13 @@ export type CompileInput = {
 };
 export type SymbolIndex = { statements: Record<Id, Source>; labels: Record<Id, Source>; objects: Record<Id, Source>; variables: Variable[]; assets: Id[] };
 export type CompileResult = { snapshot: Snapshot | null; issues: Issue[]; parses: ParseResult[]; symbols: SymbolIndex };
+
+export function resolveStaticStageImage(assets: readonly Asset[], assetId: Id, variantId: Id | null) {
+  const asset = assets.find(item => item.id === assetId && item.kind === 'image');
+  const variant = asset?.variants.find(item => item.id === (variantId ?? asset.activeVariantId));
+  return variant && !variant.metadata.imageAnimation ? { variant, field: null } as const :
+    { variant: null, field: asset && variantId ? 'variantId' : 'assetId' } as const;
+}
 
 function problem(code: string, message: string, source?: Source, severity: Issue['severity'] = 'error'): Issue {
   return { code, severity, message, owner: 'M03', ...(source ? { source } : {}), related: [], actions: code === 'PLUGIN_MISSING' ? ['supplyDependency'] : ['edit', 'locate'] };
@@ -107,18 +115,41 @@ function validateField(value: unknown, spec: FieldSpec, path: string, report: (c
   return value;
 }
 
-export type CommandValidationContext = Pick<CompileInput, 'engineVersion' | 'documents' | 'scenes' | 'characters' | 'variables' | 'assets' | 'gallery' | 'pluginCommands' | 'pluginConditions'>;
-function validateCommand(node: StatementNode, document: CompileDocument, spec: CommandSpec, input: CommandValidationContext, scene: Scene, labels: Map<Id, Set<Id>>, map: SourceMapEntry[], issues: Issue[]): Record<string, unknown> {
+export type CommandValidationContext = Pick<CompileInput, 'engineVersion' | 'documents' | 'scenes' | 'characters' | 'variables' | 'assets' | 'gallery' | 'pluginCommands' | 'pluginConditions'> & Partial<Pick<CompileInput, 'lock' | 'project'>>;
+type FigureDeclarations = { characters: Set<Id> | null; assets: Set<Id> };
+function figureDeclarations(parses: ParseResult[]): Map<Id, FigureDeclarations> {
+  const result = new Map<Id, FigureDeclarations>();
+  for (const parsed of parses) for (const node of parsed.cst) {
+    const args = node.object?.value;
+    if (!node.valid || !['changeFigure', 'changeIllustration'].includes(node.command) || !record(args) || args.op === 'exit' || typeof args.objectId !== 'string') continue;
+    const figure = result.get(args.objectId) ?? { characters: null, assets: new Set<Id>() };
+    if (node.command === 'changeFigure') {
+      figure.characters ??= new Set<Id>();
+      if (typeof args.characterId === 'string') figure.characters.add(args.characterId);
+    }
+    if (typeof args.assetId === 'string') figure.assets.add(args.assetId);
+    if (Array.isArray(args.states)) for (const state of args.states) {
+      if (record(state) && typeof state.assetId === 'string') figure.assets.add(state.assetId);
+    }
+    result.set(args.objectId, figure);
+  }
+  return result;
+}
+
+function validateCommand(node: StatementNode, document: CompileDocument, spec: CommandSpec, input: CommandValidationContext, scene: Scene, labels: Map<Id, Set<Id>>, figures: Map<Id, FigureDeclarations>, map: SourceMapEntry[], issues: Issue[]): Record<string, unknown> {
   const raw = node.object?.value;
   if (!record(raw)) return {};
   const args: Record<string, unknown> = {};
   const fieldSource = (path: string): Source => {
+    const event = /^events\.(\d+)(?:\.(.+))?$/.exec(path);
+    if (node.command === 'say' && event) return dialogueEventSource(document, node, Number(event[1]), event[2]);
     const pathParts = path.split('.');
     const field = node.object ? fieldAt(node.object, pathParts) : undefined;
     return sourceAt(document, node, field, path);
   };
   const report = (code: string, message: string, path: string) => issues.push(problem(code, message, fieldSource(path)));
   for (const field of spec.fields) {
+    if (node.command === 'say' && field.path === 'events') continue;
     const partial = ['effects', 'model', 'parameters', 'voiceByLocale'].includes(field.path);
     if (node.command === 'say' && field.path === 'text' && Object.hasOwn(raw, 'text')) {
       const content = DialogueContentSchema.safeParse(raw.text);
@@ -140,15 +171,19 @@ function validateCommand(node: StatementNode, document: CompileDocument, spec: C
     if (field.type !== 'object' || !record(value) || !field.children?.length) return;
     for (const [key, entry] of Object.entries(value)) {
       const child = field.children.find(item => item.path === key);
-      if (!child) issues.push(problem('FIELD_UNKNOWN', `Unknown field ${path}.${key} has no runtime behavior`, fieldSource(`${path}.${key}`), 'warning'));
+      if (node.command === 'changeFigure' && path === 'model' && Object.hasOwn(retiredImageModelFields, key))
+        report('IMAGE_FACE_RETIRED', `Remove model.${key} from the source. Use a full-image character variation or an official Live2D model for facial performance.`, `model.${key}`);
+      else if (!child) issues.push(problem('FIELD_UNKNOWN', `Unknown field ${path}.${key} has no runtime behavior`, fieldSource(`${path}.${key}`), 'warning'));
       else warnNested(entry, child, `${path}.${key}`);
     }
   };
-  for (const field of spec.fields) if (Object.hasOwn(raw, field.path)) warnNested(raw[field.path], field, field.path);
+  for (const field of spec.fields) if (Object.hasOwn(raw, field.path) && (node.command !== 'say' || field.path !== 'events'))
+    warnNested(raw[field.path], field, field.path);
   const mapFields = (value: ValueNode, path = ''): void => {
     for (const item of value.fields ?? []) {
       const childPath = path ? `${path}.${item.key}` : item.key;
-      map.push({ statementId: node.id!, field: childPath, source: sourceAt(document, node, item.valueNode, childPath) });
+      map.push({ statementId: node.id!, field: childPath,
+        source: node.command === 'say' && childPath.startsWith('events.') ? fieldSource(childPath) : sourceAt(document, node, item.valueNode, childPath) });
       mapFields(item.valueNode, childPath);
       item.valueNode.items?.forEach((entry, index) => mapFields(entry, `${childPath}.${index}`));
     }
@@ -189,7 +224,8 @@ function validateCommand(node: StatementNode, document: CompileDocument, spec: C
       if (field.type === 'array' && Array.isArray(current) && field.item) current.forEach((item, index) => validateReferences({ [field.item!.path]: item }, [field.item!], `${path}.${index}`));
     }
   };
-  validateReferences(raw, spec.fields);
+  validateReferences(raw, spec.fields.filter(field =>
+    !(node.command === 'say' && field.path === 'events' || ['changeBg', 'changeScene'].includes(node.command) && field.path === 'ruleImage')));
   if (node.command === 'unlockCg') {
     const entry = input.gallery.find(item => item.id === args.entryId);
     if (!Array.isArray(args.differenceIds) || !args.differenceIds.length || args.differenceIds.some(id => !entry?.differences?.some(diff => diff.id === id)))
@@ -207,19 +243,20 @@ function validateCommand(node: StatementNode, document: CompileDocument, spec: C
     validateTransition(args.transition.enter, 'transition.enter'); validateTransition(args.transition.exit, 'transition.exit');
   }
   validateTransition(args.enter, 'enter'); validateTransition(args.exit, 'exit');
+  const resolveRuleImage = () => {
+    if (!Object.hasOwn(raw, 'ruleImage')) return;
+    const checked = RuleImageTransitionSchema.safeParse(args.ruleImage);
+    if (!checked.success) return; // The catalog supplies structural diagnostics with exact source paths.
+    const rule = checked.data;
+    const { variant, field } = resolveStaticStageImage(input.assets, rule.assetId, rule.variantId);
+    if (!variant) report('RULE_IMAGE_RESOURCE', 'Choose an available static rule image and version', `ruleImage.${field}`);
+    else args.ruleImage = { ...rule, variantId: variant.id };
+  };
   if (record(args.model)) {
     const model = args.model;
     const asset = input.assets.find(item => item.id === args.assetId);
-    const active = asset?.variants.find(item => item.id === asset.activeVariantId);
+    const active = asset?.variants.find(item => item.id === (args.variantId ?? asset.activeVariantId));
     const capabilities = active?.groupCapabilities;
-    if (record(model.imageMouth) && model.imageMouth.enabled === true) {
-      if (!IdSchema.safeParse(model.imageMouth.closed).success) report('MODEL_MOUTH', 'Enabled mouth needs a closed image', 'model.imageMouth.closed');
-      if (!IdSchema.safeParse(model.imageMouth.open).success) report('MODEL_MOUTH', 'Enabled mouth needs an open image', 'model.imageMouth.open');
-    }
-    if (record(model.imageBlink) && model.imageBlink.enabled === true) {
-      if (!IdSchema.safeParse(model.imageBlink.closed).success || !IdSchema.safeParse(model.imageBlink.open).success) report('MODEL_BLINK', 'Enabled blink needs open and closed images', 'model.imageBlink');
-    }
-    if (record(model.imageBlink) && typeof model.imageBlink.intervalMs === 'number' && typeof model.imageBlink.randomMs === 'number' && model.imageBlink.randomMs > model.imageBlink.intervalMs) report('MODEL_BLINK', 'randomMs exceeds intervalMs', 'model.imageBlink.randomMs');
     if (record(model.crop) && (typeof model.crop.x !== 'number' || typeof model.crop.y !== 'number' || typeof model.crop.width !== 'number' || model.crop.width <= 0 || typeof model.crop.height !== 'number' || model.crop.height <= 0)) report('MODEL_CROP', 'Crop needs finite x/y and positive width/height', 'model.crop');
     if (record(model.crop) && active) {
       const width = active.metadata.width ?? active.canvas?.width;
@@ -255,6 +292,59 @@ function validateCommand(node: StatementNode, document: CompileDocument, spec: C
   };
   switch (node.command) {
     case 'say':
+      if (Array.isArray(raw.events)) {
+        const compiled: CompiledDialogueEvent[] = [];
+        for (const [index, candidate] of raw.events.entries()) {
+          const path = `events.${index}`, checked = DialogueEventSchema.safeParse(candidate);
+          if (!checked.success) continue;
+          const event = checked.data;
+          if (node.id) map.push({ statementId: node.id, field: path, source: fieldSource(path) });
+          if (event.kind === 'wait') { compiled.push(event); continue; }
+          let assetId: Id, variantId: Id | null;
+          const field = event.kind === 'expression' ? 'differenceId' : 'assetId';
+          if (event.kind === 'expression') {
+            const character = input.characters.find(item => item.id === event.characterId);
+            const owners = figures.get(event.objectId)?.characters;
+            if (!owners || owners.size && !owners.has(event.characterId))
+              report('DIALOGUE_EVENT_OBJECT', 'Choose a figure instance of this character', `${path}.objectId`);
+            if (!character) {
+              report('CHARACTER_MISSING', `Character ${event.characterId} is unavailable`, `${path}.characterId`);
+              continue;
+            }
+            const difference = character.differences?.find(item => item.id === event.differenceId);
+            if (!difference) {
+              report('CHARACTER_DIFFERENCE_MISSING', 'Choose an available difference for this character', `${path}.differenceId`);
+              continue;
+            }
+            ({ assetId, variantId } = difference.figure);
+          } else {
+            assetId = event.assetId; variantId = event.variantId ?? null;
+            if (event.kind === 'live2dExpression' && !figures.get(event.objectId)?.assets.has(assetId))
+              report('DIALOGUE_EVENT_OBJECT', 'Choose a figure instance using this Live2D model', `${path}.objectId`);
+          }
+          const asset = input.assets.find(item => item.id === assetId);
+          const kind = event.kind === 'sound' ? 'audio' : event.kind === 'expression' ? 'image' : 'live2d';
+          const variant = asset?.variants.find(item => item.id === (variantId ?? asset.activeVariantId));
+          if (!asset || asset.kind !== kind || !variant) {
+            report('DIALOGUE_EVENT_ASSET', `An available ${kind} asset variant is required`,
+              `${path}.${asset?.kind === kind && variantId && event.kind !== 'expression' ? 'variantId' : field}`);
+            continue;
+          }
+          if (event.kind === 'live2dExpression') {
+            const capabilities = variant.groupCapabilities;
+            const providerId = 'org.galcraft.live2d';
+            const official = capabilities?.resolver === `${providerId}/resource` || capabilities?.resolver === 'galcraft.live2d';
+            const version = variant.typeData?.provider.version ?? capabilities?.resolverVersion;
+            if (!official || variant.typeData && variant.typeData.provider.id !== providerId ||
+              input.lock && !input.lock.plugins.some(plugin => plugin.id === providerId && plugin.version === version))
+              report('DIALOGUE_EVENT_LIVE2D_PROVIDER', 'Choose an official Live2D model from the exact locked plugin version', `${path}.assetId`);
+            if (!capabilities?.expressions.includes(event.expressionName))
+              report('DIALOGUE_EVENT_LIVE2D_EXPRESSION', 'Choose a name declared by this model version', `${path}.expressionName`);
+          }
+          compiled.push({ ...event, assetId, variantId: variant.id });
+        }
+        args.events = compiled.sort((a, b) => a.offset - b.offset);
+      }
       if (args.avatarMode === 'image' && typeof args.avatar !== 'string') report('AVATAR_IMAGE', 'Choose an image for this sentence portrait', 'avatar');
       if (!record(args.speaker) || args.speaker.kind === 'character' && !input.characters.some(item => item.id === (args.speaker as Record<string, unknown>).id)) report('CHARACTER_MISSING', 'Speaker does not exist', 'speaker.id');
       if (DialogueContentSchema.safeParse(args.text).success && !dialoguePlainText(args.text as import('@galcraft/contracts').DialogueContent)) report('TEXT_EMPTY', 'Dialogue text is empty', 'text');
@@ -267,7 +357,13 @@ function validateCommand(node: StatementNode, document: CompileDocument, spec: C
         else try { expressionType(parsed.expr, { variables: input.variables, locals: scene.locals, conditions: input.pluginConditions }); } catch (error) { report('INTERPOLATION_TYPE', String(error), 'text'); }
       }
       break;
-    case 'changeBg': if (args.op !== 'clear') requireField('assetId'); break;
+    case 'changeBg':
+      if (args.op !== 'clear') requireField('assetId');
+      if (Object.hasOwn(raw, 'ruleImage')) {
+        if (args.op === 'clear') report('RULE_IMAGE_BACKGROUND_SCOPE', 'A background rule image requires a replacement background', 'ruleImage');
+        else resolveRuleImage();
+      }
+      break;
     case 'changeFigure': if (args.op === 'show') { requireField('characterId'); if(args.difference!==true)requireField('assetId'); } break;
     case 'characterDifference': {
       const character=input.characters.find(item=>item.id===args.characterId);
@@ -315,9 +411,22 @@ function validateCommand(node: StatementNode, document: CompileDocument, spec: C
     case 'pixiInit': if (args.scope === 'instance') requireField('effectId'); if (args.scope === 'target') requireField('target'); break;
     case 'intro': if (args.op === 'show' && (!Array.isArray(args.paragraphs) || args.paragraphs.some(item => typeof item !== 'string' || !item.trim()))) report('INTRO_PARAGRAPH', 'show requires nonempty paragraphs', 'paragraphs'); break;
     case 'miniAvatar': if (args.op === 'set') requireField('assetId'); break;
-    case 'callScene': case 'changeScene':
+    case 'changeScene': {
       requireTarget({ sceneId: args.sceneId, labelId: args.labelId }, 'sceneId');
-      if (node.command === 'callScene') {
+      if (!Object.hasOwn(raw, 'ruleImage')) break;
+      resolveRuleImage();
+      const target = input.scenes.find(item => item.id === args.sceneId);
+      const interludes = input.project && target ? sceneEntryPresentations(input.project, target)
+        .filter(item => item.presentation.interlude) : [];
+      if (interludes.length) issues.push({
+        ...problem('RULE_IMAGE_SCENE_INTERLUDE', `Scene rule image conflicts with the entry interlude in ${interludes.map(item => item.name).join(', ')}`, fieldSource('ruleImage')),
+        related: interludes.map(({ kind, id }) => ({ kind, id })),
+      });
+      break;
+    }
+    case 'callScene': {
+      requireTarget({ sceneId: args.sceneId, labelId: args.labelId }, 'sceneId');
+      {
         const target = input.scenes.find(item => item.id === args.sceneId);
         const parameters = record(args.parameters) ? args.parameters : {};
         if (target) for (const name of Object.keys(parameters)) if (!target.parameters.some(item => item.variableId === name)) report('CALL_ARGUMENT', `Unknown parameter ${name}`, `parameters.${name}`);
@@ -337,6 +446,7 @@ function validateCommand(node: StatementNode, document: CompileDocument, spec: C
         }
       }
       break;
+    }
     case 'choose':
       if (Array.isArray(args.options)) for (const [index, option] of args.options.entries()) if (record(option)) {
         requireTarget(option.target, `options.${index}.target`);
@@ -417,20 +527,29 @@ function validateCommand(node: StatementNode, document: CompileDocument, spec: C
 }
 
 /** Validate this structured result without requiring unrelated unfinished source to compile. */
-export function validateAuthoringCommands(parsed: ParseResult, ids: Id[], scene: Scene, input: CommandValidationContext): Issue[] {
-  const registry = createCommandRegistry(input.engineVersion, input.pluginCommands), issues: Issue[] = [], labels = new Map<Id, Set<Id>>();
+export function validateAuthoringCommands(parsed: ParseResult, ids: Id[], scene: Scene, input: CommandValidationContext, creating = false): Issue[] {
+  const registry = createCommandRegistry(input.engineVersion, input.pluginCommands), labels = new Map<Id, Set<Id>>();
+  const issues = parsed.issues.filter(issue => issue.source?.statementId && ids.includes(issue.source.statementId));
+  const sources = [parsed];
   for (const document of input.documents) {
     if (!document.sceneId) continue;
     const source = document.documentId === parsed.documentId ? parsed : parse(document);
+    if (source !== parsed) sources.push(source);
     labels.set(document.sceneId, new Set(source.cst.filter(node => node.valid && node.command === 'label').flatMap(node => {
       const id = (node.object?.value as { labelId?: Id } | undefined)?.labelId; return id ? [id] : [];
     })));
   }
+  const figures = figureDeclarations(sources);
   for (const id of ids) {
     const node = parsed.cst.find(node => node.id === id), spec = node && registry.get(node.command);
     if (!node?.valid || !node.object) { issues.push(problem('STATEMENT_INVALID', `Statement ${id} needs valid command syntax`)); continue; }
     if (!spec) { issues.push(problem('COMMAND_MISSING', `Command ${node.command} has no installed contract`)); continue; }
-    validateCommand(node, { documentId: parsed.documentId, revision: parsed.revision, kind: 'scene', text: parsed.text, sceneId: scene.id }, spec, input, scene, labels, [], issues);
+    const document = { documentId: parsed.documentId, revision: parsed.revision, kind: 'scene' as const, text: parsed.text, sceneId: scene.id };
+    const args = validateCommand(node, document, spec, input, scene, labels, figures, [], issues);
+    if (creating && node.command === 'changeFigure' && (args.op === 'replace' || args.op === 'show' && args.difference === true) && args.assetId == null &&
+      !input.characters.some(character => character.id === args.characterId && character.differences?.length)) {
+      issues.push(problem('FIELD_REQUIRED', 'Choose a figure asset or a character with a shared difference', { ...sourceAt(document, node), field: 'assetId' }));
+    }
   }
   return issues;
 }
@@ -447,6 +566,21 @@ function resolveAsset(asset: Asset, variantId: Id = asset.activeVariantId): Reso
 function* compileSteps(input: CompileInput): Generator<void, CompileResult> {
   const configurations = compilePluginConfigurations(input);
   const issues: Issue[] = [...configurations.issues];
+  for (const page of input.template.pages) {
+    const version = input.entityVersions?.find(version => version.ref.kind === 'document' && version.ref.id === page.id);
+    const visit = (component: ComponentConfig, path: string) => {
+      for (const [index, binding] of (component.interactions ?? []).entries()) {
+        if (!binding.blueprint) continue;
+        for (const issue of [...blueprintTopologyIssues(binding.blueprint), ...blueprintReferenceIssues(binding.blueprint, page, input.template)]) {
+          const source = { documentId: page.id, revision: version?.revision ?? 0, field: `${path}/interactions/${index}/blueprint` };
+          issues.push({ ...problem(issue.code, issue.message, source), owner: 'M08',
+            details: { pageId: page.id, componentId: component.id, bindingId: binding.id!, nodeId: issue.nodeId ?? null, edgeId: issue.edgeId ?? null } });
+        }
+      }
+      component.children.forEach((child, index) => visit(child, `${path}/children/${index}`));
+    };
+    visit(page.root, '/data/root');
+  }
   const languages = ProjectLanguagesSchema.safeParse(input.project.languages);
   if (!languages.success) issues.push(problem('PROJECT_LANGUAGES', languages.error.issues.map(issue => issue.message).join('；')));
   else for (const locale of languages.data.menus) if (!(BuiltinPlayerMenuLocales as readonly string[]).includes(locale))
@@ -492,6 +626,7 @@ function* compileSteps(input: CompileInput): Generator<void, CompileResult> {
     if (!locked) issues.push(problem('PLUGIN_VERSION', `Command ${spec.key} is not provided by its locked version`));
   }
   const sourceMap: SourceMapEntry[] = [];
+  const figures = figureDeclarations(parses), eventIds = new Map<Id, Id>();
   const labels = new Map<Id, Set<Id>>();
   for (const scene of input.scenes) labels.set(scene.id, new Set());
   for (const [index, parsed] of parses.entries()) {
@@ -528,7 +663,17 @@ function* compileSteps(input: CompileInput): Generator<void, CompileResult> {
       if (!node.valid || !node.object || !node.id) continue;
       const spec = registry.get(node.command);
       if (!spec) { issues.push(problem(node.command.includes('/') ? 'PLUGIN_MISSING' : 'COMMAND_UNKNOWN', `Command ${node.command} is unavailable`, sourceAt(document, node))); continue; }
-      const args = validateCommand(node, document, spec, input, scene, labels, sourceMap, issues);
+      const args = validateCommand(node, document, spec, input, scene, labels, figures, sourceMap, issues);
+      if (node.command === 'say') {
+        const events = node.fields.find(item => item.key === 'events')?.valueNode.items ?? [];
+        for (const [eventIndex, event] of events.entries()) {
+          const id = event.fields?.find(item => item.key === 'id')?.valueNode.value;
+          if (typeof id !== 'string' || !IdSchema.safeParse(id).success) continue;
+          const prior = eventIds.get(id);
+          if (prior && prior !== document.documentId) issues.push(problem('DIALOGUE_EVENT_DUPLICATE', 'Dialogue event ID is duplicated across the work', dialogueEventSource(document, node, eventIndex, 'id')));
+          eventIds.set(id, document.documentId);
+        }
+      }
       if (node.command === 'say' && languages.success && record(args.voiceByLocale)) {
         const declared = languages.data.voices;
         if (Object.keys(args.voiceByLocale).length || args.voice) for (const locale of declared) {
@@ -546,7 +691,14 @@ function* compileSteps(input: CompileInput): Generator<void, CompileResult> {
       instructions.push({ statementId: node.id, opcode: node.command, specVersion: spec.version, condition, continuation, skippable, args: args as Json, source: sourceAt(document, node) });
       if (node.command === 'label' && typeof args.labelId === 'string') sceneLabels[args.labelId] = node.id;
     }
-    scenes.push({ scene, instructions, labels: sceneLabels });
+    const decorLayers = scene.decorLayers?.map((layer, index) => {
+      const { variant, field } = resolveStaticStageImage(input.assets, layer.assetId, layer.variantId);
+      if (!variant) issues.push(problem('DECOR_IMAGE', 'Choose an available static image and version for this decor layer', {
+        documentId: document.documentId, revision: document.revision, field: `/data/decorLayers/${index}/${field}`,
+      }));
+      return { ...layer, variantId: variant?.id ?? layer.variantId };
+    });
+    scenes.push({ scene: decorLayers ? { ...scene, decorLayers } : scene, instructions, labels: sceneLabels });
   }
   const flowInitials: DebugScenario[] = [];
   const initialDocuments = new Set<Id>();
@@ -613,6 +765,8 @@ function* compileSteps(input: CompileInput): Generator<void, CompileResult> {
     if(entry.cover&&!input.assets.some(asset=>asset.id===entry.cover&&asset.kind==='image'))issues.push({...problem('GALLERY_COVER',`鉴赏条目 ${entry.name} 的封面图片不可用`),entity:{kind:'gallery',id:entry.id}});
   }
   const fixed: {assetId:Id;variantId:Id|null}[] = [];
+  for (const { scene } of scenes) fixed.push(...(scene.decorLayers ?? []));
+  for (const scene of scenes) for (const instruction of scene.instructions) fixed.push(...stageCommandAssetBindings(instruction.opcode, instruction.args));
   const media = (reference: {assetId:Id;variantId:Id|null}, kind:string, description:string) => {
     const asset=input.assets.find(item=>item.id===reference.assetId),variant=asset?.variants.find(item=>item.id===(reference.variantId??asset.activeVariantId));
     if(!asset||asset.kind!==kind||!variant)issues.push(problem('ENTRY_ASSET',`${description} 的${kind}素材或固定版本不可用`));

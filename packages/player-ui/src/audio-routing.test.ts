@@ -70,6 +70,21 @@ describe('PlayerAudioRouter', () => {
     expect(audio.stop).toHaveBeenCalledWith(sourceId);
   });
 
+  it('stops an inline event resolved after its session was replaced', async () => {
+    const sessionId = id(), soundId = id(), sourceId = id(), statementId = id();
+    let active = sessionId, complete!: (result: ReturnType<typeof played>) => void;
+    const audio = { play: vi.fn(() => new Promise<ReturnType<typeof played>>(resolve => { complete = resolve; })),
+      stop: vi.fn(), silence: vi.fn() };
+    const router = new PlayerAudioRouter(audio, () => active);
+    const token = { sessionId, statementId, occurrence: 7 };
+    const pending = router.applyStage(sessionId, { bus: 'sfx', id: soundId, state: { ...sound(id()), loop: false } }, token);
+    expect(audio.play).toHaveBeenCalledWith(expect.objectContaining({ sessionId, bus: 'sfx', token }));
+    active = id(); router.clearSession(sessionId);
+    complete(played(sourceId));
+    expect(await pending).toBeNull();
+    expect(audio.stop).toHaveBeenCalledWith(sourceId);
+  });
+
   it('routes looped effects to ambience and stops them by sound identity', async () => {
     const sessionId = id(), soundId = id(), assetId = id(), sourceId = id();
     const audio = { play: vi.fn(async () => played(sourceId)), stop: vi.fn() } as unknown as AudioMixer;

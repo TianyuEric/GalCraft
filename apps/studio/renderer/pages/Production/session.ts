@@ -1,30 +1,50 @@
 import { operationTitle } from '@galcraft/plugins/contracts';
-import { defaultOperation, variantOperation, operationPurpose, normalizeProductionDraft, resolveProductionFields } from '@galcraft/authoring/production/draft';
+import { defaultOperation, imageUsageFor, variantOperation, operationPurpose, normalizeProductionDraft, resolveProductionFields, type ProductionOrigin } from '@galcraft/authoring/production/draft';
 import type { ProductionOperation, SpeechLine } from '@galcraft/authoring/production';
 import type { CreationRecipe } from '@galcraft/authoring/recipes';
-import { createId, reserveIds, issueFromError, type Issue } from '@galcraft/contracts';
-import { workflowSupportsPurpose } from '@galcraft/generation-services/validation';
+import { createId, reserveIds, issueFromError, localizeIssue, type Id, type Issue, type Result } from '@galcraft/contracts';
+import { workflowMapsMainImage, workflowSupportsPurpose } from '@galcraft/generation-services/validation';
 import type {
   ProductionFormDraft,
   FormVariant,
   TaskPlan,
   Candidate,
 } from "@galcraft/authoring/production";
-import type { EditPlan } from "@galcraft/contracts";
+import type { EditPlan, WorkspaceResume } from "@galcraft/contracts";
 import type { WorkbenchBridge, Overview } from "./bridge.js";
 import { unwrap } from "./bridge.js";
 import { validateOperationInput, operationSupportsConnection } from '@galcraft/authoring/production/operations';
 import type { ProductionFieldEditorContext } from '@galcraft/plugins/contracts';
 export type QuickIntent = 'script' | 'stage' | 'background' | 'figure' | 'page' | 'ui-assets' | 'voice' | 'music' | 'cg' | 'difference';
-export type QuickScope = { sceneId?: string | null; statementId?: string | null; statementIds?: string[]; textRange?: { start: number; end: number } | null; pageIds?: string[]; componentIds?: string[] };
+export type QuickScope = { sceneId?: string | null; statementId?: string | null; statementIds?: string[]; textRange?: { start: number; end: number } | null; pageIds?: string[]; componentIds?: string[]; characterId?: string; origin?: Pick<ProductionOrigin, 'page' | 'characterId' | 'differenceId' | 'asset'>; reference?: NonNullable<ProductionOrigin['asset']> };
 export type ContinuationView = { sourceId: string; mode: 'write' | 'performance' | 'discuss'; instruction: string; summary: string };
+export type ProductionDirectoryState = NonNullable<NonNullable<WorkspaceResume['workbench']>['productionDirectory']>;
+export type ProductionRecord = NonNullable<ProductionDirectoryState['record']>;
+export type ProductionFeedback = {
+  key: string; attemptId: Id; kind: 'request' | 'read'; issue: Issue;
+  target: { kind: 'task' | 'draft'; id: Id } | null;
+  surface?: 'connections';
+  editorId?: string;
+};
+const readMethods = new Set(['problemSnapshot', 'overview', 'tasks', 'readDraft', 'listDrafts', 'frozen', 'defaults', 'candidate', 'connections', 'providers', 'readOutline', 'context', 'mediaInput', 'listWorkflowDrafts', 'waitForTask', 'inspectTaskResources', 'previewScript', 'assetReferences', 'attachment', 'previewComposition', 'candidateContent', 'exportRecipes', 'discoverWorkflowOutputs', 'queryRemote']);
+const workspaceMethods = new Set(['saveDefaults', 'removeConnection', 'deleteRecipe', 'readOutline', 'saveOutline', 'saveImageRoutes', 'saveRecipe', 'copyRecipe', 'exportRecipes', 'planRecipeImport', 'applyRecipeImport', 'saveWorkflow', 'listWorkflowDrafts', 'discoverWorkflowOutputs', 'saveWorkflowDraft', 'connections', 'providers', 'defaults', 'problemSnapshot']);
+const connectionMethods = new Set(['removeConnection', 'saveWorkflow', 'saveWorkflowDraft', 'listWorkflowDrafts', 'discoverWorkflowOutputs']);
+export function normalizeProductionFeedback(record: ProductionFeedback): ProductionFeedback {
+  const restored = structuredClone(record);
+  if (!restored.surface && connectionMethods.has(/^production:([^:]+):/.exec(restored.key)?.[1] ?? '')) restored.surface = 'connections';
+  return restored;
+}
+export type WorkflowGuiDraft = {
+  workflowDocuments: { id: string; text: string; importText?: string; baseline?: string; paste?: string; pasteBaseline?: string; title: string; dirty: boolean; draftRevision?: number | null; expectedRevision: number | null; closeRequest: number; draftSource?: boolean }[];
+  activeWorkflow: string;
+  search?: string;
+};
 export type ProductionGuiDraft = {
-  workflowDocuments: {id:string;text:string;importText?:string;baseline?:string;paste?:string;title:string;dirty:boolean;draftRevision?:number|null;expectedRevision:number|null;closeRequest:number}[];
-  activeWorkflow:string; tab:string; recipe:CreationRecipe|null; recipeBaseline:string;
+  tab:string; recipe:CreationRecipe|null; recipeBaseline:string;
   uiProposal:import('@galcraft/authoring/production').UIPlanProposal|null;
   uiSource:Pick<Parameters<WorkbenchBridge['production']['prepareUIPlan']>[0],'candidateId'|'expected'|'scope'|'draft'>|null;
   uiBaseline:string;
-};
+} & WorkflowGuiDraft;
 
 export class ProductionSession {
   data: Overview = {
@@ -43,21 +63,32 @@ export class ProductionSession {
   };
   draft: ProductionFormDraft | null = null;
   guiDraft: ProductionGuiDraft | null = null;
+  workflowGuiDraft: WorkflowGuiDraft | null = null;
+  workflowDirty = false;
   connectionGuiDraft:{edit:import('@galcraft/contracts').ConnectionConfig|null;provider:string;secret:string;advanced:string|null;baseline:string;selection:string[]}|null=null;
   connectionDirty=false;
+  discardConnectionWorkbench() {
+    this.connectionGuiDraft = null;
+    this.connectionDirty = false;
+    this.workflowGuiDraft = null;
+    this.workflowDirty = false;
+    if (this.guiDraft) this.guiDraft = { ...this.guiDraft, workflowDocuments: [], activeWorkflow: '' };
+    this.changed();
+  }
   taskId: string | null = null;
+  overviewLoaded = false;
+  private overviewTaskId: string | null = null;
+  private restoringDraftId: string | null = null;
   selected = new Set<string>();
   candidateText = new Map<string, string>();
   private continuationViews = new Map<string, ContinuationView>();
   plan: TaskPlan | null = null;
   adoption: EditPlan | null = null;
-  origin: {
-    page: string;
-    sceneId: string | null;
-    statementId: string | null;
-    pageIds: string[];
-    componentIds: string[];
-  } | null = null;
+  origin: ProductionOrigin | null = null;
+  get recordOrigin() {
+    const task = this.task;
+    return task ? task.origin ?? this.data.drafts.find(draft => draft.id === task.sourceDraftId)?.origin ?? null : this.origin;
+  }
   error = "";
   diagnostic: Issue | null = null;
   quickIntent: QuickIntent | null = null;
@@ -75,11 +106,143 @@ export class ProductionSession {
   private saveLifecycle = 0;
   private suspended = false;
   private visible = true;
+  private feedbackRecords = new Map<string, ProductionFeedback>();
+  private feedbackRequests = new Map<string, Id>();
+  private draftFeedbackEpochs = new Map<Id, number>();
+  private diagnosticFeedbackKey: string | null = null;
+  private revealedFeedbackKey: string | null = null;
+  private feedbackEditorId: string | null = null;
   constructor(
     readonly bridge: WorkbenchBridge,
     readonly projectId: string,
     public displayLocale: () => string = () => 'zh-CN',
-  ) {}
+  ) {
+    const production = bridge.production;
+    this.bridge = { ...bridge, production: new Proxy(production, {
+      get: (target, property, receiver) => {
+        const method = Reflect.get(target, property, receiver);
+        if (typeof property !== 'string' || typeof method !== 'function' || property === 'overview') return method;
+        return async (...args: unknown[]) => {
+          const scope = this.feedbackScope(property, args[0]), lifecycle = this.saveLifecycle;
+          const draftId = scope.target?.kind === 'draft' ? scope.target.id : null;
+          const draftEpoch = draftId ? this.draftFeedbackEpochs.get(draftId) ?? 0 : 0;
+          const attemptId = createId([this.feedbackRecords, this.feedbackRequests]);
+          this.feedbackRequests.set(scope.key, attemptId);
+          const current = () => lifecycle === this.saveLifecycle && this.feedbackRequests.get(scope.key) === attemptId
+            && (!draftId || (this.draftFeedbackEpochs.get(draftId) ?? 0) === draftEpoch);
+          try {
+            const response = await Reflect.apply(method, target, args) as Result<unknown>;
+            if (current()) {
+              if (response.ok) this.clearFeedback(scope.key);
+              else this.failFeedback(scope, attemptId, response.error, !scope.editorId);
+            }
+            return response;
+          } catch (error) {
+            if (current()) this.failFeedback(scope, attemptId, issueFromError(error, 'M10'), !scope.editorId);
+            throw error;
+          }
+        };
+      },
+    }) };
+  }
+  get feedback(): readonly ProductionFeedback[] { return [...this.feedbackRecords.values()]; }
+  get revealedFeedback(): ProductionFeedback | null { return this.revealedFeedbackKey ? this.feedbackRecords.get(this.revealedFeedbackKey) ?? null : null; }
+  /** Capture the initiating M01 document synchronously; the context ends before a returned promise settles. */
+  withFeedbackEditor<T>(editorId: string, action: () => T): T {
+    const previous = this.feedbackEditorId;
+    this.feedbackEditorId = editorId;
+    try { return action(); } finally { this.feedbackEditorId = previous; }
+  }
+  consumeRevealedFeedback(key: string): void {
+    if (this.revealedFeedbackKey !== key) return;
+    this.revealedFeedbackKey = null;
+    if (this.diagnosticFeedbackKey === key) { this.diagnosticFeedbackKey = null; this.error = ''; this.diagnostic = null; }
+    this.changed();
+  }
+  restoreFeedback(records: readonly ProductionFeedback[]) {
+    reserveIds(records);
+    for (const record of records) {
+      const restored = normalizeProductionFeedback(record);
+      this.feedbackRecords.set(restored.key, restored);
+    }
+    this.changed();
+  }
+  revealFeedback(key: string): boolean {
+    const record = this.feedbackRecords.get(key);
+    if (!record) return false;
+    this.feedbackRecords.set(key, { ...record });
+    this.diagnostic = record.issue;
+    this.error = localizeIssue(record.issue, this.displayLocale());
+    this.diagnosticFeedbackKey = key;
+    this.revealedFeedbackKey = key;
+    this.changed();
+    return true;
+  }
+  private feedbackScope(method: string, input?: unknown): Pick<ProductionFeedback, 'key' | 'kind' | 'target' | 'surface' | 'editorId'> {
+    const value = input && typeof input === 'object' ? input as { taskId?: Id; draftId?: Id; draft?: { id: Id }; itemId?: Id;
+      candidateId?: Id; candidateIds?: Id[]; id?: Id; selections?: { itemId: Id; candidateId: Id }[] } : null;
+    const candidateId = value?.candidateId ?? (method === 'editCandidate' ? value?.id
+      : typeof input === 'string' && ['candidate', 'candidateContent'].includes(method) ? input : undefined);
+    const candidateTaskId = candidateId ? this.data.candidates.find(item => item.candidate.id === candidateId)?.candidate.taskId
+      ?? this.data.imageCandidates?.find(item => item.id === candidateId)?.taskId : undefined;
+    const target: ProductionFeedback['target'] = workspaceMethods.has(method) ? null
+      : value?.taskId ? { kind: 'task', id: value.taskId }
+      : typeof input === 'string' && ['resume', 'cancel', 'removeTaskRecord'].includes(method) ? { kind: 'task', id: input }
+      : typeof input === 'string' && method === 'discardDraft' ? { kind: 'draft', id: input }
+      : (value?.draft?.id && ['saveDraft', 'prepareUIPlan'].includes(method)) || value?.draftId ? { kind: 'draft', id: value!.draft?.id ?? value!.draftId! }
+      : candidateTaskId ? { kind: 'task', id: candidateTaskId }
+      : method === 'overview' ? this.taskId ? { kind: 'task', id: this.taskId } : null : this.selectedRecord;
+    const identity = [workspaceMethods.has(method) ? this.workspaceFeedbackIdentity(method, input) : '',
+      value?.itemId ? `item:${value.itemId}` : '', candidateId ? `candidate:${candidateId}` : '',
+      value?.candidateIds?.length ? `candidates:${[...new Set(value.candidateIds)].sort().join(',')}` : '',
+      value?.selections?.length ? `selections:${value.selections.map(item => `${item.itemId}=${item.candidateId}`).sort().join(',')}` : ''].filter(Boolean);
+    return { key: `production:${method}:${target ? `${target.kind}:${target.id}` : 'workspace'}${identity.length ? `:${identity.join(':')}` : ''}`, kind: readMethods.has(method) ? 'read' : 'request', target,
+      ...(connectionMethods.has(method) ? { surface: 'connections' as const, ...(this.feedbackEditorId ? { editorId: this.feedbackEditorId } : {}) } : {}) };
+  }
+  private workspaceFeedbackIdentity(method: string, input: unknown): string {
+    const value = input && typeof input === 'object' ? input as { draft?: { id: Id }; workflow?: { id: Id }; connectionId?: Id;
+      recipe?: { id: Id; scope: string; projectId: Id | null }; recipeId?: Id; recipeIds?: Id[]; scope?: string; sourceScope?: string;
+      projectId?: Id | null; destination?: string; filePath?: string; destinationPath?: string } : null;
+    const recipeScope = (scope: string | undefined, projectId?: Id | null) => `${scope ?? 'personal'}:${scope === 'project' ? projectId ?? this.projectId : 'global'}`;
+    switch (method) {
+      case 'removeConnection': return typeof input === 'string' ? `connection:${input}` : '';
+      case 'saveWorkflow': return value?.workflow ? `workflow:${value.workflow.id}` : '';
+      case 'saveWorkflowDraft': return value?.draft ? `workflow-draft:${value.draft.id}` : '';
+      case 'discoverWorkflowOutputs': return value?.workflow ? `workflow:${value.workflow.id}:connection:${value.connectionId ?? ''}` : '';
+      case 'saveRecipe': return value?.recipe ? `recipe:${recipeScope(value.recipe.scope, value.recipe.projectId)}:${value.recipe.id}` : '';
+      case 'deleteRecipe': return value?.recipeId ? `recipe:${recipeScope(value.scope)}:${value.recipeId}` : '';
+      case 'copyRecipe': return value?.recipeId ? `recipe:${recipeScope(value.sourceScope)}:${value.recipeId}:destination:${recipeScope(value.scope, value.projectId)}` : '';
+      case 'exportRecipes': return value?.recipeIds ? `recipes:${JSON.stringify([...new Set(value.recipeIds)].sort())}:destination:${value.destinationPath ?? ''}` : '';
+      case 'planRecipeImport': return value?.filePath ? `recipe-import:${JSON.stringify([value.destination, value.projectId, value.filePath])}` : '';
+      case 'applyRecipeImport': return typeof input === 'string' ? `recipe-import-plan:${input}` : '';
+      default: return '';
+    }
+  }
+  private failFeedback(scope: Pick<ProductionFeedback, 'key' | 'kind' | 'target' | 'surface' | 'editorId'>, attemptId: Id, issue: Issue, display = true) {
+    const previous = this.feedbackRecords.get(scope.key);
+    this.feedbackRecords.set(scope.key, { ...scope, attemptId: scope.kind === 'read' ? previous?.attemptId ?? attemptId : attemptId, issue });
+    if (display) { this.error = issue.message; this.diagnostic = issue; this.diagnosticFeedbackKey = scope.key; this.revealedFeedbackKey = null; }
+    this.changed();
+  }
+  private clearFeedback(key: string) {
+    const previous = this.feedbackRecords.get(key);
+    if (!previous) return;
+    this.feedbackRecords.delete(key);
+    if (this.revealedFeedbackKey === key) this.revealedFeedbackKey = null;
+    if (this.diagnosticFeedbackKey === key && this.diagnostic?.code === previous.issue.code && this.diagnostic.message === previous.issue.message) {
+      this.error = ''; this.diagnostic = null; this.diagnosticFeedbackKey = null;
+    }
+    this.changed();
+  }
+  private retireDraftFeedback(id: Id) {
+    this.draftFeedbackEpochs.set(id, (this.draftFeedbackEpochs.get(id) ?? 0) + 1);
+    for (const [key, record] of this.feedbackRecords) if (record.target?.kind === 'draft' && record.target.id === id) {
+      this.feedbackRecords.delete(key);
+      this.feedbackRequests.delete(key);
+      if (this.revealedFeedbackKey === key) this.revealedFeedbackKey = null;
+      if (this.diagnosticFeedbackKey === key) { this.error = ''; this.diagnostic = null; this.diagnosticFeedbackKey = null; }
+    }
+  }
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
@@ -91,30 +254,86 @@ export class ProductionSession {
     this.revision++;
     this.listeners.forEach((l) => l());
   }
+  restoreRecord(record: ProductionRecord | null) {
+    if (record?.kind === 'task') this.taskId = record.id;
+    if (record?.kind === 'draft') this.restoringDraftId = record.id;
+  }
+  get selectedRecord(): ProductionRecord | null {
+    if (this.taskId) return { kind: 'task', id: this.taskId };
+    const draftId = this.restoringDraftId ?? (this.draft?.submittedTaskId ? null : this.draft?.id);
+    return draftId ? { kind: 'draft', id: draftId } : null;
+  }
+  get unavailableRecord() {
+    if (!this.overviewLoaded) return null;
+    if (this.taskId && this.overviewTaskId === this.taskId && !this.task) return this.selectedRecord;
+    return this.restoringDraftId ? this.selectedRecord : null;
+  }
+  async openTask(id: string, candidateIds?: readonly string[]) {
+    if (id !== this.taskId && this.draftDirty) await this.saveDraft(true);
+    if (candidateIds || id !== this.taskId) this.selected = new Set(candidateIds);
+    this.restoringDraftId = null;
+    this.taskId = id;
+    this.quickOpen = true;
+    this.changed();
+    await this.refresh();
+  }
+  /** Return from a diagnostic without saving or displacing unrelated unsaved author input. */
+  async revealProblemRecord(target: ProductionFeedback['target']): Promise<boolean> {
+    if (!target) return true;
+    if (target.kind === 'draft' && this.draft?.id === target.id) {
+      this.taskId = null; this.restoringDraftId = null; this.quickOpen = true; this.changed();
+      return true;
+    }
+    if (this.draftDirty || this.draftSaving || this.suspended) return false;
+    this.quickOpen = true;
+    if (target.kind === 'task') {
+      if (this.taskId !== target.id) this.selected = new Set();
+      this.restoringDraftId = null; this.taskId = target.id;
+    } else {
+      this.taskId = null; this.draft = null; this.savedDraft = null; this.restoringDraftId = target.id;
+      this.plan = null; this.quickIntent = null;
+    }
+    this.changed();
+    try { await this.refresh(); } catch { return false; }
+    return target.kind === 'task' ? this.taskId === target.id && this.overviewTaskId === target.id && !!this.task
+      : this.draft?.id === target.id && !this.restoringDraftId;
+  }
   private refreshRequest = 0;
   private completedRefresh = 0;
-  async refresh() {
+  async refresh(background = false) {
     if (this.suspended) return;
     const request = ++this.refreshRequest;
     const taskId = this.taskId;
-    const response = await this.bridge.production.overview({ taskId });
-    if (taskId !== this.taskId) return;
-    if (request < this.completedRefresh) return;
-    const data = unwrap(response);
-    this.completedRefresh = request;
+    const scope = this.feedbackScope('overview', { taskId }), attemptId = createId(this.feedbackRecords);
+    let data: Overview;
+    try {
+      const response = await this.bridge.production.overview({ taskId });
+      if (taskId !== this.taskId || request < this.completedRefresh || this.suspended) return;
+      this.completedRefresh = request;
+      data = unwrap(response);
+      this.clearFeedback(scope.key);
+    } catch (error) {
+      if (taskId !== this.taskId || request < this.completedRefresh || this.suspended) return;
+      this.completedRefresh = request;
+      this.failFeedback(scope, attemptId, issueFromError(error, 'M10'), background);
+      throw error;
+    }
     this.data = data;
+    this.overviewLoaded = true;
+    this.overviewTaskId = taskId;
     reserveIds(this.data);
     this.data.drafts.forEach(normalizeProductionDraft);
     if (!this.draft) {
-      const draft = this.data.drafts.find((d) => !d.submittedTaskId);
+      const draft = this.data.drafts.find(d => !d.submittedTaskId && (!this.restoringDraftId || d.id === this.restoringDraftId));
       this.draft = draft ? structuredClone(draft) : null;
       this.savedDraft = this.draft ? structuredClone(this.draft) : null;
       if (this.draft?.origin) this.origin = this.draft.origin;
+      if (this.draft) this.restoringDraftId = null;
     } else {
       const saved = this.data.drafts.find(d => d.id === this.draft!.id);
       if (saved && (!this.savedDraft || saved.revision > this.savedDraft.revision)) this.savedDraft = structuredClone(saved);
     }
-    if (!this.taskId && !this.draft) this.taskId = this.data.tasks.at(-1)?.id ?? null;
+    if (!this.taskId && !this.draft && !this.restoringDraftId) this.taskId = this.data.tasks.at(-1)?.id ?? null;
     this.changed();
   }
   start() {
@@ -124,10 +343,7 @@ export class ProductionSession {
     const refresh = () => {
       if (this.polling || !this.visible || typeof document !== 'undefined' && document.hidden) return;
       this.polling = true;
-      void this.refresh().catch((e) => {
-        this.error = String(e); this.diagnostic = issueFromError(e, 'M10');
-        this.changed();
-      }).finally(() => { this.polling = false; });
+      void this.refresh(true).catch(() => {}).finally(() => { this.polling = false; });
     };
     refresh();
     this.poll = setInterval(refresh, 1800);
@@ -135,7 +351,7 @@ export class ProductionSession {
   setVisible(visible: boolean) {
     if (this.visible === visible) return;
     this.visible = visible;
-    if (visible && this.poll) void this.refresh().catch(error => { this.error = String(error); this.diagnostic = issueFromError(error, 'M10'); this.changed(); });
+    if (visible && this.poll) void this.refresh(true).catch(() => {});
   }
   stop() {
     this.suspended = true;
@@ -171,19 +387,23 @@ export class ProductionSession {
   async openProductionDraft(intent: QuickIntent, scope: QuickScope = {}, recipe?: CreationRecipe) {
     if (this.draftDirty && this.draft && !this.draft.submittedTaskId) await this.saveDraft(true);
     await this.refresh();
+    const reference = scope.reference ? unwrap(await this.bridge.production.mediaInput(scope.reference)) : null;
     this.quickIntent = intent;
     const script = intent === 'script' || intent === 'stage';
     this.origin = { page: intent === 'page' || intent === 'ui-assets' ? 'pages' : 'editor', sceneId: scope.sceneId ?? (script ? this.origin?.sceneId : null) ?? null,
-      statementId: scope.statementId ?? null, pageIds: scope.pageIds ?? (intent === 'page' ? this.origin?.pageIds : []) ?? [], componentIds: scope.componentIds ?? [] };
+      statementId: scope.statementId ?? null, pageIds: scope.pageIds ?? (intent === 'page' ? this.origin?.pageIds : []) ?? [], componentIds: scope.componentIds ?? [], ...scope.origin };
     const usage = intent === 'page' || intent === 'ui-assets' ? 'ui' : intent === 'music' ? 'bgm' : intent === 'stage' ? 'script' : intent;
     this.newDraft(usage);
     const variant = this.variant!;
     variant.fields.creationMode = intent === 'stage' ? 'performance' : 'write';
-    variant.operation = intent === 'stage' ? 'performance' : intent === 'page' ? 'uiPatch' : defaultOperation(usage);
+    const wholeFigure = intent === 'difference' && !!reference;
+    variant.operation = wholeFigure ? 'image' : intent === 'stage' ? 'performance' : intent === 'page' ? 'uiPatch' : defaultOperation(usage);
+    variant.target.characterId = scope.characterId ?? null;
+    if (variant.target.uiScope) variant.target.uiScope = { pageIds: [...this.origin.pageIds], componentIds: [...this.origin.componentIds] };
     this.configureQuickScope(scope);
     const purpose = intent === 'page' ? 'uiPatch' : 'script';
     const official = this.data.recipes.filter(item => !item.production && !item.parameterPreset && item.scope === 'official' && item.uses.includes(usage));
-    const chosen = recipe ?? this.data.recipes.find(item => item.id === this.data.defaults?.recipes[intent])
+    const chosen = recipe ?? (!wholeFigure ? this.data.recipes.find(item => item.id === this.data.defaults?.recipes[intent]) : undefined)
       ?? (script || intent === 'page' ? official.find(item => item.purposes.includes(purpose) && (intent === 'stage' ? item.scriptMode === 'performance' : item.scriptMode !== 'performance')) : undefined);
     if (chosen) {
       if (chosen.production) {
@@ -201,9 +421,14 @@ export class ProductionSession {
       }
     }
     this.applyDefaults();
-    if (intent !== 'voice' && intent !== 'music') {
-      variant.context = unwrap(await this.bridge.production.context({ ...this.origin, characterId: variant.target.characterId, statementIds: scope.statementIds, textRange: scope.textRange, usage, performance: variant.operation === 'performance' }));
+    if (intent !== 'voice' && intent !== 'music' && !wholeFigure) {
+      const { sceneId, statementId, pageIds, componentIds } = this.origin;
+      variant.context = unwrap(await this.bridge.production.context({ sceneId, statementId, pageIds, componentIds, characterId: variant.target.characterId, statementIds: scope.statementIds, textRange: scope.textRange, usage, performance: variant.operation === 'performance' }));
       this.applyContextDefaults();
+    }
+    if (reference) {
+      variant.fields.reference = reference;
+      variant.fields.references = [reference];
     }
     if (intent === 'voice') {
       const ids = scope.statementIds ?? (scope.statementId ? [scope.statementId] : []);
@@ -217,9 +442,10 @@ export class ProductionSession {
     this.draft!.origin = { ...this.origin, statementIds: scope.statementIds };
     this.draft!.name = `${chosen?.name ?? ({ script: '写剧情', stage: '配演出', background: '背景', figure: '立绘', cg: 'CG', difference: '差分', voice: '配音', music: '音乐', page: '页面', 'ui-assets': 'UI 素材' } as const)[intent]} · ${this.data.scenes.find(scene => scene.id === scope.sceneId)?.name ?? '新制作'}`;
     this.taskId = null;
+    this.restoringDraftId = null;
     this.quickOpen = true;
     this.draftDirty = false;
-    if (variant.operationSnapshot?.provider) {
+    if (variant.operationSnapshot?.provider || wholeFigure || scope.pageIds?.length) {
       this.quickIntent = null;
       this.update({});
       await this.saveDraft(true);
@@ -245,24 +471,24 @@ export class ProductionSession {
     this.draft = normalizeProductionDraft(structuredClone(draft));
     this.savedDraft = structuredClone(this.draft);
     this.origin = draft.origin ?? null;
-    this.quickIntent = null; this.taskId = null; this.plan = null; this.draftDirty = false; this.changed();
+    this.quickIntent = null; this.taskId = null; this.restoringDraftId = null; this.plan = null; this.draftDirty = false; this.quickOpen = true; this.changed();
   }
   private configureQuickScope(scope: QuickScope = {}) {
     if (!this.variant) return;
     const target = this.variant.target;
     target.statementId = scope.statementId ?? null;
     target.replaceStatementIds = scope.statementIds?.length ? [...scope.statementIds] : scope.statementId ? [scope.statementId] : [];
-    if ((this.quickIntent === 'script' || this.quickIntent === 'stage') && !target.replaceStatementIds.length) {
+    if ((this.operation === 'script' || this.operation === 'performance') && !target.replaceStatementIds.length) {
       const statements = this.data.scenes.find(scene => scene.id === target.sceneId)?.statements ?? [];
-      if (this.quickIntent === 'stage') target.replaceStatementIds = statements.map(statement => statement.id);
+      if (this.operation === 'performance') target.replaceStatementIds = statements.map(statement => statement.id);
       else if (['end', 'changeScene', 'jumpLabel', 'return'].includes(statements.at(-1)?.command ?? '')) target.statementId = statements.at(-1)!.id;
     }
   }
-  async setQuickScene(sceneId: string | null) {
+  async setQuickScene(sceneId: string | null, capture = true) {
     if (!this.variant) return;
     this.update({ target: { ...this.variant.target, sceneId } });
     this.configureQuickScope();
-    await this.captureContext();
+    if (capture) await this.captureContext();
   }
   private selection(recipe: import('@galcraft/authoring/recipes').CreationRecipe, purpose: import('@galcraft/authoring/production').RecipeSelection['purpose']) {
     return { recipeId: recipe.id, scope: recipe.scope, purpose, usage: this.draft!.activeUse, parameterValues: Object.fromEntries(recipe.parameters.map(parameter => [parameter.key, parameter.defaultValue])) };
@@ -325,12 +551,15 @@ export class ProductionSession {
     this.update({ operation }); this.applyDefaults(); this.changed();
   }
   matchingWorkflows() {
-    return this.data.workflows.filter(workflow => (!workflow.operation || workflow.operation === this.variant?.operation) && workflowSupportsPurpose(workflow, this.purpose, this.draft!.activeUse as import('@galcraft/contracts').ImageUsage));
+    const usage = this.purpose === 'image' ? imageUsageFor(this.draft!.activeUse) : null;
+    const wholeFigure = this.purpose === 'image' && this.draft?.activeUse === 'difference';
+    return this.data.workflows.filter(workflow => (!workflow.operation || workflow.operation === this.variant?.operation) &&
+      workflowSupportsPurpose(workflow, this.purpose, usage) && (!wholeFigure || workflowMapsMainImage(workflow)));
   }
   applyDefaults() {
     const variant = this.variant;
     if (!variant || !this.draft) return;
-    const route = this.purpose === 'image' ? this.data.imageRoutes?.[this.draft.activeUse as 'background' | 'figure' | 'cg' | 'ui'] : null;
+    const route = this.purpose === 'image' ? this.data.imageRoutes?.[imageUsageFor(this.draft.activeUse)] : null;
     const scheme = this.data.recipes.find(recipe => recipe.id === variant.productionRecipeId)?.production;
     const connections = this.data.connections.filter(connection => operationSupportsConnection(this.operationDefinition, connection, this.purpose) && (!scheme?.protocol || connection.protocol === scheme.protocol));
     const connection = connections.find(connection => connection.id === route?.connectionId)
@@ -348,13 +577,14 @@ export class ProductionSession {
   }
   async rememberImageRoute() {
     if (!this.variant?.connectionId || this.purpose !== 'image') return;
-    this.data.imageRoutes = unwrap(await this.bridge.production.saveImageRoutes({ ...this.data.imageRoutes, [this.draft!.activeUse]: { connectionId: this.variant.connectionId, workflowBindingId: this.variant.workflowBindingId, model: this.variant.model ?? '' } }));
+    this.data.imageRoutes = unwrap(await this.bridge.production.saveImageRoutes({ ...this.data.imageRoutes, [imageUsageFor(this.draft!.activeUse)]: { connectionId: this.variant.connectionId, workflowBindingId: this.variant.workflowBindingId, model: this.variant.model ?? '' } }));
     this.changed();
   }
   newDraft(usage: ProductionFormDraft["activeUse"] = "script", operation?: ProductionOperation) {
     if (this.autosave) clearTimeout(this.autosave);
     this.autosave = null;
     this.savedDraft = null;
+    this.restoringDraftId = null;
     this.draft = {
       schemaVersion: 1,
       id: createId(this.data),
@@ -425,6 +655,7 @@ export class ProductionSession {
         durationSec: 30,
       },
       context: [],
+      contextCaptured: true,
       connectionId: null,
       workflowBindingId: null,
       model: null,
@@ -486,6 +717,7 @@ export class ProductionSession {
   update(patch: Partial<FormVariant>) {
     this.draftDirty = true; this.draftEdit++;
     Object.assign(this.variant!, patch);
+    if (patch.context !== undefined || patch.target !== undefined) this.variant!.contextCaptured = true;
     this.captureDraftSources(!!patch.target);
     this.plan = null;
     this.scheduleSave();
@@ -565,7 +797,8 @@ export class ProductionSession {
     this.origin = this.draft?.origin ?? null;
     if (!this.draft) { this.quickIntent = null; this.quickOpen = false; }
     this.draftEdit++;
-    this.draftDirty = false; this.draftSaving = false; this.plan = null; this.error = '';
+    this.draftDirty = false; this.draftSaving = false; this.plan = null;
+    this.retireDraftFeedback(id);
     this.changed();
   }
   async discardDraft(id = this.draft?.id) {
@@ -576,6 +809,7 @@ export class ProductionSession {
       unwrap(await this.bridge.production.discardDraft(id));
     if (this.draft?.id === id) { this.draft = null; this.draftDirty = false; this.plan = null; }
     this.data.drafts = this.data.drafts.filter(d => d.id !== id);
+    this.retireDraftFeedback(id);
     this.changed();
   }
   candidates(): Candidate[] {

@@ -7,7 +7,8 @@ export default defineConfig(({ mode }) => {
   return { build: { target: 'node22.12', outDir: 'dist-service/service', emptyOutDir: false, minify: false,
     license: { fileName: `licenses/${entry}.md` },
     lib: { entry: `${directory}/${entry}.mjs`, formats: ['es'], fileName: () => `${entry}.mjs` },
-    rolldownOptions: { external: [/^node:/, ...builtinModules, 'electron', 'playwright', 'playwright-core', 'sharp', 'onnxruntime-node', '@resvg/resvg-js'],
+    rolldownOptions: { external: [/^node:/, ...builtinModules, 'electron', 'playwright', 'playwright-core', 'sharp', 'onnxruntime-node', '@resvg/resvg-js',
+      ...(mode === 'cli' ? ['./entry.mjs'] : [])],
       output: { codeSplitting: false, banner: "import { createRequire as __galcraftCreateRequire } from 'node:module'; const require = __galcraftCreateRequire(import.meta.url);" } },
   } };
 });

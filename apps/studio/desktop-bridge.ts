@@ -37,7 +37,7 @@ export type Overview = {
   }[];
   canvas: { width: number; height: number };
   characters: { id: string; name: string; voicePresets?: import('@galcraft/contracts').Character['voicePresets'] }[];
-  pages: { documentId?: string; revision?: number; id: string; key: string; labels?: Record<string, string> }[];
+  pages: { documentId?: string; revision?: number; id: string; key: string; labels?: Record<string, string>; components?: { id: string; name: string }[] }[];
   scenes: {
     id: string;
     documentId?: string; revision?: number;
@@ -116,6 +116,7 @@ export type ProductionBridge = {
     }
   >;
   overview(input?: { taskId: string | null }): Promise<Result<Overview>>;
+  problemSnapshot(): Promise<Result<import('@galcraft/authoring/production').ProductionProblemSnapshot>>;
   discardDraft: Call<string, void>;
   removeTaskRecord: Call<string, void>;
   saveDraft: Call<
@@ -263,4 +264,13 @@ export type DesktopBridge = WorkbenchBridge & {
   connections: StudioBridge['connections'] & { list(): Promise<Result<ConnectionConfig[]>> };
 };
 export type StudioIpc = import('@galcraft/contracts').IpcMethods<DesktopBridge>;
+
+/** The local HTTP transport discovers handler names at runtime. */
+export type StudioBridgeRequest = {
+  group: string;
+  method: string;
+  args: unknown[];
+  clientId?: string;
+  entry: 'desktop' | 'browser';
+};
 

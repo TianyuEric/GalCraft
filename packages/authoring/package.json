@@ -26,6 +26,10 @@
       "types": "./dist/production/operations.d.ts",
       "default": "./dist/production/operations.js"
     },
+    "./production/review-text": {
+      "types": "./dist/production/review-text.d.ts",
+      "default": "./dist/production/review-text.js"
+    },
     "./production/preview": {
       "types": "./dist/production/preview.d.ts",
       "default": "./dist/production/preview.js"

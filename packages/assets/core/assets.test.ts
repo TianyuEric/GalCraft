@@ -63,6 +63,56 @@ function query() {
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
 describe('M04 catalog and reference projection', () => {
+  it('queries only explicit asset IDs before pagination and keeps unset and empty scopes distinct', () => {
+    const first = asset({ name: 'B.svg' }), second = asset({ id: randomUUID(), name: 'A.svg' });
+    const outside = asset({ id: randomUUID(), name: 'C.svg' }), unknown = randomUUID();
+    const catalog = new AssetCatalog({ ...createAssetIndex(ids.index), revision: 7, data: { assets: [first, outside, second] } });
+    const all = catalog.queryAssets(query()), unset = catalog.queryAssets({ ...query(), assetIds: undefined });
+    expect(all.ok && all.value.items.map(item => item.id)).toEqual([second.id, first.id, outside.id]);
+    expect(unset).toEqual(all);
+    const allIds = catalog.queryAssetIds({ ...query(), assetIds: undefined });
+    expect(allIds.ok && allIds.value.ids).toEqual([second.id, first.id, outside.id]);
+    for (const assetIds of [[], [unknown]]) {
+      const empty = catalog.queryAssets({ ...query(), assetIds });
+      expect(empty.ok && empty.value).toEqual({ items: [], total: 0, offset: 0, indexRevision: 7 });
+      const emptyIds = catalog.queryAssetIds({ ...query(), assetIds });
+      expect(emptyIds.ok && emptyIds.value).toEqual({ ids: [], indexRevision: 7 });
+    }
+    const scoped = { ...query(), assetIds: [first.id, unknown, second.id, first.id], offset: 1, limit: 1, indexRevision: 7 };
+    const page = catalog.queryAssets(scoped);
+    expect(page.ok && page.value).toMatchObject({ total: 2, offset: 1, indexRevision: 7 });
+    expect(page.ok && page.value.items.map(item => item.id)).toEqual([first.id]);
+    const scopedIds = catalog.queryAssetIds(scoped);
+    expect(scopedIds.ok && scopedIds.value).toEqual({ ids: [second.id, first.id], indexRevision: 7 });
+  });
+  it('intersects explicit asset IDs with existing search, kind, tag, usage and reference filters and sorting', () => {
+    const first = asset({ name: 'scene-a.svg', tags: ['night'] });
+    const second = asset({ id: randomUUID(), name: 'scene-b.svg', tags: ['night'], modifiedAt: '2026-09-24T00:00:00Z' });
+    const unused = asset({ id: randomUUID(), name: 'scene-c.svg', tags: ['night'] });
+    const wrongName = asset({ id: randomUUID(), name: 'portrait.svg', tags: ['night'] });
+    const wrongKind = asset({ id: randomUUID(), name: 'scene.wav', kind: 'audio', tags: ['night'] });
+    const outside = asset({ id: randomUUID(), name: 'scene-z.svg', tags: ['night'] });
+    const assets = [first, second, unused, wrongName, wrongKind, outside];
+    const catalog = new AssetCatalog({ ...createAssetIndex(ids.index), revision: 7, data: { assets } });
+    catalog.documentChanged(ids.scene, assets.filter(item => item !== unused).map(item => ({ assetId: item.id,
+      owner: { kind: 'scene', id: ids.scene }, usage: 'background', required: true, variantId: null })));
+    const scoped = { ...query(), assetIds: assets.filter(item => item !== outside).map(item => item.id),
+      kind: 'image' as const, search: 'scene', tags: ['night'], usage: 'background', reference: 'used' as const,
+      sort: 'modified' as const, direction: 'desc' as const, offset: 1, limit: 1 };
+    const page = catalog.queryAssets(scoped);
+    expect(page.ok && page.value.total).toBe(2);
+    expect(page.ok && page.value.items.map(item => item.id)).toEqual([first.id]);
+    const scopedIds = catalog.queryAssetIds(scoped);
+    expect(scopedIds.ok && scopedIds.value.ids).toEqual([second.id, first.id]);
+  });
+  it('rejects stale index revisions even when the explicit asset scope is empty or unknown', () => {
+    const catalog = new AssetCatalog({ ...createAssetIndex(ids.index), revision: 7, data: { assets: [asset()] } });
+    for (const assetIds of [[], [ids.asset], [randomUUID()]]) {
+      const scoped = { ...query(), assetIds, indexRevision: 6 };
+      expect(catalog.queryAssets(scoped)).toMatchObject({ ok: false, error: { code: 'QUERY_STALE' } });
+      expect(catalog.queryAssetIds(scoped)).toMatchObject({ ok: false, error: { code: 'QUERY_STALE' } });
+    }
+  });
   it('includes each approved UI purpose tag before the asset is referenced', () => {
     const approved = ['ui:icon', 'ui:frame', 'ui:background', 'ui:texture', 'ui:logo', 'ui:decoration'];
     const images = approved.map(tag => asset({ id: randomUUID(), name: tag, tags: [tag] }));

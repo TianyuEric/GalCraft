@@ -1,10 +1,10 @@
-import type { Purpose } from '@galcraft/contracts';
+import type { ImageUsage, Purpose } from '@galcraft/contracts';
 import type { RecipeUsage } from '../recipes/schema.js';
 import type { FormVariant, ProductionFormDraft } from './types.js';
 import type { CreationRecipe } from '../recipes/schema.js';
 
 export type ProductionOperation = import('@galcraft/contracts').ProductionOperationDefinition['id'];
-export type ProductionOrigin = { page: string; sceneId: string | null; statementId: string | null; statementIds?: string[]; pageIds: string[]; componentIds: string[] };
+export type ProductionOrigin = { page: string; sceneId: string | null; statementId: string | null; statementIds?: string[]; pageIds: string[]; componentIds: string[]; characterId?: string; differenceId?: string; asset?: { assetId: string; variantId: string } };
 export type SpeechLine = { id: string; statementId: string | null; sceneId: string | null; characterId: string | null; original: string; text: string; language: string; voiceId: string | null; selected: boolean; fields?: Record<string, import('@galcraft/contracts').Json>; references?: import('./types.js').MediaInput[]; connectionId?: string; model?: string };
 
 export function defaultOperation(usage: RecipeUsage): ProductionOperation {
@@ -14,6 +14,11 @@ export function defaultOperation(usage: RecipeUsage): ProductionOperation {
   if (usage === 'difference') return 'difference';
   if (['background', 'figure', 'cg', 'ui'].includes(usage)) return 'image';
   throw new Error(`未知制作用途：${usage}`);
+}
+export function imageUsageFor(usage: RecipeUsage): ImageUsage {
+  if (usage === 'difference') return 'figure';
+  if (usage === 'background' || usage === 'figure' || usage === 'cg' || usage === 'ui') return usage;
+  throw new Error(`Unknown image usage: ${usage}`);
 }
 export function operationPurpose(operation: ProductionOperation): Purpose {
   if (operation.includes('/')) return operation as import('@galcraft/contracts').ExtensionOperationId;

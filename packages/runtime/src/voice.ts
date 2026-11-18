@@ -32,11 +32,18 @@ export function nvlRuns(parts: readonly DialoguePart[], nameStyle: Omit<Partial<
   ]);
 }
 export function sliceDialogueRuns(runs: readonly DialogueSegment[], start: number, end = Infinity): DialogueSegment[] {
+  const clusters = graphemes(runs.map(run => run.text).join(''));
+  let fromOffset = 0, toOffset = 0;
+  for (let index = 0; index < Math.min(end, clusters.length); index++) {
+    const length = clusters[index]!.length;
+    if (index < start) fromOffset += length;
+    toOffset += length;
+  }
   let offset = 0; const result: DialogueSegment[] = [];
   for (const segment of runs) {
-    const body = graphemes(segment.text), from = Math.max(0, start - offset), to = Math.min(body.length, end - offset);
-    if (from < to) result.push({ ...segment, ...(from ? { ruby: undefined } : {}), text: body.slice(from, to).join('') });
-    offset += body.length;
+    const from = Math.max(0, fromOffset - offset), to = Math.min(segment.text.length, toOffset - offset);
+    if (from < to) result.push({ ...segment, ...(from ? { ruby: undefined } : {}), text: segment.text.slice(from, to) });
+    offset += segment.text.length;
   }
   return result;
 }

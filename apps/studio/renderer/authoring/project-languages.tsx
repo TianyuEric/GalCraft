@@ -1,25 +1,31 @@
-import { useEffect, useImperativeHandle, useState, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import { BuiltinPlayerMenuLocales, ProjectLanguagesSchema, type ProjectLanguages, type StudioPreferences } from '@galcraft/contracts';
 import { Button, Choice, Field } from '../components/controls.js';
 import { Input } from '../components/ui/input.js';
 import './project-languages.css';
 
 export type ProjectLanguageGuiDraft = { draft: ProjectLanguages; baseline: string; additional: string };
-export type ProjectLanguageEditorHandle = { dirty: boolean; discard(): void; capture(): ProjectLanguageGuiDraft };
+export type ProjectLanguageEditorHandle = { dirty: boolean; discard(): void; capture(): ProjectLanguageGuiDraft; applyCurrent(): Promise<boolean>; isComposing(): boolean };
 type Props = { value: ProjectLanguages; locale: StudioPreferences['locale']; ref?: Ref<ProjectLanguageEditorHandle>;
   apply(value: ProjectLanguages): Promise<void>; pendingChanged?(dirty: boolean): void; guiDraft?: ProjectLanguageGuiDraft | null; onGuiDraftChange?(draft: ProjectLanguageGuiDraft): void };
 const names: Record<string, string> = { 'zh-CN': '简体中文', en: 'English', ja: '日本語' };
 
 export function ProjectLanguageEditor({ value, locale, apply, pendingChanged, ref, guiDraft, onGuiDraftChange }: Props) {
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
-  const [draft, setDraft] = useState(() => structuredClone(guiDraft?.draft ?? value)), [baseline, setBaseline] = useState(() => guiDraft?.baseline ?? JSON.stringify(value));
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [additional, setAdditional] = useState(guiDraft?.additional ?? '');
+  const [input, renderInput] = useState<ProjectLanguageGuiDraft>(() => ({ draft: structuredClone(guiDraft?.draft ?? value), baseline: guiDraft?.baseline ?? JSON.stringify(value), additional: guiDraft?.additional ?? '' }));
+  const current = useRef(input), { draft, baseline, additional } = input;
+  const updateInput = (patch: Partial<ProjectLanguageGuiDraft>) => { current.current = { ...current.current, ...patch }; renderInput(current.current); };
+  const setDraft = (draft: ProjectLanguages) => updateInput({ draft }), setAdditional = (additional: string) => updateInput({ additional });
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const root = useRef<HTMLElement>(null), sourceInput = useRef<HTMLInputElement>(null), additionalInput = useRef<HTMLInputElement>(null);
+  const composing = useRef(false), applying = useRef<Promise<boolean> | null>(null);
   const valueDirty = JSON.stringify(draft) !== baseline, dirty = valueDirty || additional.length > 0;
-  const reset = () => { setDraft(structuredClone(value)); setBaseline(JSON.stringify(value)); setAdditional(''); setError(''); };
-  useImperativeHandle(ref, () => ({ dirty, discard: reset, capture: () => ({ draft, baseline, additional }) }));
+  const isDirty = () => JSON.stringify(current.current.draft) !== current.current.baseline || current.current.additional.length > 0;
+  const reset = () => { updateInput({ draft: structuredClone(value), baseline: JSON.stringify(value), additional: '' }); setError(''); };
+  useImperativeHandle(ref, () => ({ get dirty() { return isDirty(); }, discard: reset, capture: () => ({ ...current.current }), applyCurrent: commit, isComposing: () => composing.current }));
   useEffect(() => { onGuiDraftChange?.({ draft, baseline, additional }); }, [draft, baseline, additional, onGuiDraftChange]);
   useEffect(() => { pendingChanged?.(dirty); }, [dirty, pendingChanged]);
-  useEffect(() => { if (!dirty) { setDraft(structuredClone(value)); setBaseline(JSON.stringify(value)); } }, [value]);
+  useEffect(() => { if (!isDirty()) updateInput({ draft: structuredClone(value), baseline: JSON.stringify(value) }); }, [value]);
   const options = (items: string[]) => items.map(item => ({ value: item, label: names[item] ?? item }));
   const toggle = (key: 'menus' | 'voices', item: string) => {
     const items = draft[key].includes(item) ? draft[key].filter(value => value !== item) : [...draft[key], item];
@@ -28,24 +34,44 @@ export function ProjectLanguageEditor({ value, locale, apply, pendingChanged, re
     setDraft({ ...draft, [key]: items, [defaultKey]: items.includes(draft[defaultKey]) ? draft[defaultKey] : items[0] ?? draft.voiceDefault });
     setError('');
   };
-  const commit = async () => {
-    const checked = ProjectLanguagesSchema.safeParse(draft);
+  function commit(): Promise<boolean> {
+    if (composing.current) return Promise.resolve(false);
+    if (applying.current) return applying.current;
+    if (!isDirty()) return Promise.resolve(true);
+    const snapshot = current.current;
+    let next = snapshot.draft;
+    if (snapshot.additional.length) {
+      try {
+        const item = new Intl.Locale(snapshot.additional.trim()).toString();
+        if (!next.voices.includes(item)) next = { ...next, voices: [...next.voices, item], voiceDefault: next.voices.length ? next.voiceDefault : item };
+      } catch {
+        setError(t('请输入有效的语言标签，例如 ko。', 'Enter a valid language tag, for example ko.', '有効な言語タグを入力してください（例：ko）。'));
+        additionalInput.current?.focus(); return Promise.resolve(false);
+      }
+    }
+    const checked = ProjectLanguagesSchema.safeParse(next);
     if (!checked.success) {
       const field = checked.error.issues[0]?.path[0];
       setError(field === 'textDefault' ? t('请填写正文源语言，例如 zh-CN。', 'Enter the source text language, for example zh-CN.', '本文の元言語を入力してください（例：zh-CN）。')
         : field === 'voiceDefault' || field === 'voices' ? t('请将默认配音语言设为已启用项，并检查配音列表。', 'Select an enabled voice default and check the voice list.', '有効な音声を既定に選び、音声リストを確認してください。')
         : t('请至少选择一种菜单语言，并将默认菜单语言设为已启用项。', 'Enable a menu language and select an enabled menu default.', 'メニュー言語を選び、有効な言語を既定のメニューにしてください。'));
-      return;
+      if (field === 'textDefault') sourceInput.current?.focus();
+      else root.current?.querySelectorAll('fieldset')[field === 'voiceDefault' || field === 'voices' ? 2 : 0]?.querySelector<HTMLElement>('input,button')?.focus();
+      return Promise.resolve(false);
     }
     setBusy(true); setError('');
-    try { await apply(checked.data); setBaseline(JSON.stringify(checked.data)); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setBusy(false); }
-  };
+    const task = Promise.resolve().then(async () => {
+      try { await apply(checked.data); updateInput({ draft: checked.data, additional: '', baseline: JSON.stringify(checked.data) }); return true; }
+      catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); return false; }
+      finally { applying.current = null; setBusy(false); }
+    });
+    applying.current = task; return task;
+  }
   const choices = (key: 'menus' | 'voices', items: readonly string[]) => <div className="project-language-choices">{items.map(item =>
     <label key={item}><input type="checkbox" checked={draft[key].includes(item)} disabled={busy || key === 'menus' && draft.menus.length === 1 && draft.menus[0] === item}
       onChange={() => toggle(key, item)}/><span>{names[item] ?? item}</span></label>)}</div>;
-  return <section className="project-language-editor" aria-labelledby="project-language-heading" aria-busy={busy}>
+  return <section ref={root} className="project-language-editor" aria-labelledby="project-language-heading" aria-busy={busy}
+    onCompositionStartCapture={() => { composing.current = true; }} onCompositionEndCapture={() => { composing.current = false; }}>
     <h2 id="project-language-heading">{t('作品语言', 'Project languages', '作品の言語')}</h2>
     <p>{t('菜单、正文和配音分别配置。菜单切换保留作者原文。', 'Configure menus, source text and voices separately. Menu changes keep author text.', 'メニュー・本文・音声を個別に設定します。メニューを変更しても作者の本文を保持します。')}</p>
     <fieldset disabled={busy}><legend>{t('菜单与系统界面', 'Menus and system UI', 'メニューとシステム')}</legend>
@@ -56,13 +82,13 @@ export function ProjectLanguageEditor({ value, locale, apply, pendingChanged, re
     </fieldset>
     <fieldset disabled={busy}><legend>{t('剧情正文', 'Story source text', '物語の本文')}</legend>
       <Field label={t('正文源语言', 'Source text language', '本文の元言語')} help={t('用于正文排版，例如 zh-CN；当前作品使用一份作者原文。', 'Used for text layout, for example zh-CN. The work uses one source text.', '本文の組版に使用します（例：zh-CN）。作者の原文を使用します。')}>
-        <Input value={draft.textDefault} onChange={event => setDraft({ ...draft, textDefault: event.target.value })}/>
+        <Input ref={sourceInput} value={draft.textDefault} onChange={event => setDraft({ ...draft, textDefault: event.target.value })}/>
       </Field>
     </fieldset>
     <fieldset disabled={busy}><legend>{t('角色配音', 'Character voices', 'キャラクター音声')}</legend>
       {choices('voices', [...new Set([...BuiltinPlayerMenuLocales, ...draft.voices])])}
       <div className="project-language-add"><Field label={t('添加其他配音语言', 'Add another voice language', 'ほかの音声言語を追加')}>
-        <Input placeholder="ko, fr, es…" value={additional} onChange={event => setAdditional(event.target.value)}/></Field>
+        <Input ref={additionalInput} placeholder="ko, fr, es…" value={additional} onChange={event => setAdditional(event.target.value)}/></Field>
         <Button disabled={!additional.trim()} onClick={() => {
           try { const item = new Intl.Locale(additional.trim()).toString(); if (!draft.voices.includes(item)) setDraft({ ...draft, voices: [...draft.voices, item], voiceDefault: draft.voices.length ? draft.voiceDefault : item }); setAdditional(''); setError(''); }
           catch { setError(t('请输入有效的语言标签，例如 ko。', 'Enter a valid language tag, for example ko.', '有効な言語タグを入力してください（例：ko）。')); }

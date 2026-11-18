@@ -2,14 +2,16 @@ import { readFile,writeFile,mkdir,readdir,rm,rename,stat } from 'node:fs/promise
 import { homedir } from 'node:os';
 import { join,isAbsolute,resolve } from 'node:path';
 import {z} from 'zod';
-import { createId, CollaborationScopeSchema,EditInputSchema,EditReceiptSchema,EditPlanSchema,JsonSchema,SceneSchema,VersionRefSchema,PositionSchema,DebugScenarioSchema,PageKeySchema,readPluginDocumentInstances,LayoutSchema,VisualSchema } from '@galcraft/contracts';
-import {CoreCommandSpecsEnglish as CoreCommandSpecs,parse} from '@galcraft/dsl';
+import { createId, CollaborationScopeSchema,EditInputSchema,EditReceiptSchema,EditPlanSchema,JsonSchema,SceneSchema,VersionRefSchema,readPluginDocumentInstances,LayoutSchema,VisualSchema } from '@galcraft/contracts';
+import {CoreCommandSpecsEnglish as CoreCommandSpecs,conditionSignatures,parse} from '@galcraft/dsl';
 import { CollaborationService, CollaborationError, harnessContent, harnessLaunch, mergeHarness, harnessReadback, writeHarness, currentProjectScope, creativeSkillFiles, previewSkillFiles } from '@galcraft/collaboration';
 import { CollaborationMcp } from './collaboration-mcp.mjs';
 import { endpointPort } from './local-service-ports.mjs';
 import { CollaborationControl } from './collaboration-control.mjs';
 import { registerLifecycleTools } from './collaboration-lifecycle.mjs';
 import { compileCollaborationProject } from './collaboration-compile.mjs';
+import { checkPreviewRevision } from './collaboration-preview-target.ts';
+import { BlueprintPreviewInputSchema, BlueprintPreviewOutputSchema, prepareBlueprintPreview } from './collaboration-blueprints.ts';
 import { registerPageTools } from './collaboration-pages.mjs';
 import { registerCompositionTools } from './collaboration-composition.mjs';
 import { ok, fail } from './result.mjs';
@@ -19,7 +21,7 @@ import { pageSlice, bundleDefinitions } from './collaboration-projection.mjs';
 import { CatalogCategories, preparePresetEdit, PresetEditInputSchema, scopedRecipes } from './collaboration-presets.mjs';
 import { PluginDocuments } from './plugin-documents.mjs';
 import { PluginPlayerUi } from './plugin-authoring.mjs';
-import { AssetsInputSchema, assetQuery, assetSummary, resourceCandidateSummaryView, editChanges, outputSchemas, PreviewInputSchema, HistoryInputSchema, taskView, candidateView, planView, previewView, sessionSummary,ComponentEditInputSchema } from './collaboration-contracts.mjs';
+import { AssetsInputSchema, assetQuery, assetSummary, resourceCandidateSummaryView, editChanges, outputSchemas, PreviewInputSchema, PreviewRequestSchema, HistoryInputSchema, taskView, candidateView, planView, previewView, sessionSummary,ComponentEditInputSchema } from './collaboration-contracts.mjs';
 
 import { ProductionTargetSchema, ContextPartSchema, CandidateAdoptionChoiceSchema, ProductionFormDraftSchema } from '@galcraft/authoring/production';
 import {RecipeUsageSchema} from '@galcraft/authoring/recipes';
@@ -231,7 +233,7 @@ export class StudioCollaboration {
   register(key,title,description,inputSchema,effects,execute,constraints,lookup,outputSchema) {
     outputSchema??=jsonSchema(outputSchemas[key]);
     inputSchema=bundleDefinitions(inputSchema);outputSchema=bundleDefinitions(outputSchema);
-    this.core.register({definition:{key,title,description,inputSchema,outputSchema,effects,version:'0.1.0',async:false,cancel:false},constraints:constraints??(()=>({effects})),execute,lookup});
+    this.core.register({definition:{key,title,description,inputSchema,outputSchema,effects,version:'0.1.0',async:false,cancel:key==='galcraft_preview'},constraints:constraints??(()=>({effects})),execute,lookup});
   }
   async statistics(input,context){
     this.project(context,false);
@@ -261,7 +263,7 @@ export class StudioCollaboration {
     try{
     if(input.operation){
       const lease=this.plugins.acquireDefinitions?unwrap(await this.plugins.acquireDefinitions(project,{allowMissing:true})):null;
-      try{edit=unwrap(prepareAuthoringEdit([...project.documents.values()],input.operation,lease?.commands??[]));}finally{await lease?.release();}
+      try{edit=unwrap(prepareAuthoringEdit([...project.documents.values()],input.operation,lease?.commands??[],conditionSignatures(lease?.conditions??[])));}finally{await lease?.release();}
       for(const version of edit.expected)if(!input.expected?.some(item=>item.ref.kind===version.ref.kind&&item.ref.id===version.ref.id&&item.revision===version.revision))throw new CollaborationError('EDIT_CONFLICT','Supply the current expected version for every operation member; reread the affected objects and prepare again.');
     }
     if(input.operationKey){
@@ -302,13 +304,55 @@ export class StudioCollaboration {
     this.register('galcraft_history','Review and undo changes','Read full changes and prepareUndo impact before undo. Only operations originating in this collaboration may be undone automatically. Author or other-session changes require author review in Studio.',jsonSchema(HistoryInputSchema),['read','edit'],(input,context,check)=>this.historyCall(input,context,check),input=>({effects:['undo','redo'].includes(input.action)?['edit']:['read']}),async(context,input,previous)=>{if(previous)return previous;if(!['undo','redo'].includes(input.action))return;const receipt=await this.editLookup(context);if(receipt)return {action:input.action,planId:input.planId,receipt};});
     this.register('galcraft_production','Produce and adopt candidates','Prepare direct fields with a configured connection/workflow; recipes optional. Music render uses an existing score; writeScore accepts a description, optional style/reference and real soundbank. Read exact operation contracts from catalog. Submit once; continue authorized waits/adoption/binding/save to the requested endpoint. Query original tasks after disconnect.',productionSchema,['read','generate','adopt','edit'],async(input,context,check,signal)=>this.productionResult(input,await this.productionCall(input,context,check,signal)),input=>({effects:['tasks','candidate','query','refetch','cancel','inspectConnection','wait','inspectResources','drafts','draft','frozen','defaults'].includes(input.action)?['read']:input.action==='adopt'?['adopt','edit']:['releaseResources','saveDraft','transferPrompt','keepResults'].includes(input.action)?['edit']:['generate']}),(context,input,previous)=>this.productionLookup(context,input,previous));
     this.register('galcraft_check','Check the working project','Compile the current working copy with M03 and its exact plugin definitions. A completed check can contain domain errors and no snapshot. current indicates whether this compile is still current.',schema(),['read'],async(_input,context)=>{const result=await compileCollaborationProject(this,this.project(context,false));return {current:result.current,snapshotId:result.snapshot?.snapshotId??null,issues:result.issues};});
-    this.register('galcraft_preview','Inspect the actual Player','State returns runtime position; observe reads requested variable scopes and component CSS properties in an isolated Player. Capture returns actual Player pixels. Entry, target, route and playerInputs replay the route. Use inspection when the goal needs it.',jsonSchema(z.strictObject({action:z.enum(['state','capture','observe']).optional(),variables:z.array(z.strictObject({id:z.string(),scope:z.enum(['progress','local','longTerm']),declaringSceneId:z.string().optional()})).optional(),properties:z.array(z.strictObject({pageId:z.string(),componentId:z.string(),property:z.string()})).optional(),page:PageKeySchema.optional(),entryId:z.string().optional(),target:PositionSchema.optional(),route:DebugScenarioSchema.shape.route.optional(),playerInputs:DebugScenarioSchema.shape.playerInputs.optional(),preview:PreviewInputSchema.optional()})),['preview'],async(input,context)=>{
-      this.project(context,false);if(input.action==='observe'){if(!this.capture)throw new CollaborationError('PREVIEW_CAPTURE_UNAVAILABLE','The isolated Player observation provider is unavailable.');const result=await this.capture({...input,observation:{variables:input.variables,properties:input.properties}});return json({action:'observe',reached:result.reached,snapshotId:result.snapshotId??null,observed:result.observed??{status:'notReady',variables:[],properties:[]},issues:result.issues??[]});}if(input.action!=='capture'){if(!this.preview)throw new CollaborationError('PREVIEW_UNAVAILABLE','The runtime preview provider is unavailable.');return json(previewView(await this.preview(input),'state',input));}
-      if(!this.capture)throw new CollaborationError('PREVIEW_CAPTURE_UNAVAILABLE','The actual Player capture provider is unavailable.');
-      const result=await this.capture(input);let file=null;if(result.pixels){const original=await this.media.add({bytes:result.pixels,mime:'image/png',source:{kind:'preview',projectId:context.projectId,snapshotId:result.snapshotId,engineVersion:result.engineVersion,pluginVersions:result.pluginVersions},width:result.width,height:result.height},context);file=(await this.media.rendition(original,input.preview,context)).file;}
-      return json(previewView(result,'capture',input,file));
-    },undefined,(_context,_input,previous)=>this.media.refresh(previous));
+    this.register('galcraft_preview','Inspect the actual Player','State, observe and capture inspect actual isolated Player state or pixels. Entry, target, route and playerInputs replay the route. Supply eventId with its expected scene revision. Blueprint triggers the exact page, component and binding in an isolated Player and returns executed branches.',jsonSchema(PreviewRequestSchema),['preview'],
+      (input,context,check,signal)=>this.previewCall(input,context,signal,check),
+      input=>({effects:['preview'],...(input.eventId || input.action==='blueprint' ? {documents:[input.expected[0].ref.id]} : {})}),
+      (_context,_input,previous)=>this.media.refresh(previous));
     this.register('galcraft_open','Open a Studio location','Request navigation to a location in the bound project. navigationRequested confirms the request; inspect Studio to verify the actual UI location.',schema({page:{enum:['creation','assets','production','collaboration','player-ui']},documentId:str,taskId:str,candidateId:str},['page']),['read'],async(input,context)=>{this.project(context,false);this.window?.webContents.send('studio:collaborationNavigate',{...input,sessionId:context.sessionId});return {navigationRequested:true,target:{page:input.page,documentId:input.documentId??null,taskId:input.taskId??null,candidateId:input.candidateId??null}};});
+  }
+  async previewCall(input, context, signal, check) {
+    if (input.action === 'blueprint') {
+      const request = BlueprintPreviewInputSchema.parse(input);
+      const project = this.project(context, true);
+      if (request.target) {
+        const path = `scenes/${request.target.sceneId}/scene.json`;
+        const scene = [...project.documents.values()].find(document => Object.hasOwn(document.files, path));
+        if (scene) check?.({ effects: ['preview'], documents: [scene.documentId] });
+      }
+      const { page, template } = prepareBlueprintPreview(project, request);
+      if (!this.capture) throw new CollaborationError('PREVIEW_CAPTURE_UNAVAILABLE', 'The isolated Player capture provider is unavailable.');
+      const { entryId, target, route, playerInputs } = request;
+      const result = await this.capture({ page, blueprintTrigger: request.trigger, entryId, target, route, playerInputs }, { template, project, signal });
+      if (this.project(context, true) !== project) throw new CollaborationError('BLUEPRINT_STALE', 'The project changed during preview.');
+      prepareBlueprintPreview(project, request);
+      return json(BlueprintPreviewOutputSchema.parse({ action: 'blueprint', source: request.source.kind, reached: result.reached,
+        ...(request.source.kind === 'draft' ? { draftBaseRevision: request.source.graph.revision } : {}),
+        snapshotId: result.snapshotId ?? null, page: result.page ?? null, execution: result.execution ?? null, issues: result.issues ?? [] }));
+    }
+    checkPreviewRevision(this.project(context, !!input.eventId), input);
+    const action = input.action ?? 'state';
+    if (action === 'state') {
+      if (!this.preview) throw new CollaborationError('PREVIEW_UNAVAILABLE', 'The runtime preview provider is unavailable.');
+      const result = await this.preview(input, signal);
+      if (input.eventId) checkPreviewRevision(this.project(context), input);
+      return json(previewView(result, action, input));
+    }
+    if (!this.capture) throw new CollaborationError('PREVIEW_CAPTURE_UNAVAILABLE', 'The isolated Player capture provider is unavailable.');
+    const result = await this.capture(action === 'observe'
+      ? { ...input, observation: { variables: input.variables, properties: input.properties } } : input, { signal });
+    if (input.eventId) checkPreviewRevision(this.project(context), input);
+    if (action === 'observe') return json({
+      action, reached: result.reached, snapshotId: result.snapshotId ?? null, eventSource: result.eventSource,
+      observed: result.observed ?? { status: 'notReady', variables: [], properties: [] }, issues: result.issues ?? [],
+    });
+    let file = null;
+    if (result.pixels) {
+      const original = await this.media.add({ bytes: result.pixels, mime: 'image/png', source: { kind: 'preview',
+        projectId: context.projectId, snapshotId: result.snapshotId, engineVersion: result.engineVersion,
+        pluginVersions: result.pluginVersions }, width: result.width, height: result.height }, context);
+      file = (await this.media.rendition(original, input.preview, context)).file;
+    }
+    return json(previewView(result, action, input, file));
   }
   documentResult(input,receipt,prepared){
     if(input.action==='remove')return {action:'remove',receipt,removedDocumentIds:prepared.patches.filter(p=>p.kind==='document'&&p.op==='delete').map(p=>p.documentId)};
@@ -351,8 +395,11 @@ export class StudioCollaboration {
     if(input.action==='applyVariantSwitch'){
       const saved=this.variantPlans?.get(input.planId),plan=project.editPlans.get(input.planId);
       if(!saved||saved.sessionId!==context.sessionId||!plan)throw new CollaborationError('ASSET_PLAN_EXPIRED','The variant plan has expired. Prepare and review it again.');
-      check({...this.planConstraint(plan),documents:[...new Set([...plan.members,...saved.affectedReferences.map(ref=>ref.source.documentId)])]});
-      const receipt=unwrap(await project.applyExternalEdit(plan.planId,input.expected,context));this.changed();return {action:input.action,asset:assetSummary(unwrap(this.assets.get(saved.assetId))),affectedReferences:saved.affectedReferences,receipt};
+      check({...this.planConstraint(plan),documents:[...new Set([...plan.members,...saved.affectedReferences.flatMap(ref=>ref.source?[ref.source.documentId]:[])])]});
+      const scope=await this.assets.reviewedVariantScope(project,saved.assetId,saved.affectedReferences);
+      const result=scope.ok?await project.applyExternalEdit(plan.planId,input.expected,context,scope.value):scope;
+      if(!result.ok&&result.error.code==='ASSET_VARIANT_SWITCH_STALE'){this.variantPlans.delete(plan.planId);project.editPlans.delete(plan.planId);}
+      const receipt=unwrap(result);this.variantPlans.delete(plan.planId);this.changed();return {action:input.action,asset:assetSummary(unwrap(this.assets.get(saved.assetId))),affectedReferences:saved.affectedReferences,receipt};
     }
     if(!asset)throw new CollaborationError('ASSET_MISSING','The asset does not exist. Query the current index again.');
     if(input.action==='get')return {action:'get',asset,index,issues:[]};

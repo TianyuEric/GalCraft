@@ -10,12 +10,8 @@ import { StudioToaster } from './toast.js';
 import brandLight from '../authoring/galcraft-icon.svg?url';
 import brandDark from '../authoring/galcraft-icon-dark.svg?url';
 
-export type ShellAction = 'quickOpen' | 'commands' | 'projects' | 'closeProject' | 'save' | 'saveAll' | 'undo' | 'redo' | 'cards' | 'writing' | 'script' | 'resetLayout' | 'preferences' | 'publish';
-export function ShellHeader({ locale, theme, project, dirty, action, preferences, collapsed, toggleSidebar, service }: {
-  locale: StudioLocale; theme: 'light' | 'dark'; project?: string; dirty: boolean;
-  action(value: ShellAction): void; preferences(value: { locale?: StudioLocale; theme?: 'light' | 'dark' }): void;
-  collapsed: boolean; toggleSidebar(): void; service?: React.ReactNode;
-}) {
+export type ShellAction = 'quickOpen' | 'commands' | 'projects' | 'projectSettings' | 'startupHome' | 'closeProject' | 'save' | 'saveAll' | 'undo' | 'redo' | 'cards' | 'writing' | 'script' | 'resetLayout' | 'preferences' | 'publish';
+export function StudioMenubar({ locale, project, action }: { locale: StudioLocale; project?: string; action(value: ShellAction): void }) {
   const [help, setHelp] = useModalState(false);
   const [guideError, setGuideError] = useState('');
   const guideUrl = `https://galcraft.dev/docs/${locale === 'zh-CN' ? 'zh-CN' : 'en'}/studio-guide/`;
@@ -27,14 +23,13 @@ export function ShellHeader({ locale, theme, project, dirty, action, preferences
     } catch (error) { setGuideError(String(error instanceof Error ? error.message : error)); }
   };
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
-  const item = (id: ShellAction, label: string, icon?: React.ReactNode) => <MenubarItem disabled={id !== 'projects' && !project} onClick={() => action(id)}>{icon}{label}</MenubarItem>;
-  const themeLabel = theme === 'light' ? t('切换深色主题', 'Switch to dark theme', 'ダークテーマに切り替え') : t('切换浅色主题', 'Switch to light theme', 'ライトテーマに切り替え');
+  const item = (id: ShellAction, label: string, icon?: React.ReactNode) => <MenubarItem disabled={id !== 'projects' && id !== 'preferences' && !project} onClick={() => action(id)}>{icon}{label}</MenubarItem>;
   return <>
-    <StudioToaster locale={locale}/>
-    <div className="authoring-brand"><img className="authoring-brand-icon" src={theme === 'light' ? brandLight : brandDark} alt="" /><strong>GalCraft</strong><small>STUDIO</small></div>
     <Menubar className="studio-menubar" aria-label={t('主菜单', 'Main menu', 'メインメニュー')}>
       <MenubarMenu><MenubarTrigger>{t('文件', 'File', 'ファイル')}</MenubarTrigger><MenubarContent>
-        {item('projects', t('作品工作台', 'Project workbench', '作品ワークスペース'), <FolderOpen />)}
+        {item('projects', t('作品中心', 'Project center', '作品センター'), <FolderOpen />)}
+        {item('projectSettings', t('作品设置', 'Project settings', '作品設定'))}
+        {item('startupHome', t('启动与主页', 'Startup & home', '起動とホーム'))}
         {item('closeProject', t('关闭作品', 'Close project', '作品を閉じる'))}<MenubarSeparator />
         {item('save', t('保存当前文档', 'Save document', '文書を保存'), <Save />)}{item('saveAll', t('保存全部', 'Save all', 'すべて保存'))}
         <MenubarSeparator />{item('publish', t('发布作品', 'Publish project', '作品を公開'), <ArrowUpRight />)}
@@ -51,15 +46,6 @@ export function ShellHeader({ locale, theme, project, dirty, action, preferences
         <MenubarItem onClick={() => setHelp(true)}><Keyboard />{t('键盘操作', 'Keyboard controls', 'キーボード操作')}</MenubarItem>
       </MenubarContent></MenubarMenu>
     </Menubar>
-    <Button tone="quiet" className="shell-command-center" onClick={() => action('quickOpen')} aria-label={t('搜索作品与命令','Search project and commands','作品とコマンドを検索')}><Search size={16}/><span>{t('搜索作品与命令','Search project and commands','作品とコマンドを検索')}</span><kbd>Ctrl+P</kbd></Button>
-    <ProjectTitle name={project ?? t('作品工作台', 'Project workbench', '作品ワークスペース')} dirty={dirty} unsavedLabel={t('未保存', 'Unsaved', '未保存')}/>
-    <div className="shell-header-actions">
-      <Choice label="Studio language" value={locale} options={[{ value: 'zh-CN', label: '简体中文' }, { value: 'en', label: 'English' }, { value: 'ja', label: '日本語' }]} onChange={value => preferences({ locale: value as StudioLocale })} />
-      <TooltipProvider delay={400}><Tooltip><TooltipTrigger render={<Button tone="quiet" />} aria-label={themeLabel} onClick={() => preferences({ theme: theme === 'light' ? 'dark' : 'light' })}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}</TooltipTrigger><TooltipContent>{themeLabel}</TooltipContent></Tooltip></TooltipProvider>
-      <Button disabled={!project} aria-label={t('保存全部', 'Save all', 'すべて保存')} title={t('保存全部 · Ctrl+Shift+S', 'Save all · Ctrl+Shift+S', 'すべて保存 · Ctrl+Shift+S')} onClick={() => action('saveAll')}><Save size={15} /><span>{t('保存全部', 'Save all', 'すべて保存')}</span></Button>
-      <Button disabled={!project} tone="primary" onClick={() => action('publish')}>{t('发布', 'Publish', '公開')}<ArrowUpRight size={15} /></Button>
-      <div id="studio-local-service-slot" className="shell-local-service-slot">{service}</div>
-    </div>
     {guideError && <Modal title={t('无法打开帮助', 'Could not open the guide', 'ガイドを開けませんでした')} close={() => setGuideError('')}>
       <p role="alert">{t('请通过下方链接重试，或复制地址到浏览器。', 'Retry the link below, or copy its address to your browser.', '下のリンクを再試行するか、アドレスをブラウザーにコピーしてください。')}</p>
       <a href={guideUrl} target="_blank" rel="noreferrer" onClick={event => { event.preventDefault(); void openGuide(); }}>{guideUrl}</a><details><summary>{t('技术详情','Technical details','技術詳細')}</summary><pre>{guideError}</pre></details>
@@ -74,5 +60,28 @@ export function ShellHeader({ locale, theme, project, dirty, action, preferences
         <dt>Delete</dt><dd>{t('删除所选卡片（焦点在输入框外时）', 'Delete selected cards when focus is outside an input', '入力欄以外で選択したカードを削除')}</dd>
         <dt>Esc</dt><dd>{t('关闭弹窗或取消拖动', 'Close a dialog or cancel a drag', 'ダイアログを閉じる・ドラッグを取消')}</dd></dl>
     </Modal>}
+  </>;
+}
+
+export function ShellHeader({ locale, theme, project, dirty, action, preferences, service }: {
+  locale: StudioLocale; theme: 'light' | 'dark'; project?: string; dirty: boolean;
+  action(value: ShellAction): void; preferences(value: { locale?: StudioLocale; theme?: 'light' | 'dark' }): void;
+  collapsed: boolean; toggleSidebar(): void; service?: React.ReactNode;
+}) {
+  const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
+  const themeLabel = theme === 'light' ? t('切换深色主题', 'Switch to dark theme', 'ダークテーマに切り替え') : t('切换浅色主题', 'Switch to light theme', 'ライトテーマに切り替え');
+  return <>
+    <StudioToaster locale={locale}/>
+    <div className="authoring-brand"><img className="authoring-brand-icon" src={theme === 'light' ? brandLight : brandDark} alt="" /><strong>GalCraft</strong><small>STUDIO</small></div>
+    <StudioMenubar locale={locale} project={project} action={action}/>
+    <Button tone="quiet" className="shell-command-center" onClick={() => action('quickOpen')} aria-label={t('搜索作品与命令','Search project and commands','作品とコマンドを検索')}><Search size={16}/><span>{t('搜索作品与命令','Search project and commands','作品とコマンドを検索')}</span><kbd>Ctrl+P</kbd></Button>
+    <ProjectTitle name={project ?? t('作品工作台', 'Project workbench', '作品ワークスペース')} dirty={dirty} unsavedLabel={t('未保存', 'Unsaved', '未保存')}/>
+    <div className="shell-header-actions">
+      <Choice label="Studio language" value={locale} options={[{ value: 'zh-CN', label: '简体中文' }, { value: 'en', label: 'English' }, { value: 'ja', label: '日本語' }]} onChange={value => preferences({ locale: value as StudioLocale })} />
+      <TooltipProvider delay={400}><Tooltip><TooltipTrigger render={<Button tone="quiet" />} aria-label={themeLabel} onClick={() => preferences({ theme: theme === 'light' ? 'dark' : 'light' })}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}</TooltipTrigger><TooltipContent>{themeLabel}</TooltipContent></Tooltip></TooltipProvider>
+      <Button disabled={!project} aria-label={t('保存全部', 'Save all', 'すべて保存')} title={t('保存全部 · Ctrl+Shift+S', 'Save all · Ctrl+Shift+S', 'すべて保存 · Ctrl+Shift+S')} onClick={() => action('saveAll')}><Save size={15} /><span>{t('保存全部', 'Save all', 'すべて保存')}</span></Button>
+      <Button disabled={!project} tone="primary" onClick={() => action('publish')}>{t('发布', 'Publish', '公開')}<ArrowUpRight size={15} /></Button>
+      <div id="studio-local-service-slot" className="shell-local-service-slot">{service}</div>
+    </div>
   </>;
 }

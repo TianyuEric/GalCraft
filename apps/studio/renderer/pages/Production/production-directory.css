@@ -1,0 +1,20 @@
+.production-directory.task-sidebar {
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  border-inline-end: 0;
+  padding: 12px 10px;
+}
+
+.production-directory .task-row {
+  min-width: 0;
+  width: 100%;
+}
+
+.production-directory .task-row > span:first-child {
+  min-width: 0;
+}
+
+.production-directory .task-empty {
+  margin: 0 0 12px;
+}

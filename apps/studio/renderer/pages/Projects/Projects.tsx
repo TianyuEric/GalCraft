@@ -42,6 +42,10 @@ export function Projects({
   openRecent,
   reveal,
   navigate,
+  continueAuthoring,
+  openSettings,
+  openMaintenance,
+  recovery,
   create,
   listCreationVersions,
   draft,
@@ -62,6 +66,10 @@ export function Projects({
   openRecent?(directory: string): Promise<void>;
   reveal(): Promise<void>;
   navigate(page: "editor" | "pages" | "production"): void;
+  continueAuthoring?(): void;
+  openSettings?(): void;
+  openMaintenance?(): void;
+  recovery?: { pending: boolean; review(): void };
   create(value: ProjectDraft): Promise<boolean>;
   listCreationVersions(): Promise<Result<string[]>>;
   draft: ProjectDraft;
@@ -156,20 +164,20 @@ export function Projects({
   if (restoring && restoreBridge && openRestored) return <main className="project-workbench"><RestoreProject locale={locale} bridge={restoreBridge} open={openRestored} close={() => setRestoring(false)}/></main>;
   return (
     <main className="project-workbench">
-      <header className="project-welcome">
+      {!creatingActive && <header className="project-welcome">
         <div>
           <h1>
             {t(
               "作品中心",
-              "Project library",
-              "作品ライブラリ",
+              "Project center",
+              "作品センター",
             )}
           </h1>
           <p>
             {t(
-              "打开最近作品，或创建新的作品。",
-              "Open a recent project or create a new one.",
-              "最近の作品を開くか、新しい作品を作成します。",
+              "继续上次的编辑，或打开、新建和恢复作品。",
+              "Pick up where you left off, or open, create, and restore projects.",
+              "前回の編集を続けるか、作品を開く・作成・復元できます。",
             )}
           </p>
         </div>
@@ -184,10 +192,19 @@ export function Projects({
             {preparingCreate ? t('正在准备…','Preparing…','準備中…') : t("新建作品", "New project", "新規作品")}
           </Button>
         </div>
-      </header>
-      {preparingCreate && <p role="status" className="project-library-hint">{t('正在准备作品模板与本机引擎…','Preparing templates and local engines…','テンプレートとローカルエンジンを準備中…')}</p>}
-      {actionError && <p className="project-library-error" role="alert">{actionError}</p>}
-      {creating && <nav className="project-section-navigation" aria-label={t('作品中心内容','Project library content','作品ライブラリの内容')}><Button tone="quiet" aria-pressed={!creatingActive} onClick={() => setCreatingActive(false)}>{t('返回作品库','Back to library','ライブラリに戻る')}</Button><Button tone="quiet" aria-pressed={creatingActive} onClick={() => setCreatingActive(true)}>{t('新建作品草稿','New project draft','新規作品の下書き')}{createDirty && ' ·'}</Button></nav>}
+      </header>}
+      {!creatingActive && recovery?.pending && <section className="project-recovery-notice" aria-label={t('保留的作品草稿', 'Retained project draft', '保持した作品の草稿')}>
+        <div><strong>{t('此作品有保留的草稿', 'This project has a retained draft', 'この作品には保持した草稿があります')}</strong>
+          <p>{t('比较草稿与已保存内容，然后选择恢复或丢弃。', 'Compare the draft with saved content, then restore or discard it.', '草稿を保存済みの内容と比較し、復元または破棄を選びます。')}</p></div>
+        <Button onClick={() => recovery.review()}>{t('查看保留的草稿', 'Review retained draft', '保持した下書きを確認')}</Button>
+      </section>}
+      {!creatingActive && preparingCreate && <p role="status" className="project-library-hint">{t('正在准备作品模板与本机引擎…','Preparing templates and local engines…','テンプレートとローカルエンジンを準備中…')}</p>}
+      {!creatingActive && actionError && <p className="project-library-error" role="alert">{actionError}</p>}
+      {creating && <nav className="project-section-navigation" aria-label={t('作品中心内容','Project library content','作品ライブラリの内容')}>
+        {creatingActive
+          ? <Button tone="quiet" onClick={() => setCreatingActive(false)}>{t('返回作品库','Back to library','ライブラリに戻る')}</Button>
+          : <Button tone="quiet" onClick={() => setCreatingActive(true)}>{t('新建作品草稿','New project draft','新規作品の下書き')}{createDirty && ' ·'}</Button>}
+      </nav>}
       <div hidden={creatingActive}>
       <p className="field-help">{t('完整教学样例单独提供 .galproject 文件；下载后从备份恢复，并选择创建独立副本。', 'The complete tutorial is a separate .galproject file. Download it, restore the backup, and choose an independent copy.', '完全なチュートリアルは別配布の .galproject ファイルです。ダウンロード後、バックアップから独立したコピーとして復元してください。')}</p>
       <ProjectLibrary locale={locale} library={library} currentId={source?.project.projectId} revision={source?.projectRevision} open={openRecent ?? (async () => open())} copy={copy} backup={backup} explorerContainer={explorerContainer} inspectorContainer={inspectorContainer} revealInspector={revealInspector} />
@@ -228,10 +245,12 @@ export function Projects({
               </div>
             </dl>
             <div className="project-actions">
-              <Button tone="primary" onClick={() => navigate("editor")}>
+              <Button tone="primary" onClick={continueAuthoring ?? (() => navigate("editor"))}>
                 {t("继续创作", "Continue authoring", "制作を続ける")}
                 <ArrowRight size={16} />
               </Button>
+              {openSettings && <Button tone="quiet" onClick={openSettings}>{t('作品设置', 'Project settings', '作品設定')}</Button>}
+              {openMaintenance && <Button tone="quiet" onClick={openMaintenance}>{t('作品维护', 'Project maintenance', '作品のメンテナンス')}</Button>}
               <Button tone="quiet" onClick={() => void run(reveal)}>
                 <FolderOpen size={15} />
                 {t("所在目录", "Project folder", "作品フォルダー")}
@@ -331,7 +350,13 @@ export function Projects({
       </div>
       {creating && (
         <section hidden={!creatingActive} className="project-create-document" aria-label={t('新建作品','New project','新規作品')}>
-          <header><h2>{t('新建作品','New project','新規作品')}{createDirty?' · 未应用':''}</h2><Button disabled={creatingProject} onClick={closeCreate}>{t('关闭文档','Close document','文書を閉じる')}</Button></header>
+          <header>
+            <div>
+              <h1>{t('新建作品','New project','新規作品')}</h1>
+              {createDirty && <p>{t('草稿已修改','Draft modified','下書きを変更済み')}</p>}
+            </div>
+            <Button disabled={creatingProject} onClick={closeCreate}>{t('关闭文档','Close document','文書を閉じる')}</Button>
+          </header>
           <form
             className="project-create"
             aria-busy={creatingProject}
@@ -345,7 +370,7 @@ export function Projects({
               });
             }}
           >
-            <Field label={t("作品名称", "Project name", "作品名")}>
+            <Field name="project-name" label={t("作品名称", "Project name", "作品名")} required>
               <Input
                 autoFocus
                 required
@@ -384,7 +409,7 @@ export function Projects({
               </div>
             </fieldset>
             <div className="project-create-settings">
-              <Field label={t("画布宽度", "Canvas width", "キャンバス幅")}>
+              <Field label={t("画布宽度（px）", "Canvas width (px)", "キャンバス幅（px）")}>
                 <Input
                   type="number"
                   disabled={creatingProject}
@@ -394,7 +419,7 @@ export function Projects({
                   onChange={(e) => change({ width: Number(e.target.value) })}
                 />
               </Field>
-              <Field label={t("画布高度", "Canvas height", "キャンバス高さ")}>
+              <Field label={t("画布高度（px）", "Canvas height (px)", "キャンバス高さ（px）")}>
                 <Input
                   type="number"
                   disabled={creatingProject}
@@ -416,13 +441,16 @@ export function Projects({
                 />
               </Field>
             </div>
-            {!engineVersions.length && <p role="alert">{engineError || t(
+            {!engineVersions.length && <div className="project-create-engine-status">
+              <p role={preparingCreate ? 'status' : 'alert'}>{preparingCreate ? t('正在读取本机引擎…', 'Reading local engines…', 'ローカルエンジンを読み込み中…') : engineError || t(
               '没有可用的本机引擎，请完成引擎安装后重新读取。',
               'No local engine is available. Install an engine, then reload.',
-              '使用できるエンジンがありません。インストール後に再読み込みしてください。')} <Button disabled={busy || preparingCreate} onClick={() => void run(loadVersions)}>{t('重新读取引擎','Reload engines','エンジンを再読み込み')}</Button></p>}
+              '使用できるエンジンがありません。インストール後に再読み込みしてください。')}</p>
+              <Button type="button" disabled={busy || preparingCreate} onClick={() => void run(loadVersions)}>{t('重新读取引擎','Reload engines','エンジンを再読み込み')}</Button>
+            </div>}
             <footer>
-              <p role={creatingProject ? 'status' : undefined}>
-                {creatingProject ? t('正在创建作品，请稍候…','Creating your project…','作品を作成しています…') : t(
+              <p role={creatingProject ? 'status' : actionError ? 'alert' : undefined} data-error={!!actionError}>
+                {creatingProject ? t('正在创建作品，请稍候…','Creating your project…','作品を作成しています…') : actionError || t(
                   "下一步选择作品存放目录。",
                   "Choose the project folder in the next step.",
                   "次に作品の保存先を選択します。",

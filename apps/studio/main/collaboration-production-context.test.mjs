@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { StudioProduction } from './production-providers.mjs';
+import { StudioProduction } from './production-providers.mts';
 import { StudioCollaboration } from './collaboration-providers.mjs';
 import { compileCollaborationProject } from './collaboration-compile.mjs';
 

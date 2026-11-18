@@ -12,6 +12,28 @@ const view = (documentId: string, format: DocumentView['format'], files: Record<
   ({ documentId, revision: 1, savedRevision: 1, format, files, savedFiles: files, dirty: false });
 
 describe('M01 semantic bridge', () => {
+  it.each([{ assetIds: [] }, { assetIds: [FixtureAsset.id] }])('passes the exact optional batch identities through page and all-ID queries (%j)', async ({ assetIds }) => {
+    const query = vi.fn(async (_input: import('@galcraft/contracts').AssetQuery) => ({ ok: true as const, value: { items: [], total: 0, offset: 0, indexRevision: 1 }, warnings: [] }));
+    const allIds = vi.fn(async (_input: import('@galcraft/contracts').AssetQuery) => ({ ok: true as const, value: { ids: [], indexRevision: 1 }, warnings: [] }));
+    const services = createAuthoringServices({ assets: { query, allIds } } as unknown as StudioBridge);
+    await services.queryAssets({ kind: null, text: '', offset: 40, limit: 40, assetIds });
+    await services.allAssetIds!({ kind: null, text: '', assetIds });
+    expect(query.mock.calls[0]?.[0]).toMatchObject({ assetIds, offset: 40 });
+    expect(allIds.mock.calls[0]?.[0]).toMatchObject({ assetIds, offset: 0 });
+  });
+  it('reads legacy authoring metadata while the original files await recovery', async () => {
+    const project = envelope(FixtureIds.projectA, { ...FixtureProject, templateDocumentId: 'TplOld' });
+    const character = envelope('Char01', { ...FixtureCharacters[0], canvas: { width: 100, height: 100 } });
+    const documents = [view(FixtureIds.projectA, 'json', { 'project.json': project }),
+      view('Char01', 'json', { 'characters/Char01.json': character })];
+    const services = createAuthoringServices({} as StudioBridge);
+
+    const result = await services.read(documents);
+    expect(result).toMatchObject({ ok: true, value: { project: { projectId: FixtureProject.projectId }, characters: [{ id: FixtureCharacters[0]!.id }] } });
+    expect(documents[0]!.files['project.json']).toBe(project);
+    expect(documents[1]!.files['characters/Char01.json']).toBe(character);
+  });
+
   it('keeps a legacy root configuration in runtime activation and snapshot, preferring documents/config when both exist', async () => {
     const id = 'org.example.legacy-config', rootConfig = { title: 'Root configuration' }, nestedConfig = { title: 'Documents configuration' };
     const runtime = `export let config; export function createPlugin(){return {activate:async context=>{config=context.config;return {commands:[],conditions:[],documents:[],tools:[],resources:[],stages:[],pages:[],components:[],systems:[],platform:[]}},deactivate:async()=>{}}}`;

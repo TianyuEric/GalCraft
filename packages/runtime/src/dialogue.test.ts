@@ -17,4 +17,7 @@ test('literal strings and styled text preserve bases, Unicode clusters and ruby 
   const restored = RuntimeStateSchema.parse(JSON.parse(JSON.stringify(state))), runs = dialogueRuns(restored.presentation.text.parts);
   expect(sliceDialogueRuns(runs, 0, 1)[0]).toMatchObject({ text: '星', ruby: 'ほしぞら', bold: true });
   expect(runs.map(run => run.text).join('')).toBe(restored.presentation.text.text);
+  expect(sliceDialogueRuns([{ text: 'e', bold: true }, { text: '\u0301乙' }], 0, 1)).toEqual([
+    { text: 'e', bold: true }, { text: '\u0301' },
+  ]);
 });

@@ -78,7 +78,7 @@ try {
   }, fixture);
   await app.evaluate(() => { globalThis.creationSaveDirectory = globalThis.creationSaveFixture.secondProject; });
   await page.getByRole('menuitem', { name: '文件', exact: true }).click();
-  await page.getByRole('menuitem', { name: '作品工作台', exact: true }).click();
+  await page.getByRole('menuitem', { name: '项目中心', exact: true }).click();
   await page.getByRole('button', { name: '打开作品文件夹', exact: true }).first().click();
   await page.getByRole('button', { name: '审阅保存并切换', exact: true }).click();
   review = page.locator('[role="dialog"].save-object-review');
@@ -124,8 +124,10 @@ try {
   await page.goto('about:blank');
   const origin = await app.evaluate(() => globalThis.restartSaveService());
   await page.goto(`${origin}/?entry=desktop`); await page.locator('.gc-workbench').waitFor();
-  await page.getByRole('button', { name: '打开作品文件夹', exact: true }).first().click();
   const recovery = page.locator('[role="dialog"][aria-modal="true"]').filter({ hasText: '恢复未保存内容' });
+  const openProject = page.getByRole('button', { name: '打开作品文件夹', exact: true }).first();
+  const resumed = await page.evaluate(async () => (await window.studioBridge.service.status()).project);
+  if (!resumed) await openProject.click();
   await recovery.getByRole('button', { name: '应用恢复选择', exact: true }).click();
   await recovery.waitFor({ state: 'hidden' });
   assert.equal((await docs()).filter(document => document.dirty).length, 1);

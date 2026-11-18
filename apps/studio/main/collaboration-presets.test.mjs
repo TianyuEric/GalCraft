@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createId } from '@galcraft/contracts';
 import { commandInputSchema, CoreCommandSpecsEnglish, parse } from '@galcraft/dsl';
+import { createDefinition as createAffectionDefinition } from '@galcraft/official-affection';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { components, readTemplateDocuments } from '@galcraft/templates';
 import { RecipeLibrary } from '@galcraft/authoring/recipes';
 import { ProjectAccess } from './project-access.mjs';
@@ -12,14 +14,14 @@ import { StudioCollaboration } from './collaboration-providers.mjs';
 
 const unwrap=result=>{if(!result.ok)throw new Error(JSON.stringify(result));return result.value;};
 const cleanups=[];afterEach(async()=>{for(const cleanup of cleanups.splice(0).reverse())await cleanup();});
-async function setup(){
+async function setup({commands=[],conditions=[]}={}){
   const parent=resolve(import.meta.dirname,'../../../tmp/testing');await mkdir(parent,{recursive:true});const root=await mkdtemp(join(parent,'creator-presets-'));
   const projects=new ProjectDocuments(new ProjectAccess(),undefined,{resolveEngine:async()=>({ok:true,value:{version:'0.1.0',manifest:{targets:['web','windows']}},warnings:[]})});
   unwrap(await projects.create({path:root,name:'presets',template:'empty',width:1280,height:720,engineVersion:'0.1.0'}));
   const project=projects.currentSession,assets=new StudioAssets(projects,resolve(import.meta.dirname,'../../../tools/media/runtime/bin')),recipes=await RecipeLibrary.open(join(root,'profile'),project);
   const production={current:async()=>({recipes,service:{drain:async()=>{}}}),generationProviders:{operations:async()=>[]},connections:{list:async()=>[]}};
-  const service=new StudioCollaboration({userData:join(root,'profile'),projects,assets,production,plugins:{externalTools:async()=>[]}});await service.ready;
-  const session=await service.core.create({goal:'Exercise core authoring presets',harness:'codex',projectId:project.projectId,writeSessionId:projects.currentSessionId,projectRoot:projects.currentRoot,projectName:'Presets',scope:{documents:[...project.documents.keys()],createKinds:['asset','document'],tools:service.core.catalog().map(tool=>tool.key),operations:['script'],connectionIds:[],models:[],workflowIds:[],maxGenerations:0}});
+  const service=new StudioCollaboration({userData:join(root,'profile'),projects,assets,production,plugins:{externalTools:async()=>[],acquireDefinitions:async()=>({ok:true,value:{commands,conditions,documents:[],components:[],pages:[],release:async()=>{}},warnings:[]})}});await service.ready;
+  const session=await service.core.create({goal:'Exercise core authoring presets',harness:'codex',projectId:project.projectId,writeSessionId:projects.currentSessionId,projectRoot:projects.currentRoot,projectName:'Presets',scope:{documents:[...project.documents.keys()],createKinds:['asset','document','character'],tools:service.core.catalog().map(tool=>tool.key),operations:['script'],connectionIds:[],models:[],workflowIds:[],maxGenerations:0}});
   cleanups.push(async()=>{await service.close();await project.dispose('discard');await rm(root,{recursive:true,force:true});});
   let sequence=0;const invoke=(tool,input)=>service.core.invoke(tool,input,session.id,`presets-${++sequence}`);
   const call=async(tool,input)=>{const result=await invoke(tool,input);expect(result.state,JSON.stringify(result)).toBe('completed');return result.result;};
@@ -33,6 +35,51 @@ async function setup(){
 }
 
 describe('core preset discovery and prepared M02 edits',{timeout:30000},()=>{
+  it('materializes core and enabled plugin creation defaults through the MCP transport in one edit', async () => {
+    const s = await setup(createAffectionDefinition());
+    const client = new Client({ name: 'command-creation-test', version: '0.1.0' }, { versionNegotiation: { mode: 'auto' } });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL((await s.service.mcp.start()).endpoint)));
+      const call = async (name, input, callId) => {
+        const result = await client.callTool({ name, arguments: { projectId: s.project.projectId, sessionId: s.session.id, view: 'full', input, callId } });
+        expect(result.isError, JSON.stringify(result)).not.toBe(true);
+        return result.structuredContent;
+      };
+      const created = await s.call('galcraft_edit_prepare', { operation: { op: 'character.create', name: 'Mio' }, expected: s.versions() });
+      await s.apply(created);
+      await s.service.core.update({ id: s.session.id, expectedRevision: s.session.scopeRevision, scope: { ...s.session.scope, mode: 'currentProject' } });
+      const characterPath = [...s.project.documents.values()].flatMap(document => Object.keys(document.files)).find(path => path.startsWith('characters/'));
+      const characterId = characterPath?.split('/').at(-1)?.replace('.json', '');
+      expect(characterId).toBeTruthy();
+      const sceneId = JSON.parse(Object.entries(s.scene.files).find(([path]) => path.endsWith('/scene.json'))[1]).data.id;
+      const before = s.text();
+      const operationCount = s.project.operations.length;
+      const catalog = await call('galcraft_catalog', { category: 'commands', key: 'changeBg' }, 'background-contract');
+      expect(catalog.result.entries[0].definition.creation).toMatchObject({ operation: 'commands.insert', initialArgs: { fit: 'cover', positionX: 0.5, transition: { enter: { durationMs: 400 } } } });
+      const prepare = (commands, id) => call('galcraft_edit_prepare', { operation: { op: 'commands.insert', sceneId, commands }, expected: s.versions() }, id);
+      const invalid = await prepare([{ command: 'wait', args: {} }, { command: 'org.galcraft.affection/add', args: {} }], 'missing-character');
+      expect(invalid, JSON.stringify(invalid)).toMatchObject({ state: 'failed', error: { code: 'FIELD_REQUIRED' } });
+      expect(s.text()).toBe(before);
+      const when = { kind: 'call', name: 'org.galcraft.affection/compare', args: [characterId, 'ge', 0].map(value => ({ kind: 'literal', value })) };
+      const badCondition = await prepare([{ command: 'wait', args: { when: { ...when, name: 'org.galcraft.affection/missing' } } }], 'missing-condition');
+      expect(badCondition).toMatchObject({ state: 'failed', error: { code: 'EXPR_TYPE' } });
+      expect(s.text()).toBe(before);
+      const valid = await prepare([{ command: 'wait', args: { when: false } }, { command: 'wait', args: { when } }, { command: 'org.galcraft.affection/add', args: { characterId } }], 'insert-defaults');
+      expect(valid.state, JSON.stringify(valid)).toBe('completed');
+      expect(s.text()).toBe(before);
+      const { plan } = valid.result;
+      const edited = await call('galcraft_edit_apply', { planId: plan.planId, expected: plan.input.expected }, 'apply-defaults');
+      expect(edited.state, JSON.stringify(edited)).toBe('completed');
+      expect(s.project.operations).toHaveLength(operationCount + 1);
+      const inserted = parse({ documentId: s.scene.documentId, revision: 2, text: s.text() }).statements.slice(-3);
+      expect(inserted.map(command => command.args)).toEqual([{ durationMs: 1000, when: false }, { durationMs: 1000, when }, { characterId, amount: 0 }]);
+      const undo = unwrap(s.project.planUndo(s.scene.documentId));
+      unwrap(s.project.undo(undo.planId));
+      expect(s.text()).toBe(before);
+    } finally {
+      await client.close();
+    }
+  });
   it('discovers same-source presets and executable complex schemas, with scoped recipe revisions',async()=>{
     const s=await setup();
     for(const [category,count]of [['animationPresets',16],['weatherPresets',3],['uiAnimationPresets',12],['readingLayouts',2],['actionIcons',15]]){
@@ -76,7 +123,8 @@ describe('core preset discovery and prepared M02 edits',{timeout:30000},()=>{
     const nodes=()=>parse({documentId:s.scene.documentId,revision:1,text:s.text()}).cst;expect(nodes().find(node=>node.id===show).object.value).toMatchObject({op:'replace',transition:{enter:{preset:'custom'}}});expect(nodes().find(node=>node.id===exit).object.value).toMatchObject({op:'exit',transition:{exit:{preset:'custom'}}});
     await s.apply(await s.prepare('stage.applyAnimationPreset',{documentId:s.scene.documentId,statementId:null},{key:'jump',stageTarget:{kind:'stage'}}));expect(s.text().indexOf('setComplexAnimation ')).toBeLessThan(s.text().indexOf('end '));
     const texture=unwrap(await s.assets.weatherTexture('rain'));
-    const background=await s.prepare('scene.setBackground',{documentId:s.scene.documentId,statementId:null},{assetId:texture.id,variantId:texture.activeVariantId});await s.apply(background);expect(nodes().find(node=>node.command==='changeBg').object.value.assetId).toBe(texture.id);
+    const background=await s.prepare('scene.setBackground',{documentId:s.scene.documentId,statementId:null},{assetId:texture.id,variantId:texture.activeVariantId});await s.apply(background);
+    expect(nodes().find(node=>node.command==='changeBg').object.value).toMatchObject({assetId:texture.id,objectId:expect.any(String),fit:'cover',positionX:.5,positionY:.5,transition:{enter:{durationMs:400},exit:{durationMs:400}}});
     const galleryBackground=createId(),backgroundObject=createId();
     s.setScript(`changeBg {op:"show",objectId:"${backgroundObject}",assetId:"Previous1",galleryId:"Gallery1",differenceId:"Diff01",transition:{enter:{preset:"fade",durationMs:300}}} @${galleryBackground};\nend {} @${end};\n`);
     await s.apply(await s.prepare('scene.setBackground',{documentId:s.scene.documentId,statementId:galleryBackground},{assetId:texture.id,variantId:texture.activeVariantId}));

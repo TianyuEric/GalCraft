@@ -1,19 +1,28 @@
 import type { Id, PlayerHost, Snapshot } from '@galcraft/contracts';
+import { CompiledDialogueEventSchema, sceneDecorAssetBindings, stageCommandAssetBindings } from '@galcraft/contracts';
+
+export type PlaybackAsset = { assetId: Id; variantId?: Id };
 
 /** Read a small authored prefix, without evaluating conditions or advancing the session. */
-export function upcomingPlaybackAssets(snapshot: Snapshot, statementId: Id, voiceLocale: string,
-  includeCurrent = false, dialogueLimit = 3, voiceEnabled = true): Id[] {
+export function upcomingPlaybackReferences(snapshot: Snapshot, statementId: Id, voiceLocale: string,
+  includeCurrent = false, dialogueLimit = 3, voiceEnabled = true): PlaybackAsset[] {
   let scene = snapshot.scenes.find(item => item.instructions.some(instruction => instruction.statementId === statementId));
   if (!scene) return [];
   let index = scene.instructions.findIndex(item => item.statementId === statementId) + (includeCurrent ? 0 : 1);
-  const assets = new Set<Id>(); let dialogues = 0;
-  const add = (id: unknown) => { if (typeof id === 'string' && snapshot.assets.some(asset => asset.assetId === id &&
-    ['image', 'audio', 'video'].includes(asset.kind))) assets.add(id); };
+  const assets = new Map<string, PlaybackAsset>(); let dialogues = 0;
+  const add = (id: unknown, variantId?: Id) => {
+    const asset = snapshot.assets.find(asset => asset.assetId === id && (!variantId || asset.variantId === variantId) &&
+      ['image', 'audio', 'video'].includes(asset.kind));
+    if (asset) assets.set(`${asset.assetId}/${asset.variantId}`, { assetId: asset.assetId, variantId: asset.variantId });
+  };
+  for (const layer of sceneDecorAssetBindings(scene.scene)) add(layer.assetId, layer.variantId ?? undefined);
   for (let visited = 0; visited < 32 && assets.size < 12; visited++) {
     const instruction = scene.instructions[index++]; if (!instruction || instruction.condition) break;
     const args = instruction.args as Record<string, unknown>;
     if (['choose', 'getUserInput', 'if', 'call', 'return', 'end'].includes(instruction.opcode)) break;
     add(args.assetId);
+    for (const binding of stageCommandAssetBindings(instruction.opcode, args))
+      add(binding.assetId, binding.variantId ?? undefined);
     if (instruction.opcode === 'characterDifference') {
       const character = snapshot.characters.find(item => item.id === args.characterId);
       const difference = character?.differences?.find(item => item.id === args.differenceId);
@@ -24,19 +33,28 @@ export function upcomingPlaybackAssets(snapshot: Snapshot, statementId: Id, voic
       if (voiceEnabled) add([voices?.[voiceLocale], voices?.[snapshot.project.languages.voiceDefault], args.voice]
         .find(value => typeof value === 'string' && value));
       add(args.avatar);
+      if (Array.isArray(args.events)) for (const raw of args.events) {
+        const event = CompiledDialogueEventSchema.safeParse(raw);
+        if (event.success && event.data.kind !== 'wait') add(event.data.assetId, event.data.variantId);
+      }
       if (++dialogues >= dialogueLimit) break;
     }
     if (instruction.opcode === 'video') break;
-    if (instruction.opcode === 'jump') {
-      const target = args.target as { sceneId?: Id; labelId?: Id | null } | undefined;
+    if (instruction.opcode === 'jump' || instruction.opcode === 'changeScene') {
+      const target = (instruction.opcode === 'changeScene' ? args : args.target) as { sceneId?: Id; labelId?: Id | null } | undefined;
       const next = snapshot.scenes.find(item => item.scene.id === target?.sceneId);
       if (!next) break;
       scene = next;
+      for (const layer of sceneDecorAssetBindings(scene.scene)) add(layer.assetId, layer.variantId ?? undefined);
       index = target?.labelId ? scene.instructions.findIndex(item => item.statementId === scene!.labels[target.labelId!]) : 0;
       if (index < 0) break;
     }
   }
-  return [...assets].slice(0, 12);
+  return [...assets.values()].slice(0, 12);
+}
+
+export function upcomingPlaybackAssets(...args: Parameters<typeof upcomingPlaybackReferences>): Id[] {
+  return [...new Set(upcomingPlaybackReferences(...args).map(asset => asset.assetId))];
 }
 
 /** Keep only the nearest idle clip plus active playback, within a bounded byte budget. */

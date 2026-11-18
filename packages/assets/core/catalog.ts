@@ -64,6 +64,7 @@ export class AssetCatalog {
       return fail('QUERY_STALE', `素材索引已变为 ${this.index.revision}，请刷新`, ['retry']);
     const direction = query.direction === 'desc' ? -1 : 1;
     const search = query.search.trim().toLocaleLowerCase();
+    const assetIds = query.assetIds === undefined ? null : new Set(query.assetIds);
     const typeFields = Object.entries(query.typeFields ?? {});
     if (typeFields.length) {
       const descriptors = this.types.list().filter(item => item.descriptor.key === query.kind).map(item => item.descriptor);
@@ -75,6 +76,7 @@ export class AssetCatalog {
       const references = byAsset.get(ref.assetId) ?? []; references.push(ref); byAsset.set(ref.assetId, references);
     }
     const assets = this.index.data.assets.filter(asset => {
+      if (assetIds && !assetIds.has(asset.id)) return false;
       const references = byAsset.get(asset.id) ?? [];
       if (query.kind && asset.kind !== query.kind) return false;
       if (query.allowedKinds && !query.allowedKinds.includes(asset.kind)) return false;

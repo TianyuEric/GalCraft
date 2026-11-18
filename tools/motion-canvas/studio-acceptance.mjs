@@ -8,10 +8,10 @@ import {FixtureProject,FixtureScenes,FixtureLock} from '@galcraft/contracts/fixt
 import {createAssetIndex,decodeSVG} from '../../packages/assets/dist/core/index.js';
 import {createOfficialTemplate,createTemplateDocuments} from '@galcraft/templates';
 import {StudioAssets} from '../../apps/studio/main/asset-providers.mjs';
-import {StudioProduction} from '../../apps/studio/main/production-providers.mjs';
+import {StudioProduction} from '../../apps/studio/main/production-providers.mts';
 import {StudioPluginPackages} from '../../apps/studio/main/plugin-packages.mjs';
 import {pluginServiceContext,pluginServicePorts} from '../../apps/studio/main/plugin-service-ports.mjs';
-import {productionRuntimeDependencies} from '../../apps/studio/main/production-runtimes.mjs';
+import {productionRuntimeDependencies} from '../../apps/studio/main/production-runtimes.mts';
 import {PluginDocuments} from '../../apps/studio/main/plugin-documents.mjs';
 import {ProjectDocuments} from '../../apps/studio/main/document-providers.mjs';
 import {ConnectionVault} from '../../apps/studio/main/preferences.mjs';

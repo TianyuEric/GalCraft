@@ -7,7 +7,7 @@ import { ContextPartSchema, ProductionTargetSchema } from './types.js';
 import type { RecipeUsage } from '../recipes/schema.js';
 import type { CreationRecipe } from '../recipes/schema.js';
 import type { Candidate, ImageGenerationRoutes, Task } from './types.js';
-import { defaultOperation, operationPurpose } from './draft.js';
+import { defaultOperation, imageUsageFor, operationPurpose } from './draft.js';
 
 export const WorkflowBindingSchema = z.strictObject({ id: IdSchema, revision: RevisionSchema, name: z.string(), purpose: PurposeSchema, operation: z.string().min(1).optional(),
   imageUsages: z.array(z.enum(['background', 'figure', 'cg', 'ui'])).nullable(), graphVersion: z.string(), editorWorkflowPath: z.string().nullable(),
@@ -22,10 +22,11 @@ const backgroundRemoval = z.strictObject({ enabled: z.boolean(), provider: z.enu
 const backgroundPreview = z.strictObject({ canvas: z.strictObject({ width: z.number(), height: z.number() }), frame: z.strictObject({ fit: z.enum(['cover', 'contain', 'native']), positionX: z.number(), positionY: z.number() }) }).nullable();
 export const ProductionFormVariantSchema = z.strictObject({ operation: ProductionOperationIdSchema.optional(), operationSnapshot: ProductionOperationSnapshotSchema.optional(),
   productionRecipeId: IdSchema.nullable().optional(), parameterPresetId: IdSchema.nullable().optional(), parameterOverrides: z.record(z.string(), JsonSchema).optional(), explicitFields: z.array(z.string()).optional(),
-  target: ProductionTargetSchema, fields: z.record(z.string(), JsonSchema), context: z.array(ContextPartSchema), connectionId: IdSchema.nullable(), workflowBindingId: IdSchema.nullable(), model: z.string().nullable(),
+  target: ProductionTargetSchema, fields: z.record(z.string(), JsonSchema), context: z.array(ContextPartSchema), contextCaptured: z.boolean().optional(), connectionId: IdSchema.nullable(), workflowBindingId: IdSchema.nullable(), model: z.string().nullable(),
   recipe: selection.nullable(), promptPreparation: selection.nullable(), backgroundRemoval, backgroundPreview, sourceVersions: z.array(VersionRefSchema) });
 export const ProductionFormDraftSchema = z.strictObject({ schemaVersion: z.literal(1), id: IdSchema, projectId: IdSchema, revision: RevisionSchema, activeUse: RecipeUsageSchema,
-  name: z.string().optional(), origin: z.strictObject({ page: z.string(), sceneId: IdSchema.nullable(), statementId: IdSchema.nullable(), statementIds: z.array(IdSchema).optional(), pageIds: z.array(IdSchema), componentIds: z.array(IdSchema) }).nullable().optional(),
+  name: z.string().optional(), origin: z.strictObject({ page: z.string(), sceneId: IdSchema.nullable(), statementId: IdSchema.nullable(), statementIds: z.array(IdSchema).optional(), pageIds: z.array(IdSchema), componentIds: z.array(IdSchema),
+    characterId: IdSchema.optional(), differenceId: IdSchema.optional(), asset: z.strictObject({ assetId: IdSchema, variantId: IdSchema }).optional() }).nullable().optional(),
   variants: z.partialRecord(RecipeUsageSchema, ProductionFormVariantSchema), updatedAt: UtcTimeSchema, submittedTaskId: IdSchema.nullable() });
 export const FrozenCreationRecipeSchema = z.strictObject({ ...CreationRecipeSchema.shape, production: ProductionSchemeSchema.extend({ workflow: WorkflowBindingSchema.optional() }).optional() }).superRefine((value, context) => {
   const checked = CreationRecipeSchema.safeParse(value); if (!checked.success) for (const issue of checked.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message });
@@ -73,7 +74,7 @@ export function effectiveProductionDefaults(input: { usage: RecipeUsage; operati
   imageRoutes: ImageGenerationRoutes; defaults: { connections?: Record<string, string>; recipes?: Record<string, string> };
   workflows: { id: string; revision: number }[]; recipes: CreationRecipe[] }): Json {
   const operation = input.operation ?? defaultOperation(input.usage), purpose = operationPurpose(operation as Parameters<typeof operationPurpose>[0]);
-  const route = purpose === 'image' ? input.imageRoutes[input.usage as keyof ImageGenerationRoutes] : undefined;
+  const route = purpose === 'image' ? input.imageRoutes[input.usage === 'difference' ? imageUsageFor(input.usage) : input.usage as keyof ImageGenerationRoutes] : undefined;
   const connectionId = route?.connectionId ?? input.defaults.connections?.[purpose] ?? null;
   const connection = input.connections.find(connection => connection.id === connectionId);
   const workflowId = route?.workflowBindingId ?? connection?.workflowBindingId ?? null;

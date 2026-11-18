@@ -11,5 +11,6 @@
     "types": ["vite/client", "node"],
     "paths": { "@/*": ["./renderer/*"] }
   },
-  "include": ["renderer"]
+  "include": ["renderer"],
+  "exclude": ["renderer/stories/review/**/baseline/**"]
 }

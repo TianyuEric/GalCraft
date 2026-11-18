@@ -66,7 +66,7 @@
   & .authoring-field :is(input,textarea,select):not([type="checkbox"]):not([type="range"]):not([type="color"]) { font:400 14px/22px var(--font-sans); border-color:var(--control-border); background:var(--input); }
   & :is(input,textarea)::placeholder { color:var(--foreground-tertiary); opacity:1; }
   & .authoring-card[data-view="writing"][data-command="say"] { display:grid; grid-template-columns:28px 104px minmax(0,1fr) 28px; gap:8px; padding:8px; }
-  & .authoring-card[data-view="writing"][data-command="say"] .authoring-writing-input { grid-column:3; grid-row:1; font:400 14px/22px var(--font-sans); min-height:52px; padding:4px 8px; }
+  & .authoring-card[data-view="writing"][data-command="say"] .authoring-writing-input { grid-column:3; grid-row:1; font:400 var(--studio-editor-font-size,14px)/1.5 var(--studio-editor-font-family,var(--font-sans)); min-height:52px; padding:4px 8px; }
   & .authoring-card[data-view="writing"][data-command="say"] .authoring-object-more { grid-column:4; grid-row:1; align-self:start; }
   & .authoring-card[data-view="writing"] .authoring-speaker-select { margin:4px 0 0; font-size:13px; }
   & .authoring-card[data-view="writing"].selected { background:var(--selection); box-shadow:inset 2px 0 var(--primary); }

@@ -3,14 +3,17 @@
   "version": "0.1.1",
   "private": true,
   "type": "module",
-  "main": "main/main.mjs",
+  "main": "dist-main/main/main.mjs",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "storybook": "storybook dev -p 6007 --host 127.0.0.1 --no-open",
     "build-storybook": "storybook build -o dist-storybook",
+    "storybook:review": "storybook dev --config-dir .storybook/review -p 6008 --host 127.0.0.1 --no-open",
+    "build-storybook:review": "storybook build --config-dir .storybook/review -o dist-storybook-review",
     "build": "vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm typecheck:host",
-    "desktop:prepare": "pnpm -r --filter @galcraft/studio... --filter @galcraft/player-web --filter @galcraft/player-windows --if-present run build && node ../../tools/prepare-desktop-engine.mjs",
+    "build:host": "vite build --config vite.main.config.ts && node ../../tools/build-studio-service.mjs",
+    "desktop:prepare": "pnpm -r --filter @galcraft/studio... --filter @galcraft/player-web --filter @galcraft/player-windows --if-present run build && pnpm build:host && node ../../tools/prepare-desktop-engine.mjs",
     "desktop:start": "electron .",
     "service": "node service/cli.mjs serve",
     "web:start": "node service/cli.mjs start",
@@ -59,6 +62,7 @@
     "react-dnd": "16.0.1",
     "react-dnd-html5-backend": "16.0.1",
     "react-dom": "19.3.0",
+    "sharp": "0.35.4",
     "tailwind-merge": "^3.7.0",
     "zod": "4.6.5"
   },
@@ -72,17 +76,23 @@
     "@storybook/addon-mcp": "10.6.0",
     "@storybook/react-vite": "10.6.0",
     "@tailwindcss/vite": "4.3.3",
+    "@testing-library/react": "16.3.2",
     "@types/node": "24.13.6",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.0.1",
     "electron": "43.7.0",
+    "jsdom": "29.1.1",
     "storybook": "10.6.0",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "8.3.0"
   },
   "license": "MPL-2.0",
-  "repository": {"type": "git", "url": "https://github.com/TianyuEric/GalCraft.git", "directory": "apps/studio"},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TianyuEric/GalCraft.git",
+    "directory": "apps/studio"
+  },
   "homepage": "https://github.com/TianyuEric/GalCraft#readme"
 }

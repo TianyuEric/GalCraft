@@ -1,12 +1,13 @@
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
-import { AssetSchema, RelativePathSchema, RuntimeTemplateSchema, normalizeRuntimeTemplate } from '@galcraft/contracts';
+import { AssetSchema, IdSchema, RelativePathSchema, RuntimeTemplateSchema, normalizeRuntimeTemplate } from '@galcraft/contracts';
 import type { Asset, Id, RuntimeTemplate, Variable } from '@galcraft/contracts';
 import { z } from 'zod';
 import { components, instantiateTemplate, rewriteTemplateCss, rewriteTemplatePath } from './editing.js';
 import { missingRequiredEntrances } from './templates.js';
 import { validateImages } from './images.js';
 import { collectStyleModules, compileStyle } from './compiler.js';
-export const TemplateExternalReferenceSchema = z.strictObject({ key:z.string(), kind:z.enum(['variable','scene','character','flow','ending','label']), id:z.string(), paths:z.array(z.string()),
+import { validatePageBlueprint } from './blueprints.js';
+export const TemplateExternalReferenceSchema = z.strictObject({ key:z.string(), kind:z.enum(['variable','scene','character','flow','ending','label','gallery']), id:z.string(), paths:z.array(z.string()),
   valueType:z.enum(['number','boolean','string']).optional(), scope:z.enum(['progress','local','longTerm']).optional(), sceneId:z.string().nullable().optional() });
 export type TemplateExternalReference = z.infer<typeof TemplateExternalReferenceSchema>;
 type TemplateVariable=Variable&{sceneId?:string};
@@ -22,6 +23,8 @@ export function templateExternalReferences(template: RuntimeTemplate, variables:
     if(Array.isArray(value)){value.forEach((item,index)=>visit(item,`${path}/${index}`));return;}
     const record=value as Record<string,any>;
     if(record.source==='variable'&&typeof record.variableId==='string')add('variable',record.variableId,path,record.scope);
+    if (path.includes('/blueprint/nodes/') && record.kind === 'official' && record.action?.kind === 'openCg'
+      && !record.bindings?.entryId && typeof record.action.entryId === 'string') add('gallery', record.action.entryId, `${path}/action/entryId`);
     if(['scene','character','flow','ending','label'].includes(record.kind)&&typeof record.id==='string')add(record.kind,record.id,path);
     for(const [key,item]of Object.entries(record))visit(item,`${path}/${key}`);
   };visit(template,'');return [...refs.values()];
@@ -33,6 +36,10 @@ export function mapTemplateExternalReferences(template:RuntimeTemplate,reference
     if(ref.kind==='variable'&&target!==null){const variable=variables.find(item=>item.id===target);
       if(!variable||ref.valueType&&variable.type!==ref.valueType||ref.scope&&variable.scope!==ref.scope||ref.scope==='local'&&(!ref.sceneId||variable.sceneId!==mapping[`scene:${ref.sceneId}`]))throw new Error(`TEMPLATE_VARIABLE_MAPPING_INVALID: ${ref.key}`);}
     for(const path of ref.paths){const parts=path.split('/').filter(Boolean);let parent:any=next;for(const key of parts.slice(0,-1))parent=parent[key];const key=parts.at(-1)!;
+      if (ref.kind === 'gallery') {
+        if (!IdSchema.safeParse(target).success) throw new Error(`TEMPLATE_GALLERY_MAPPING_REQUIRED: ${ref.key}`);
+        parent[key] = target; continue;
+      }
       if(target===null){if(parent[key]?.source==='variable')parent[key]={source:'literal',value:null};else parent[key]=null;}
       else if(parent[key]?.source==='variable')parent[key].variableId=target;else parent[key].id=target;}
   }return RuntimeTemplateSchema.parse(next);
@@ -49,6 +56,8 @@ export function collectTemplateAssets(template: RuntimeTemplate): Id[] {
 export function collectTemplateVariants(template:RuntimeTemplate):Id[]{const ids=new Set<Id>();const scan=(value:unknown)=>{if(Array.isArray(value))value.forEach(scan);else if(value&&typeof value==='object'){const item=value as Record<string,unknown>;if(item.kind==='variant'&&typeof item.id==='string')ids.add(item.id);if(typeof item.variantId==='string')ids.add(item.variantId);Object.values(item).forEach(scan);}};scan(template);return [...ids];}
 export function templateIssues(template: RuntimeTemplate): string[] {
   return [...missingRequiredEntrances(template).map(part => `必要入口不可达：${part}`),
+    ...template.pages.flatMap(page => components(page.root).flatMap(component => (component.interactions ?? []).flatMap(binding =>
+      binding.blueprint ? validatePageBlueprint(binding.blueprint, page, template).map(issue => `${issue.code}: ${page.key}/${component.id}/${binding.id}/${issue.nodeId ?? issue.edgeId ?? ''}: ${issue.message}`) : []))),
     ...template.pages.flatMap(page => components(page.root).flatMap(validateImages)),
     ...template.pages.flatMap(page => components(page.root).flatMap(component=>Object.entries(component.animations).filter(([,id])=>!template.animations.some(animation=>animation.id===id)).map(([event])=>`动画引用不可用：${page.key}/${component.part}/${event}`))),
     ...template.styles.filter(style => style.enabled!==false&&(style.sourceRevision !== style.compiledSourceRevision || !style.compiledPath || style.issues.some(issue => issue.severity === 'error')))

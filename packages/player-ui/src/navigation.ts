@@ -28,6 +28,7 @@ export class PageNavigator {
   replace(page: PageKey, sessionId: Id | null = null) { this.frames = []; this.page = page;this.visitId=createId();
     this.audioSource = page === 'story' ? { kind: 'stage', sessionId } : { kind: 'home' }; this.notify(); }
   source(): NavigationFrame | null { return this.frames.at(-1) ?? null; }
+  hasVisit(visitId: Id) { return this.visitId === visitId || this.frames.some(frame => frame.originVisitId === visitId); }
   contains(page: PageKey) { return this.page === page || this.frames.some(frame => frame.originPage === page); }
 }
 

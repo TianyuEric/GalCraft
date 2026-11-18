@@ -87,7 +87,7 @@ export type CubismModelPort = { canvas: HTMLCanvasElement; parameterRanges: Reco
   partIds: string[]; motions: Motion[]; expressions: string[]; motionSync: boolean;
   setParameter(id: string, value: number): void; setPartOpacity(id: string, value: number): void;
   playMotion(group: string, index: number, loop: boolean, priority: 1 | 2 | 3, elapsedMs: number): void;
-  setExpression(name: string | null, elapsedMs: number): void;
+  setExpression(name: string | null, elapsedMs: number, settle?: boolean): number | void;
   capture?(): { parameterValues: Record<string, number>; partOpacity: Record<string, number>; automatic: Json };
   restoreAutomatic?(value: Json): void;
   update(deltaMs: number, options: CubismOptions, lipLevel: number, pcm?: VoicePCM | null): void; draw(): void; pause(paused: boolean): void; dispose(): void };
@@ -163,7 +163,10 @@ class CubismInstance implements StageInstance {
     if (patch.expression !== undefined) {
       const expression = patch.expression === null ? null : text(patch.expression);
       if (expression && !this.model.expressions.includes(expression)) return fail('MODEL_EXPRESSION_MISSING', expression);
-      options.expression = expression; this.state.expressionElapsedMs = 0; this.model.setExpression(expression, 0);
+      options.expression = expression;
+      const settle = patch.settleExpression === true;
+      this.state.expressionElapsedMs = this.model.setExpression(expression, 0, settle) ?? 0;
+      if (settle) this.model.draw();
     }
     if (patch.lip !== undefined) {
       const lip = record(patch.lip);

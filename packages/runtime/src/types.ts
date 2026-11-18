@@ -1,4 +1,4 @@
-import type { Domain, ExecutionToken, Expr, HistoryEntry, Id, Issue, Json, LongTerm, Position, PresentationDelta, PresentationState, RestoreKey, Result, Revision, RuntimeState, Scalar, Snapshot, Source, Variable, VoicePlaybackBinding, VoiceResolution } from '@galcraft/contracts';
+import type { CompiledRuleImageTransition, Domain, ExecutionToken, Expr, HistoryEntry, Id, Issue, Json, LongTerm, Position, PresentationDelta, PresentationState, RestoreKey, Result, Revision, RuntimeState, Scalar, Snapshot, Source, Variable, VoicePlaybackBinding, VoiceResolution } from '@galcraft/contracts';
 import type { Contributions } from '@galcraft/plugins/contracts';
 
 import type { DebugScenario } from '@galcraft/contracts';
@@ -51,18 +51,21 @@ export type PreparedProviderCommands = { state: PresentationState; commit(): Res
 export type PresentationCommitReceipt = { presentationEntered: boolean; mediaStarted: boolean };
 export type RuntimePorts = { longTerm: LongTermService; stage: StageService; contributions: Contributions;
   beforeDialogue?: (input: { sessionId: Id; token: ExecutionToken; state: RuntimeState; snapshot: Snapshot }) => Promise<Result<void>>;
-  prepareProviderCommands?: (input: { sessionId: Id; token: ExecutionToken; state: PresentationState; commands: NonNullable<PresentationDelta['providerCommands']> }) => Promise<Result<PreparedProviderCommands>>;
+  prepareProviderCommands?: (input: { sessionId: Id; token: ExecutionToken; state: PresentationState; commands: NonNullable<PresentationDelta['providerCommands']>;
+    voiceBinding?: VoicePlaybackBinding | null; sceneRule?: CompiledRuleImageTransition;
+    sceneMovie?: { assetId: Id; variantId: Id } }) => Promise<Result<PreparedProviderCommands>>;
   onCommitted?: (input: { sessionId: Id; sequence: number; token: ExecutionToken; state: RuntimeState; delta: PresentationDelta | null; presentationPrepared?: boolean }) => PresentationCommitReceipt | Promise<PresentationCommitReceipt> };
 export type RuntimeInspection = { sessionId: Id; snapshotId: Id; sequence: number; state: RuntimeState; history: HistoryEntry[];
   token: ExecutionToken | null; status: 'ready' | 'waiting' | 'paused' | 'error' | 'ended'; issue: Issue | null;
   pendingLongTerm: boolean; trace: { token: ExecutionToken; source: Source }[] };
 export type RuntimeActivity = Pick<RuntimeInspection, 'sessionId' | 'sequence' | 'token' | 'status' | 'pendingLongTerm'> & {
   waitKind: NonNullable<RuntimeState['wait']>['kind'] | null;
+  dialogueWait: { eventId: Id; remainingMs: number | null } | null;
 };
 export type ExpressionContext = { state: RuntimeState; longTerm: LongTerm; variables?: readonly Variable[];
   input?: string; functions?: Record<string, (args: Scalar[]) => Result<Scalar>> };
 export type EvaluatedCondition = { value: boolean; root: ConditionNode };
 export type VoiceSelection = { resolution: VoiceResolution; binding: VoicePlaybackBinding | null };
 export type RuntimeEvent = { kind: 'advance' | 'choose' | 'input' | 'cancel' | 'complete' | 'timer' | 'animation' | 'plugin';
-  token: ExecutionToken; optionId?: Id; text?: string; result?: Json };
+  token: ExecutionToken; expectedSequence?: number; advanceMode?: 'skip'; optionId?: Id; text?: string; result?: Json };
 export type RuntimeStep = Result<{ state: RuntimeState; token: ExecutionToken | null; issue: Issue | null }>;

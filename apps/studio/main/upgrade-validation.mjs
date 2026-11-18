@@ -9,6 +9,7 @@ import { ProjectDocuments } from './document-providers.mjs';
 import { StudioBackups } from './backup-providers.mjs';
 import { StudioBuilds } from './build-providers.mjs';
 import { CompilerTasks } from './compiler-tasks.mjs';
+import { staticUpgradeChecks } from './upgrade-review.mts';
 
 const value = result => { if (!result.ok) throw new Error(result.error.message); return result.value; };
 export function upgradeValidator({ userData, engineCatalog, operations, officialPackages, launcher }) {
@@ -41,12 +42,7 @@ export function upgradeValidator({ userData, engineCatalog, operations, official
       const scenarios = Object.entries(files).filter(([path]) => path.startsWith('authoring/debug/') && path.endsWith('.json')).map(([, raw]) => ({ ...JSON.parse(raw).data, externalPolicy: 'simulate' }));
       for (const target of targets) {
         signal.throwIfAborted();
-        const templateIssue = issue => /TEMPLATE|STYLE|UI_ASSET/.test(issue.code);
-        const relevant = kind => kind === 'dsl' ? compilerIssues : kind === 'plugin' ? dependencyIssues.filter(issue => !templateIssue(issue)) :
-          kind === 'template' ? [...dependencyIssues, ...structuralIssues].filter(templateIssue) : structuralIssues.filter(issue => !templateIssue(issue));
-        for (const kind of ['dsl', 'template', 'plugin', 'resource']) {
-          const issues = relevant(kind); checks.push({ kind, target, result: issues.some(issue => issue.severity === 'error') || kind === 'dsl' && !snapshot ? 'fail' : 'pass', issues });
-        }
+        checks.push(...staticUpgradeChecks(target, !!snapshot, compilerIssues, dependencyIssues, structuralIssues));
         if (!snapshot || checks.some(check => check.target === target && check.result === 'fail')) {
           checks.push(...['save', 'playtest'].map(kind => ({ kind, target, result: 'notRun', issues: [] }))); continue;
         }

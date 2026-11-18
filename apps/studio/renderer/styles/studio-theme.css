@@ -1,3 +1,13 @@
+.gc-unsaved-dot {
+  display: inline-block;
+  inline-size: 6px;
+  block-size: 6px;
+  flex: none;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--warning-foreground);
+}
+
 :where(#app, .authoring-shell, #studio-portals) {
   --background: #fff;
   --workbench-activity: #f2f2f9;
@@ -47,7 +57,7 @@
   --warning-border: var(--warning-foreground);
   --success-border: var(--success-foreground);
   --info-border: var(--info-foreground);
-  --radius: .75rem;
+  --radius: 8px;
   --font-sans: 'Geist Variable', 'Segoe UI', 'Microsoft YaHei', sans-serif;
   --shadow: 0 8px 24px rgb(24 43 67 / 16%);
   color-scheme: light;

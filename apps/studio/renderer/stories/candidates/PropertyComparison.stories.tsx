@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { PropertyComparison } from './PropertyComparison.js';
 
-const meta = {title:'Product/Studio/Component Comparison/Batch 1',component:PropertyComparison,parameters:{layout:'fullscreen'}} satisfies Meta<typeof PropertyComparison>;
+const meta = {id:'product-studio-component-comparison-batch-1',title:'Review/History/Component Comparison/Batch 1',component:PropertyComparison,parameters:{layout:'fullscreen',docs:{description:{component:'历史组件方案对照；保留原实现与候选用于比较，不代表当前 Studio 的完整界面。'}}}} satisfies Meta<typeof PropertyComparison>;
 export default meta;
 type Story=StoryObj<typeof meta>;
 export const TryCandidates:Story={name:'第一批 · 开始体验'};

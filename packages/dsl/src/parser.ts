@@ -1,4 +1,4 @@
-import { IdSchema } from '@galcraft/contracts';
+import { DialogueContentSchema, DialogueEventSchema, IdSchema, dialogueAnchorOffsets } from '@galcraft/contracts';
 import type { Id, Issue, Json, Source } from '@galcraft/contracts';
 import { parseExpression } from './expression.js';
 
@@ -190,6 +190,34 @@ export function* parseSteps(input: ParseInput): Generator<void, ParseResult> {
       previous.valid = false; node.valid = false;
     } else ids.set(node.id, node);
   }
+  const eventIds = new Set<Id>();
+  for (const node of cst) {
+    if (!node.valid || node.command !== 'say') continue;
+    const events = node.fields.find(field => field.key === 'events')?.valueNode;
+    if (!events) continue;
+    if (!events.items) {
+      reader.issues.push({ ...issue('DIALOGUE_EVENTS', 'Dialogue events must be an array', input, events.start, events.end, node.id!),
+        source: { documentId: input.documentId, revision: input.revision, statementId: node.id!, field: 'events', range: { start: events.start, end: events.end } } });
+      continue;
+    }
+    const body = DialogueContentSchema.safeParse(node.fields.find(field => field.key === 'text')?.valueNode.value);
+    const offsets = body.success ? dialogueAnchorOffsets(body.data) : null;
+    for (const [index, item] of events.items.entries()) {
+      const report = (code: string, message: string, field?: string) => {
+        const source = dialogueEventSource(input, node, index, field);
+        reader.issues.push({ ...issue(code, message, input, item.start, item.end, node.id!), source });
+      };
+      const checked = DialogueEventSchema.safeParse(item.value);
+      if (!checked.success) {
+        for (const problem of checked.error.issues) report('DIALOGUE_EVENT', problem.message, problem.path.join('.') || undefined);
+        continue;
+      }
+      const { id, offset } = checked.data;
+      if (eventIds.has(id)) report('DIALOGUE_EVENT_DUPLICATE', 'Dialogue event ID is duplicated in this scene', 'id');
+      eventIds.add(id);
+      if (!offsets?.has(offset)) report('DIALOGUE_EVENT_ANCHOR', 'Choose a dialogue boundary outside a grapheme, interpolation or ruby base', 'offset');
+    }
+  }
   for (let index = 0; index < cst.length; index++) cst[index]!.trailingTrivia = input.text.slice(cst[index]!.end, cst[index + 1]?.start ?? input.text.length);
   return { ...input, tokens, cst, statements: cst.filter(node => node.object).map(node => ({ id: node.id, command: node.command, args: node.object!.value as Record<string, unknown>, source: { documentId: input.documentId, revision: input.revision, ...(node.id ? { statementId: node.id } : {}), range: { start: node.start, end: node.end } } })), issues: reader.issues };
 }
@@ -207,6 +235,16 @@ export function fieldAt(node: ValueNode, path: string[]): FieldNode | undefined 
   const field = node.fields?.find(item => item.key === head);
   if (!field) return undefined;
   return rest.length ? fieldAt(field.valueNode, rest) : field;
+}
+
+export function dialogueEventSource(input: Pick<ParseInput, 'documentId' | 'revision'>, node: StatementNode, index: number, field?: string): Source {
+  const events = node.fields.find(item => item.key === 'events')?.valueNode;
+  const event = events?.items?.[index];
+  const eventId = event?.fields?.find(item => item.key === 'id')?.valueNode.value;
+  const location = (field && event && fieldAt(event, field.split('.'))?.valueNode) || event || events || node;
+  return { documentId: input.documentId, revision: input.revision, ...(node.id ? { statementId: node.id } : {}),
+    ...(IdSchema.safeParse(eventId).success ? { eventId: eventId as Id } : {}),
+    field: `events.${index}${field ? `.${field}` : ''}`, range: { start: location.start, end: location.end } };
 }
 
 export function jsonValue(value: unknown): value is Json {

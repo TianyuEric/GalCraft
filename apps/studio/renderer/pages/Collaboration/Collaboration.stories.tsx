@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 import type { CollaborationBridge, CollaborationOverview, CollaborationSession, HarnessConfiguration } from '@galcraft/collaboration/contracts';
 import { Collaboration } from './Collaboration.js';
+import { StudioToaster } from '../../components/toast.js';
 import '../../components/controls.css';
 import '../../authoring/workspace.css';
 import '../../authoring/shell.css';
@@ -25,7 +26,7 @@ function fixture(scenario:string):CollaborationBridge {
   return {overview:input=>{const history=input?.history;const calls=history?data.calls.filter(call=>call.sessionId===history.sessionId&&(!history.state||call.state===history.state)&&(!history.search||`${call.tool} ${call.callId}`.includes(history.search))).slice().reverse():[];const offset=history?Math.min(history.offset,Math.max(0,Math.ceil(calls.length/history.limit)-1)*history.limit):0;return ok({...structuredClone(data),calls:input?[]:structuredClone(data.calls),...(history?{callPage:{total:calls.length,offset,limit:history.limit,items:calls.slice(offset,offset+history.limit).map(({sessionId,callId,tool,state,createdAt,updatedAt,error})=>({sessionId,callId,tool,state,createdAt,updatedAt,error,summary:'作品工作版本已更新',documentIds:[]}))}}:{})});},readCall:input=>ok(structuredClone(data.calls.find(call=>call.sessionId===input.sessionId&&call.callId===input.callId)!)),start:()=>{data.endpoint='http://127.0.0.1:9460/mcp';data.service={state:'running'};return ok({endpoint:data.endpoint});},stop:async()=>{if(scenario==='service-stop-failed'&&!stopFailed){stopFailed=true;throw new Error('无法保存服务设置。请检查个人目录写入权限后重试。');}data.endpoint=null;data.service={state:'stopped'};return ok(undefined);},
     create:input=>{const next={...session,...input,id:'Sess02',scopeRevision:1,bindingValid:true,...(!session.ended?{reboundFrom:session.id}:{ended:false,paused:false,generations:0,sentRequests:[]})};data.sessions.push(next);data.currentSessionId=next.id;return ok(next);},
     update:input=>{const target=data.sessions.find(value=>value.id===input.id)!;Object.assign(target,input,{scopeRevision:target.scopeRevision+1});return ok(target);},
-    end:input=>{const target=data.sessions.find(value=>value.id===input.id)!;Object.assign(target,{ended:true,paused:true,bindingValid:false,scopeRevision:target.scopeRevision+1});return ok(target);},
+    end:input=>{const target=data.sessions.find(value=>value.id===input.id)!;Object.assign(target,{ended:true,paused:true,bindingValid:false,scopeRevision:target.scopeRevision+1});if(data.currentSessionId===target.id)data.currentSessionId=null;return ok(target);},
     deleteEnded:input=>{data.sessions=data.sessions.filter(value=>value.id!==input.id);data.calls=data.calls.filter(value=>value.sessionId!==input.id);return ok({sessionIds:[input.id]});},
     toolDefinition:input=>ok(availableTools.find(tool=>tool.key===input.key)!),
     chooseWorkspaceDirectory:()=>ok(scenario==='configuration-workspace-cancelled'?null:'D:/Stories'),
@@ -43,16 +44,28 @@ function fixture(scenario:string):CollaborationBridge {
     },
     writeConfiguration:async input=>{await new Promise(resolve=>setTimeout(resolve,400));if(scenario==='configuration-write-failed'&&!writeFailed){writeFailed=true;throw new Error('配置文件已变化，请重新审阅合并内容');}if(input.mode==='export')return scenario==='configuration-export-cancelled'?ok({status:'cancelled' as const,path:null}):ok({status:'written' as const,path:'D:/导出目录/助手连接配置.yml'});written.add(input.path);return ok({status:'written' as const,path:input.path});},open:()=>ok(undefined)};
 }
-function Workspace({scenario='active',theme='light',locale='zh-CN',document}:{scenario?:string;theme?:'light'|'dark';locale?:string;document?:string}) {
+function Workspace({scenario='active',theme='light',locale='zh-CN',document,central}:{scenario?:string;theme?:'light'|'dark';locale?:string;document?:string;central?:boolean}) {
   const bridge=fixture(scenario);
   localStorage.removeItem('galcraft.collaboration.codexWorkspaces');
-  if(document==='service'){localStorage.setItem('galcraft.collaboration.selected','service');localStorage.setItem('galcraft.collaboration.tabs','["service"]');}
-  return <div id="app" className="authoring-shell collaboration-story" data-theme={theme} lang={locale}><div id="studio-portals" lang={locale} data-theme={theme}/><Collaboration bridge={bridge} locale={locale} initialDocument={document??(scenario==='empty'?'service':scenario.startsWith('configuration')?'configuration':'Sess01')}/></div>;
+  if(document==='service'||scenario==='empty'){localStorage.setItem('galcraft.collaboration.selected','service');localStorage.setItem('galcraft.collaboration.tabs','["service"]');}
+  return <div id="app" className={`authoring-shell collaboration-story${central?' collaboration-central-story':''}`} data-theme={theme} lang={locale}><div id="studio-portals" lang={locale} data-theme={theme}/><StudioToaster locale={locale}/><Collaboration bridge={bridge} locale={locale}
+    projectId={central?'Proj01':undefined} initialDocument={central?'activity':document??(scenario==='empty'?'service':scenario.startsWith('configuration')?'configuration':'Sess01')}/></div>;
 }
 const meta={title:'Product/Studio/Collaboration/Collaboration',component:Workspace,parameters:{layout:'fullscreen'},tags:['autodocs']} satisfies Meta<typeof Workspace>;
 export default meta;
 type Story=StoryObj<typeof meta>;
 export const Active:Story={play:async({canvas})=>{await expect(await canvas.findByRole('heading',{name:'补写雨夜车站重逢场景'})).toBeVisible();await userEvent.click(canvas.getByRole('button',{name:'暂停协作'}));await expect(await canvas.findByRole('button',{name:'恢复协作'})).toBeVisible();}};
+export const CurrentProjectActivity: Story = {
+  args: { central: true, theme: 'dark' },
+  play: async ({ canvas }) => {
+    await userEvent.click(await canvas.findByRole('button', { name: '打开当前协作' }));
+    await expect(await canvas.findByRole('heading', { name: '补写雨夜车站重逢场景' })).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: '暂停协作' }));
+    await expect(await canvas.findByRole('button', { name: '恢复协作' })).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: '连接助手' }));
+    await expect(await canvas.findByRole('button', { name: '生成配置预览' })).toBeVisible();
+  },
+};
 export const Dark:Story={args:{theme:'dark'}};
 export const Narrow:Story={globals:{viewport:{value:'tablet',isRotated:false}},args:{scenario:'long'}};
 export const Empty:Story={args:{scenario:'empty'},play:async({canvas})=>{await userEvent.click(await canvas.findByRole('button',{name:'开启服务'}));await expect(await canvas.findByText('服务运行中')).toBeVisible();}};
@@ -77,7 +90,7 @@ export const ToolsCatalog: Story = { args: {document:'tools'}, play: async ({can
 } };
 export const LongToolDescriptionsDark: Story = { ...LongToolDescriptions, args: {...LongToolDescriptions.args,theme:'dark'} };
 
-export const EndSession:Story={play:async({canvas})=>{await userEvent.click(await canvas.findByRole('button',{name:'结束协作'}));await expect(await canvas.findByText('协作已结束；作品、原任务及历史调用保留。可从此处开始新一轮协作。')).toBeVisible();await expect(canvas.getByRole('button',{name:'开始新一轮协作'})).toBeEnabled();}};
+export const EndSession:Story={play:async({canvas,canvasElement})=>{await userEvent.click(await canvas.findByRole('button',{name:'结束协作'}));const page=within(canvasElement.ownerDocument.body);await waitFor(()=>expect(page.getByText('协作已结束；作品、原任务及历史调用保留。可从此处开始新一轮协作。')).toBeVisible());await userEvent.click(page.getByLabelText('关闭通知'));await expect(canvas.getByRole('button',{name:'开始新一轮协作'})).toBeEnabled();await expect(canvas.getByText('本轮已结束。开始新一轮前可审阅目标和沿用范围，新一轮从零累计新增生成次数；原任务与结果继续保留。')).toBeVisible();}};
 export const EndedHistory:Story={args:{scenario:'ended'}};
 export const StartNextRound:Story={args:{scenario:'ended'},play:async({canvas})=>{await userEvent.click(await canvas.findByRole('button',{name:'开始新一轮协作'}));await expect(await canvas.findByRole('heading',{name:'确定本次创作目标与范围'})).toBeVisible();await expect(canvas.getByRole('textbox',{name:'创作目标'})).toHaveValue('补写雨夜车站重逢场景');}};
 export const EndedOtherProject:Story={args:{scenario:'ended-other-project'}};
@@ -111,7 +124,7 @@ export const ConfigurationReadbackJapanese:Story={args:{scenario:'configuration-
 
 export const ManyCalls:Story={args:{scenario:"many"},play:async({canvas})=>{const nav=await canvas.findByRole("navigation",{name:"调用历史分页"});await userEvent.click(within(nav).getByRole("button",{name:"末页"}));await expect(await canvas.findByText("751–763 / 763")).toBeVisible();}};
 
-const chooseCodex:NonNullable<Story['play']>=async({canvas})=>{await userEvent.click(await canvas.findByRole('combobox',{name:'Harness'}));await userEvent.keyboard('{End}{Enter}');await expect(await canvas.findByRole('button',{name:'选择工作区目录'})).toBeVisible();};
+const chooseCodex:NonNullable<Story['play']>=async({canvas})=>{await userEvent.click(await canvas.findByRole('combobox',{name:'助手客户端'}));await userEvent.keyboard('{End}{Enter}');await expect(await canvas.findByRole('button',{name:'选择工作区目录'})).toBeVisible();};
 export const ConfigurationWorkspace:Story={args:{scenario:'configuration-workspace'},play:async context=>{
   await chooseCodex(context);const {canvas}=context;
   await userEvent.click(canvas.getByRole('button',{name:'选择工作区目录'}));

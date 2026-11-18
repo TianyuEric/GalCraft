@@ -1,9 +1,9 @@
-import { assetFieldReferences, assetReferenceTarget, createId, readPluginDocumentInstances } from '@galcraft/contracts';
+import { assetFieldReferences, assetReferenceTarget, createId, normalizeCharacterAuthoringData, normalizeProjectAuthoringData, readPluginDocumentInstances } from '@galcraft/contracts';
 import { AssetSchema, CharacterSchema, FlowSchema, GalleryEntrySchema, IdSchema, LockSchema, PerformancePresetSchema, ProjectSchema, SceneSchema, VariableSchema } from '@galcraft/contracts';
-import type { AssetQuery as CatalogQuery, AssetReference, DocumentView, Issue, Ref, Result, Source, StudioBridge } from '@galcraft/contracts';
+import type { Asset, AssetQuery as CatalogQuery, AssetReference, DocumentView, Issue, Ref, Result, Source, StudioBridge } from '@galcraft/contracts';
 import type { CompileInput } from '@galcraft/dsl';
 import { readTemplateDocuments } from '@galcraft/templates';
-import { parse } from '@galcraft/dsl';
+import { conditionSignatures, parse } from '@galcraft/dsl';
 import { prepareProjectPlugins } from './plugins.js';
 import type { AssetQuery, AuthoringServices, AuthoringSource, SceneSource } from './controller.js';
 
@@ -13,7 +13,7 @@ function fail<T>(code: string, message: string): Result<T> {
 }
 function catalogQuery(input: AssetQuery): CatalogQuery {
   return { kind: input.kind as CatalogQuery['kind'], folder: input.folder ?? null, characterId: input.characterId ?? null, sceneId: input.sceneId ?? null, locale: input.locale ?? null,
-    search: input.text, tags: input.tags ?? [], usage: input.usage ?? null, allowedKinds: input.allowedKinds, typeFields: input.typeFields,
+    search: input.text, assetIds: input.assetIds, tags: input.tags ?? [], usage: input.usage ?? null, allowedKinds: input.allowedKinds, typeFields: input.typeFields,
     reference: input.reference ?? 'any', review: input.review ?? 'any', sort: input.sort ?? 'name', direction: input.direction ?? 'asc',
     offset: input.offset, limit: input.limit, indexRevision: input.indexRevision ?? null };
 }
@@ -60,16 +60,26 @@ function sourceFrom(documents: DocumentView[]): Result<AuthoringSource> {
   const projectRaw = projectDocument.files['project.json'];
   if (!projectRaw) return fail('PROJECT_INVALID', '作品配置不存在');
   let project: AuthoringSource['project'];
-  try { project = ProjectSchema.parse(JSON.parse(projectRaw).data); }
+  try {
+    const data: unknown = JSON.parse(projectRaw).data, current = ProjectSchema.safeParse(data);
+    // The host defers normalization writes while a recovery draft awaits a decision.
+    project = current.success ? current.data : ProjectSchema.parse(normalizeProjectAuthoringData(data));
+  }
   catch { return fail('PROJECT_INVALID', '作品配置不符合当前规格'); }
   const scenes: SceneSource[] = [];
   const characters: AuthoringSource['characters'] = [];
+  const characterDocuments: NonNullable<AuthoringSource['characterDocuments']> = {};
   const variables: NonNullable<AuthoringSource['variables']> = [];
   const references: NonNullable<AuthoringSource['references']> = [];
   for (const document of documents.filter(item => item.format === 'json')) {
     const characterFile = Object.entries(document.files).find(([path]) => path.startsWith('characters/') && path.endsWith('.json'));
     if (!characterFile) continue;
-    try { characters.push(CharacterSchema.parse(JSON.parse(characterFile[1]).data)); }
+    try {
+      const data: unknown = JSON.parse(characterFile[1]).data, current = CharacterSchema.safeParse(data);
+      const character = current.success ? current.data : CharacterSchema.parse(normalizeCharacterAuthoringData(data));
+      characters.push(character);
+      characterDocuments[character.id] = { documentId: document.documentId, dirty: document.dirty };
+    }
     catch { return fail('CHARACTER_INVALID', `角色 ${document.documentId} 的配置无效`); }
   }
   for (const document of documents.filter(item => item.format === 'dsl')) {
@@ -81,7 +91,7 @@ function sourceFrom(documents: DocumentView[]): Result<AuthoringSource> {
       variables.push(...scene.locals.map(variable => ({ ...variable, declaringSceneId: scene.id })));
       scenes.push({ sceneId: scene.id, documentId: document.documentId, revision: document.revision,
         savedRevision: document.savedRevision, dirty: document.dirty, chapterId: scene.chapterId,
-        name: scene.name, text: scriptFile[1] });
+        name: scene.name, text: scriptFile[1], lastValidSceneSource: document.lastValidSceneSource });
       for (const node of parse({ documentId: document.documentId, revision: document.revision, text: scriptFile[1] }).cst) {
         if (!node.valid || !node.id) continue;
         references.push({ kind: 'statement', id: node.id, name: `${scene.name} · ${node.command}` });
@@ -115,9 +125,21 @@ function sourceFrom(documents: DocumentView[]): Result<AuthoringSource> {
   } catch { /* M08 的模板错误由编译状态呈现。 */ }
   const order = new Map(project.chapters.flatMap(chapter => chapter.sceneIds).map((id, index) => [id, index]));
   scenes.sort((a, b) => (order.get(a.sceneId) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.sceneId) ?? Number.MAX_SAFE_INTEGER));
+  const assetIndex = documents.find(document => document.files['assets/index.json']);
+  const folders = new Map<string, string[]>();
+  try {
+    const indexed = assetIndex ? JSON.parse(assetIndex.files['assets/index.json']!).data.assets as Pick<Asset, 'folder'>[] : [];
+    for (const { folder } of indexed) {
+      if (!Array.isArray(folder)) continue;
+      for (let depth = 1; depth <= folder.length; depth++) {
+        const path = folder.slice(0, depth);
+        folders.set(path.join('/'), path);
+      }
+    }
+  } catch { /* The M04 catalog reports invalid asset index data. */ }
   return { ok: true, value: { projectDocumentId: projectDocument.documentId, projectRevision: projectDocument.revision,
-    documentVersions:documents.map(document=>({documentId:document.documentId,revision:document.revision})),projectSavedRevision: projectDocument.savedRevision, projectDirty: projectDocument.dirty, project, scenes, characters, variables, references,
-    anyDirty: documents.some(document => document.dirty), assetIndexDocumentId: documents.find(document => document.files['assets/index.json'])?.documentId, assetIndexRevision: documents.find(document => document.files['assets/index.json'])?.revision }, warnings: [] };
+    documentVersions:documents.map(document=>({documentId:document.documentId,revision:document.revision})),projectSavedRevision: projectDocument.savedRevision, projectDirty: projectDocument.dirty, project, scenes, characters, characterDocuments, variables, references,
+    anyDirty: documents.some(document => document.dirty), assetIndexDocumentId: assetIndex?.documentId, assetIndexRevision: assetIndex?.revision, assetFolders: [...folders.values()] }, warnings: [] };
 }
 
 export function compileInput(documents: DocumentView[]): Result<CompileInput> {
@@ -204,12 +226,13 @@ async function inputWithPlugins(bridge: StudioBridge, documents: DocumentView[])
     }
     if (referenceIssues.length) { await plugins.dispose(); return { ok: false, error: referenceIssues[0]!, issues: referenceIssues }; }
     input.pluginCommands = plugins.commandSpecs;
-    input.pluginConditions = Object.fromEntries(plugins.conditionSpecs.map(condition => [condition.key, {
-      args: condition.fields.map(field => field.type === 'number' || field.type === 'integer' ? 'number' as const :
-        field.type === 'boolean' ? 'boolean' as const : 'string' as const), returns: 'boolean' as const,
-    }]));
+    input.pluginConditions = conditionSignatures(plugins.conditionSpecs);
     return { ok: true as const, value: { input, dispose: plugins.dispose }, warnings: [] };
-  } catch (error) { await plugins?.dispose(); return fail<{ input: CompileInput; dispose(): Promise<void> }>('PLUGIN_LOAD', String(error)); }
+  } catch (error) {
+    await plugins?.dispose();
+    const issue = issueFromError(error);
+    return issue ? { ok: false as const, error: issue, issues: [issue] } : fail<{ input: CompileInput; dispose(): Promise<void> }>('PLUGIN_LOAD', String(error));
+  }
 }
 
 export function createAuthoringServices(bridge: StudioBridge): AuthoringServices & {
@@ -236,7 +259,7 @@ export function createAuthoringServices(bridge: StudioBridge): AuthoringServices
     recordAssetUse: input => bridge.assets.recordUse(input),
     removeRecentAsset: input => bridge.assets.removeRecent(input),
     allAssetIds: async input => bridge.assets.allIds(catalogQuery({ ...input, offset: 0, limit: 40 })),
-    importAssets: paths => bridge.assets.import(paths),
+    importAssets: (paths, options) => bridge.assets.import(paths, options),
     getAsset: id => bridge.assets.get(id),
     inspectModelAsset: id => bridge.assets.inspectModel(id),
     describeAssets: input => bridge.assets.describe(input),
@@ -244,7 +267,7 @@ export function createAuthoringServices(bridge: StudioBridge): AuthoringServices
     verifyAssetTarget: (target, operationId) => bridge.assets.verifyTarget(target, operationId),
     planBatchRename: input => bridge.assets.planBatchRename(input),
     applyBatchRename: id => bridge.assets.applyBatchRename(id),
-    removeAssets: ids => bridge.assets.remove(ids),
+    removeAssets: (ids, expected) => bridge.assets.remove(ids, expected),
     previewAsset: (id, variantId) => bridge.assets.preview(id, variantId),
     stopAssetPreview: () => bridge.assets.stopPreview(),
     thumbnails: requests => bridge.assets.thumbnails(requests),
@@ -254,12 +277,12 @@ export function createAuthoringServices(bridge: StudioBridge): AuthoringServices
     discardBackground: id => bridge.assets.discardBackground(id),
     readPreferences: () => bridge.authoringPreferences.readPreferences(),
     writePreferences: value => bridge.authoringPreferences.writePreferences(value),
-    compilePreview: async (saved = false, provided) => { const documents = provided ? { ok: true as const, value: provided } : await bridge.documents.list();
+    compilePreview: async (saved = false, provided, options) => { const documents = provided ? { ok: true as const, value: provided } : await bridge.documents.list();
       if (!documents.ok) return documents;
       const prepared = await inputWithPlugins(bridge, saved ? documents.value.filter(doc => Object.keys(doc.savedFiles).length).map(doc =>
         ({ ...doc, files: doc.savedFiles, revision: doc.savedRevision, dirty: false })) : documents.value);
       if (!prepared.ok) return prepared;
-      try { return await bridge.language.compile(prepared.value.input); }
+      try { return await (options ? bridge.language.compile(prepared.value.input, options) : bridge.language.compile(prepared.value.input)); }
       finally { await prepared.value.dispose(); } },
     searchSemantic: async (filter, offset, sceneIds = []) => {
       const documents = await bridge.documents.list(); if (!documents.ok) return documents;
@@ -282,3 +305,4 @@ export function createAuthoringServices(bridge: StudioBridge): AuthoringServices
     revealEntity: ref => bridge.files.revealEntity(ref),
   };
 }
+import { issueFromError } from '@galcraft/contracts';

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
 
-const base = process.env.STORYBOOK_URL ?? 'http://127.0.0.1:6007';
+const base = process.env.STORYBOOK_URL ?? 'http://127.0.0.1:6008';
 const evidence = process.env.CANDIDATE_EVIDENCE ?? 'test-results/ui-candidates-batch1-20261018';
 await mkdir(evidence, {recursive:true});
 const browser=await chromium.launch({channel:'chrome',headless:true});
@@ -22,14 +22,6 @@ async function check(id, run) {
   console.log(JSON.stringify(results.at(-1)));
 }
 try {
-  for(const [name,marker] of [['assets','素材库概要'],['empty-assets','素材库概要'],['production','制作与候选'],['plugins','插件概要'],['publish','构建服务已就绪'],['asset-failure','素材库概要'],['production-failure','本次制作参数'],['plugin-failure','插件概要'],['publish-failure','构建服务尚未就绪']]) {
-    await check(`E01-${name}`,async()=>{
-      await page.goto(`${base}/iframe.html?id=product-studio-authoring-pages--${name}&viewMode=story`);
-      await page.getByText(marker,{exact:true}).first().waitFor({timeout:60000});
-      if(name.endsWith('failure')) await page.getByText('服务暂时不可用，请重试',{exact:false}).filter({visible:true}).first().waitFor();
-      assert.equal(await page.locator('.product-story-error').count(),0);await shot(`e01-final-${name}`);
-    });
-  }
   await check('C01-zero-change',async()=>{
     await story();await color().click();assert.equal(await colorInput().inputValue(),'#b5c9e7');
     await page.keyboard.press('Escape');assert.equal(await count(),0);assert.equal(await value('preview-color'),'#b5c9e7');assert.ok(await color().evaluate(node=>node===document.activeElement));

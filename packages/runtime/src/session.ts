@@ -1,10 +1,11 @@
 import { createId, reserveIds } from '@galcraft/contracts';
-import type { CompiledScene, Domain, ExecutionToken, Expr, Frame, HistoryEntry, Id, Instruction, Issue, Json, LongTerm, Position, PresentationDelta, PresentationState, Result, RuntimeState, Scalar, Snapshot, Source, VoicePlaybackBinding, VoiceResolution } from '@galcraft/contracts';
-import { DialogueContentSchema, dialoguePlainText, dialogueSegments, ExprSchema, hasSceneParameterDefault, PresentationStateSchema, RuntimeStateSchema, SnapshotSchema } from '@galcraft/contracts';
+import type { CompiledRuleImageTransition, CompiledScene, Domain, ExecutionToken, Expr, Frame, HistoryEntry, Id, Instruction, Issue, Json, LongTerm, Position, PresentationDelta, PresentationState, Result, RuntimeState, Scalar, Snapshot, Source, VoicePlaybackBinding, VoiceResolution } from '@galcraft/contracts';
+import { CompiledRuleImageTransitionSchema, DialogueContentSchema, dialoguePlainText, dialogueSegments, ExprSchema, hasSceneParameterDefault, PresentationStateSchema, RuntimeStateSchema, SnapshotSchema } from '@galcraft/contracts';
 import { dialogueInterpolations, parseExpression } from '@galcraft/dsl';
 import { validatePluginData } from '@galcraft/plugins/contracts';
 import { evaluate, evaluateBoolean, evaluateTree, graphemes } from './expression.js';
 import { applyDialogue, chooseVoice, dialogueRuns, formatDialogue } from './voice.js';
+import { compatibleDialogueProgress, dialogueEvents, dialogueEventPositions, dialogueEventSource, dialogueSourceKey } from './dialogue-events.js';
 import type { Checkpoint, ConditionExplanation, DebugRequest, DebugResult, DebugScenario, PreparedProviderCommands, PreparedSession, PresentationCommitReceipt, RuntimeActivity, RuntimeEvent, RuntimeInspection, RuntimePorts, SessionInput, RoutePreparation, UpdatePlan } from './types.js';
 
 const success = <T>(value: T): Result<T> => ({ ok: true, value, warnings: [] });
@@ -153,16 +154,26 @@ function initializePluginLongTerm(snapshot: Snapshot, longTerm: LongTerm, ports:
   longTerm.plugins[pluginId] = { version: dependency.version, stateVersion: 1,
     data: system.initialLongTerm(snapshot.pluginDocuments[pluginId] ?? {}) };
 }
-function interpolate(text: string, state: RuntimeState, longTerm: LongTerm, snapshot: Snapshot, ports: RuntimePorts): string {
+function interpolate(text: string, state: RuntimeState, longTerm: LongTerm, snapshot: Snapshot, ports: RuntimePorts) {
   let result = '', offset = 0;
+  const replacements: { end: number; shift: number }[] = [];
   for (const match of dialogueInterpolations(text)) {
     result += text.slice(offset, match.start); offset = match.end;
-    if (match.source === null) { result += '{{'; continue; }
-    if (!match.closed) throw issue('INTERPOLATION_INVALID', 'Expected closing }} for dialogue interpolation');
-    const parsed = parseExpression(match.source); if (!parsed.ok) throw issue('INTERPOLATION_INVALID', parsed.message);
-    result += String(valueFor(parsed.expr, state, longTerm, snapshot, undefined, ports));
+    if (match.source === null) result += '{{';
+    else {
+      if (!match.closed) throw issue('INTERPOLATION_INVALID', 'Expected closing }} for dialogue interpolation');
+      const parsed = parseExpression(match.source); if (!parsed.ok) throw issue('INTERPOLATION_INVALID', parsed.message);
+      result += String(valueFor(parsed.expr, state, longTerm, snapshot, undefined, ports));
+    }
+    replacements.push({ end: offset, shift: result.length - offset });
   }
-  return result + text.slice(offset);
+  return { text: result + text.slice(offset), mapOffset: (anchor: number) => {
+    for (let index = replacements.length - 1; index >= 0; index--) {
+      const replacement = replacements[index]!;
+      if (replacement.end <= anchor) return anchor + replacement.shift;
+    }
+    return anchor;
+  } };
 }
 function projectVariable(snapshot: Snapshot, frame: Frame | undefined, id: Id) {
   return [...snapshot.variables, ...scene(snapshot, frame?.sceneId ?? snapshot.project.entry.sceneId).scene.locals].find(item => item.id === id);
@@ -193,7 +204,11 @@ type Active = { id: Id; snapshot: Snapshot; domain: SessionInput['domain']; stat
   voiceResolution: VoiceResolution | null; voiceBinding: VoicePlaybackBinding | null; pending: { sequence: number; next: LongTerm; base: LongTerm } | null;
   pausedFrom: RuntimeInspection['status'] | null; explanations: ConditionExplanation[]; viewportAtEnd: boolean | null;
   previewLongTerm: LongTerm | null; routeBuilding: boolean;
-  readingCarry: { textShown: number; textAnchor: number } | null; pluginResumeToken: string | null };
+  readingCarry: { textShown: number; textAnchor: number } | null; pluginResumeToken: string | null;
+  sceneSwitchEffects?: { audio: PresentationDelta['audio']; dialogueCommands: NonNullable<PresentationDelta['providerCommands']>;
+    steam: { args: Record<string, unknown>; source: Source }[]; nextSteam: number; movieEntry?: RuntimeState } };
+type RuleSceneSwitch = { owner: Active; source: Source; token: ExecutionToken; rule: CompiledRuleImageTransition; draft: Active };
+type RevealMode = 'reveal' | 'complete' | 'skip' | 'inspection';
 
 export class SessionController {
   private readonly pauseReasons = new Set<'emergency'>();
@@ -217,6 +232,7 @@ export class SessionController {
   }
 
   private active: Active | null = null;
+  private pendingRuleScene: RuleSceneSwitch | null = null;
   private routeProbes = new WeakSet<Active>();
   private prepared = new Map<Id, Active>();
   private checkpoints = new Map<Id, { sessionId: Id; checkpoint: Checkpoint }>();
@@ -310,6 +326,8 @@ export class SessionController {
         pluginResumeToken: null };
       if (state.phase === 'waiting' && state.wait?.kind === 'say') {
         const instruction = at(input.snapshot, state.position)!;
+        if (!compatibleDialogueProgress(instruction, state.wait, state.presentation.text.text))
+          return failure(issue('RESTORE_DIALOGUE_PROGRESS', 'The saved dialogue event positions are incompatible with this version', instruction.source));
         const targetObjectId = voiceTarget(instruction, prepared.state.presentation);
         const selection = chooseVoice(input.snapshot, instruction, voiceLocale, prepared.token!);
         if (selection.resolution.selected?.variantId === null) return failure(issue('VOICE_ASSET_MISSING', `Voice ${selection.resolution.selected.assetId} is missing`, instruction.source));
@@ -340,12 +358,22 @@ export class SessionController {
       prepared.pending = { sequence: prepared.sequence, next: clone(prepared.previewLongTerm), base: clone(this.ports.longTerm.current(prepared.domain)) };
     } else prepared.previewLongTerm = null;
     this.previewInstructionLimit = null;
-    this.active = prepared; this.prepared.delete(preparedId); return success(this.inspect()!);
+    this.active = prepared; this.pendingRuleScene = null; this.prepared.delete(preparedId); return success(this.inspect()!);
   }
   disposePrepared(preparedId: Id): void { this.prepared.delete(preparedId); }
   /** Leaving waits for the current instruction and its persistence receipt before releasing its owner. */
   async waitForIdle(): Promise<void> { while (this.execution) await this.execution; }
-  dispose(): void { this.active = null; this.prepared.clear(); }
+  dispose(): void { this.active = null; this.pendingRuleScene = null; this.prepared.clear(); }
+  get canRetryRuleScene(): boolean { return this.pendingRuleScene !== null && this.pendingRuleScene.owner === this.active; }
+  retryRuleScene(): Promise<Result<RuntimeInspection>> {
+    return this.exclusively(async () => {
+      const pending = this.pendingRuleScene;
+      if (!pending || pending.owner !== this.active) return failure(issue('SCENE_RULE_STALE', 'The scene transition is no longer active'));
+      const result = await this.publishRuleScene(pending);
+      if (!result.ok) return result;
+      return this.run();
+    });
+  }
   inspect(sessionId?: Id): RuntimeInspection | null {
     const active = this.active; if (!active || sessionId && active.id !== sessionId) return null;
     return { sessionId: active.id, snapshotId: active.snapshot.snapshotId, sequence: active.sequence, state: clone(active.state),
@@ -357,7 +385,15 @@ export class SessionController {
     const active = this.active; if (!active || sessionId && active.id !== sessionId) return null;
     return { sessionId: active.id, sequence: active.sequence, token: active.token && { ...active.token },
       status: this.pauseReasons.size ? 'paused' : active.status, pendingLongTerm: active.pending !== null,
-      waitKind: active.state.wait?.kind ?? null };
+      waitKind: active.state.wait?.kind ?? null,
+      dialogueWait: active.state.wait?.kind === 'say' ? clone(active.state.wait.inline?.waiting ?? null) : null };
+  }
+  dialogueAutoWaitMs(eventId: Id): number | undefined {
+    const active = this.active, wait = active?.state.wait;
+    if (!active || wait?.kind !== 'say' || wait.inline?.waiting?.eventId !== eventId || wait.inline.waiting.remainingMs !== null) return;
+    const instruction = at(active.snapshot, active.state.position);
+    const event = instruction && dialogueEvents(instruction)[wait.inline.cursor - 1];
+    return event?.kind === 'wait' && event.id === eventId ? event.autoWaitMs : undefined;
   }
   pluginWaitPolicy(): { restorable: boolean; reason: string | null } {
     const wait = this.active?.state.wait;
@@ -404,11 +440,15 @@ export class SessionController {
   }
   private async startOwned(): Promise<Result<RuntimeInspection>> {
     const active = this.active; if (!active) return failure(issue('SESSION_MISSING', 'No active session'));
+    if (this.pendingRuleScene?.owner === active) {
+      const resumed = await this.publishRuleScene(this.pendingRuleScene);
+      if (!resumed.ok) return resumed;
+    }
     if (active.pending && active.previewLongTerm) { const result = await this.retryLongTermOwned(); if (!result.ok) return result; }
     if (active.state.phase !== 'entry') {
       const instruction = at(active.snapshot, active.state.position);
       if ((active.state.pendingReadStatementId && (active.state.phase === 'completed' || ['say', 'choose', 'getUserInput', 'video'].includes(instruction!.opcode))) ||
-        (active.state.wait?.kind === 'say' && instruction?.continuation !== 'wait')) {
+        this.shouldContinueDialogue(active, active.state, instruction)) {
         const retried = await this.commit(active, clone(active.state), clone(this.ports.longTerm.current(active.domain)), null, active.token, 'statement', false, null, true);
         if (!retried.ok) return failure(retried.error);
       }
@@ -486,9 +526,10 @@ export class SessionController {
     if (active.pending) return failure(issue('LONG_TERM_PENDING', 'Long-term write needs retry'));
     if (this.pauseReasons.size || active.status === 'paused') return failure(issue('SESSION_PAUSED', 'Session is paused'));
     if (active.state.phase !== 'waiting' || !tokenEqual(active.token, event.token)) return failure(issue('TOKEN_STALE', 'Completion belongs to another statement occurrence'));
+    if (event.expectedSequence !== undefined && active.sequence !== event.expectedSequence) return failure(issue('STATE_CHANGED', 'Input belongs to an earlier reading state'));
     try {
     // Retry the current target before another departure can replace its source identity.
-    const continuingDialogue = active.state.wait?.kind === 'say' && at(active.snapshot, active.state.position)?.continuation !== 'wait';
+    const continuingDialogue = this.shouldContinueDialogue(active, active.state, at(active.snapshot, active.state.position));
     if ((active.state.pendingReadStatementId || continuingDialogue) && ['say', 'choose', 'getUserInput', 'video'].includes(at(active.snapshot, active.state.position)!.opcode)) {
       const retried = await this.commit(active, clone(active.state), clone(this.ports.longTerm.current(active.domain)), null, active.token, 'statement', false, null, true);
       if (!retried.ok) return failure(retried.error);
@@ -501,7 +542,7 @@ export class SessionController {
       const reading = active.state.presentation.text.reading, total = graphemes(active.state.presentation.text.text).length;
       if (reading?.mode === 'nvl' && reading.end === null) return success(this.inspect()!);
       if (!waiting.textComplete) return this.updateTextProgressOwned({ token: event.token,
-        textShown: reading?.mode === 'nvl' ? reading.end! : total });
+        textShown: reading?.mode === 'nvl' ? reading.end! : total }, event.advanceMode === 'skip' ? 'skip' : 'complete');
       if (reading?.mode === 'nvl' && reading.end! < total) {
         reading.start = reading.end!; reading.end = null; reading.page++; waiting.textComplete = false;
         waiting.textAnchor = reading.start; active.sequence++; return success(this.inspect()!);
@@ -625,7 +666,15 @@ export class SessionController {
       const token: ExecutionToken = { sessionId: active.id, occurrence: active.state.occurrence + 1, statementId: instruction.statementId };
       const staged = clone(active.state), longTerm = clone(active.previewLongTerm ?? this.ports.longTerm.current(active.domain));
       staged.occurrence = token.occurrence; const args = object(instruction.args); let delta: PresentationDelta | null = null;
+      const decor = scene(active.snapshot, staged.position.sceneId).scene.decorLayers;
+      if (staged.presentation.decorSceneId !== staged.position.sceneId && (decor?.length || staged.presentation.decorSceneId)) {
+        const prepared = await this.ports.stage.prepare({ state: staged, token, opcode: '$sceneDecor', args: decor ?? [] });
+        if (!prepared.ok) throw prepared.error;
+        staged.presentation = prepared.value.state.presentation;
+        staged.presentation.decorSceneId = staged.position.sceneId;
+      }
       let selection: ReturnType<typeof chooseVoice> | null = null;
+      let dialogueSource: Source | undefined;
       if (instruction.condition) {
         const root = evaluateTree(instruction.condition, { state: staged, longTerm, variables: active.snapshot.variables, functions: pureFunctions(this.ports, staged, longTerm) });
         this.capture(active, token, instruction.source, 'when', null, root, 'entry');
@@ -658,6 +707,8 @@ export class SessionController {
       } else if (instruction.opcode === 'changeScene') {
         const position = target(active.snapshot, String(args.sceneId), args.labelId as Id | null ?? null);
         enterScene(active.snapshot, staged, position, true);
+        if (args.ruleImage && !active.routeBuilding)
+          return this.prepareRuleScene(active, staged, longTerm, instruction.source, token, CompiledRuleImageTransitionSchema.parse(args.ruleImage));
       } else if (instruction.opcode === 'return') {
         const frame = staged.frames.at(-1); if (!frame?.returnTo) throw issue('TOP_LEVEL_RETURN', 'Top-level scene cannot return');
         const declared = scene(active.snapshot, frame.sceneId).scene.returns;
@@ -690,9 +741,22 @@ export class SessionController {
       } else if (instruction.opcode === 'say') {
         await this.completeEntry(active, staged, token);
         const content = DialogueContentSchema.parse(args.text ?? '');
-        const segments = dialogueSegments(content).map(segment => ({ ...segment, text: interpolate(segment.text, staged, longTerm, active.snapshot, this.ports) }));
+        const events = dialogueEvents(instruction), offsets: number[] = [];
+        let sourceOffset = 0, bodyOffset = 0, eventIndex = 0;
+        const segments = dialogueSegments(content).map(segment => {
+          const transformed = interpolate(segment.text, staged, longTerm, active.snapshot, this.ports);
+          while (events[eventIndex] && events[eventIndex]!.offset <= sourceOffset + segment.text.length)
+            offsets.push(bodyOffset + transformed.mapOffset(events[eventIndex++]!.offset - sourceOffset));
+          sourceOffset += segment.text.length; bodyOffset += transformed.text.length;
+          return { ...segment, text: transformed.text };
+        });
         const body = segments.map(segment => segment.text).join(''); if (!body) throw issue('SAY_EMPTY', 'Dialogue text is empty');
         applyDialogue(staged, active.snapshot, instruction, body, active.readingCarry, typeof content === 'string' ? undefined : segments);
+        const waiting = staged.wait as Extract<RuntimeState['wait'], { kind: 'say' }>;
+        if (events.length) {
+          if (offsets.length !== events.length) throw issue('DIALOGUE_EVENT_OFFSET', 'Dialogue event anchor is beyond the body', instruction.source);
+          waiting.inline = { sourceKey: dialogueSourceKey(instruction, events), positions: dialogueEventPositions(staged, body, offsets), cursor: 0, waiting: null };
+        }
         const targetObjectId = voiceTarget(instruction, staged.presentation);
         selection = chooseVoice(active.snapshot, instruction, active.voiceLocale, token);
         if (selection.resolution.selected?.variantId === null) throw issue('VOICE_ASSET_MISSING', `Voice ${selection.resolution.selected.assetId} is missing`, instruction.source);
@@ -701,6 +765,17 @@ export class SessionController {
           volume: Number(args.voiceVolume ?? 100) / 100, targetObjectId, statementId: instruction.statementId } : null;
         staged.phase = 'waiting'; delta = { objects: [], effects: [], audio: [], voiceBinding: selection.binding,
           text: clone(staged.presentation.text) };
+        if (waiting.inline && (!active.routeBuilding || active.sceneSwitchEffects)) {
+          const entered = await this.reduceDialogue(active, staged, token, waiting.textShown, 'reveal');
+          dialogueSource = entered.visualSource;
+          if (entered.delta) {
+            delta.objects.push(...entered.delta.objects); delta.audio.push(...entered.delta.audio);
+            if (entered.delta.providerCommands?.length) {
+              if (active.sceneSwitchEffects) active.sceneSwitchEffects.dialogueCommands.push(...entered.delta.providerCommands);
+              else delta.providerCommands = entered.delta.providerCommands;
+            }
+          }
+        }
       } else if (instruction.opcode === 'wait') {
         const durationMs = Number(args.durationMs ?? 1000);
         if (durationMs === 0 || instruction.continuation !== 'wait') next(active.snapshot, staged);
@@ -711,10 +786,18 @@ export class SessionController {
           args: runtimeArgs(instruction.args, staged, longTerm, active.snapshot, this.ports) });
         if (!prepared.ok) throw prepared.error; Object.assign(staged, prepared.value.state); delta = prepared.value.delta;
         if (instruction.continuation === 'wait' && !(instruction.opcode === 'intro' && args.op === 'clear')) {
-          staged.wait = { kind: 'animation', processIds: [...staged.presentation.objects.flatMap(item => item.processes),
+          const processIds = [...staged.presentation.objects.flatMap(item => item.processes),
             ...(staged.presentation.camera?.processes ?? [])].filter(process => tokenEqual(process.owner, token)).map(process => process.id).concat(
-              staged.presentation.objects.filter(item => item.imagePlayback?.owner && tokenEqual(item.imagePlayback.owner, token)).map(item => item.id)) };
-          staged.phase = 'waiting';
+              staged.presentation.objects.filter(item => item.imagePlayback?.owner && tokenEqual(item.imagePlayback.owner, token)).map(item => item.id));
+          const instantTransform = instruction.opcode === 'setTransform' && Number(args.durationMs ?? 0) === 0;
+          if (active.sceneSwitchEffects && (!processIds.length || instantTransform) && !['video', 'intro'].includes(instruction.opcode)) {
+            if (processIds.length) {
+              const finished = await this.ports.stage.prepare({ state: staged, token, opcode: '$finishAnimationWait', args: {} });
+              if (!finished.ok) throw finished.error;
+              staged.presentation = finished.value.state.presentation;
+            }
+            next(active.snapshot, staged);
+          } else { staged.wait = { kind: 'animation', processIds }; staged.phase = 'waiting'; }
         } else next(active.snapshot, staged);
       } else if (['unlockCg','unlockBgm','unlockVideo'].includes(instruction.opcode)) {
         const id = String(args.entryId);
@@ -736,7 +819,10 @@ export class SessionController {
           staged.entryPresentation = { sceneId: endingScene.scene.id, instanceId: createId(), completed: false }; }
         else { staged.frames = []; staged.phase = 'completed'; staged.wait = null; staged.position.statementId = null; }
       } else if (['label', 'comment', 'showVars'].includes(instruction.opcode)) next(active.snapshot, staged);
-      else if (instruction.opcode === 'callSteam' && (active.previewLongTerm || active.scenario?.externalPolicy === 'simulate')) next(active.snapshot, staged);
+      else if (instruction.opcode === 'callSteam' && (active.previewLongTerm || active.scenario?.externalPolicy === 'simulate')) {
+        if (active.scenario?.externalPolicy !== 'simulate') active.sceneSwitchEffects?.steam.push({ args, source: instruction.source });
+        next(active.snapshot, staged);
+      }
       else {
         const plugin = this.ports.contributions.commands.find(item => item.spec.key === instruction!.opcode);
         if (plugin) {
@@ -765,14 +851,7 @@ export class SessionController {
           else next(active.snapshot, staged);
         } else {
           if (instruction.opcode === 'callSteam') {
-            const platform = this.ports.contributions.platform.find(item => item.actions.some(action => action.name === 'achievement.unlock'));
-            if (!platform && args.unavailable === 'required') throw issue('PLATFORM_UNAVAILABLE', 'Required Steam action is unavailable');
-            if (platform) {
-              const result = await platform.invoke('achievement.unlock', { id: args.achievement as string }, active.domain);
-              if (!result.ok) throw result.error;
-              if (args.unavailable === 'required' && typeof result.value === 'object' && result.value !== null &&
-                !Array.isArray(result.value) && result.value.status === 'skipped') throw issue('PLATFORM_UNAVAILABLE', 'Required Steam action is unsupported');
-            }
+            await this.unlockSteam(active.domain, args);
             next(active.snapshot, staged);
           } else {
             const prepared = await this.ports.stage.prepare({ state: staged, token, opcode: instruction.opcode,
@@ -786,8 +865,14 @@ export class SessionController {
       if (staged.phase === 'completed' && staged.story?.kind === 'afterstory')
         longTerm.afterstoryCompleted = [...new Set([...(longTerm.afterstoryCompleted ?? []), staged.story.entryId])];
       const entryState = clone(active.state);
+      if (active.sceneSwitchEffects && instruction.opcode === 'video' && staged.wait?.kind === 'animation') {
+        if (entryState.entryPresentation) entryState.entryPresentation.completed = true;
+        active.sceneSwitchEffects.movieEntry = entryState;
+      }
       const beforeSequence = active.sequence;
-      const prepared = await this.prepareProviderCommands(active, staged, delta, token); if (!prepared.ok) return failure(prepared.error);
+      const visualSource = dialogueSource ?? (instruction.opcode === 'changeBg' && args.ruleImage ? instruction.source : undefined);
+      const prepared = await this.prepareProviderCommands(active, staged, delta, token, !!visualSource);
+      if (!prepared.ok) return failure(asIssue(prepared.error, prepared.error.source ?? visualSource));
       let committed: Result<void>;
       try { committed = await this.commit(active, staged, longTerm, delta, token, 'statement', true, prepared.value,
         ['say', 'choose', 'getUserInput', 'video', 'end'].includes(instruction.opcode)); }
@@ -807,18 +892,97 @@ export class SessionController {
       }
       if (!committed.ok) return failure(committed.error);
       return success(undefined);
-    } catch (error) { return failure(asIssue(error, instruction?.source)); }
+    } catch (error) { return failure(asIssue(error, isIssue(error) && error.source ? undefined : instruction?.source)); }
   }
 
-  private async prepareProviderCommands(active: Active, staged: RuntimeState, delta: PresentationDelta | null, token: ExecutionToken): Promise<Result<PreparedProviderCommands | null>> {
-    if (!delta?.providerCommands?.length) return success(null);
+  private async unlockSteam(domain: Domain, args: Record<string, unknown>): Promise<void> {
+    const platform = this.ports.contributions.platform.find(item => item.actions.some(action => action.name === 'achievement.unlock'));
+    if (!platform && args.unavailable === 'required') throw issue('PLATFORM_UNAVAILABLE', 'Required Steam action is unavailable');
+    if (!platform) return;
+    const result = await platform.invoke('achievement.unlock', { id: args.achievement as string }, domain);
+    if (!result.ok) throw result.error;
+    if (args.unavailable === 'required' && typeof result.value === 'object' && result.value !== null &&
+      !Array.isArray(result.value) && result.value.status === 'skipped') throw issue('PLATFORM_UNAVAILABLE', 'Required Steam action is unsupported');
+  }
+
+  private async prepareRuleScene(active: Active, staged: RuntimeState, longTerm: LongTerm, source: Source,
+    token: ExecutionToken, rule: CompiledRuleImageTransition): Promise<Result<void>> {
+    const draft: Active = { ...active, routeBuilding: true, previewLongTerm: longTerm,
+      trace: [...active.trace], executed: [...active.executed], history: [...active.history],
+      explanations: [...active.explanations], sceneSwitchEffects: { audio: [], dialogueCommands: [], steam: [], nextSteam: 0 } };
+    const entered = await this.commit(draft, staged, longTerm, null, token, 'statement');
+    if (!entered.ok) return entered;
+    for (let count = 0; draft.state.phase === 'entry'; count++) {
+      if (this.active !== active) return failure(issue('SCENE_RULE_STALE', 'The scene transition is no longer active', source));
+      if (count === 10000) return failure(issue('RUNTIME_LOOP', 'The scene transition did not reach a presentable instruction', source));
+      const result = await this.execute(draft);
+      if (!result.ok) return result;
+    }
+    const pending = { owner: active, source, token, rule, draft };
+    this.pendingRuleScene = pending;
+    return this.publishRuleScene(pending);
+  }
+
+  private async publishRuleScene(pending: RuleSceneSwitch): Promise<Result<void>> {
+    const { owner, source, token, rule, draft } = pending;
+    if (this.active !== owner || this.pauseReasons.size) return failure(issue('SCENE_RULE_STALE', 'The scene transition cannot be presented now', source));
+    const staged = clone(draft.state), presentationToken = draft.token ?? token, effects = draft.sceneSwitchEffects!;
+    const delta: PresentationDelta = { objects: [], effects: [], audio: effects.audio, voiceBinding: draft.voiceBinding,
+      providerCommands: effects.dialogueCommands };
+    const prepared = await this.prepareProviderCommands(owner, staged, delta, presentationToken, true, rule);
+    if (!prepared.ok) return failure(asIssue(prepared.error, prepared.error.source ?? source));
+    try {
+      if (staged.entryPresentation && this.ports.beforeDialogue) {
+        const entryState = clone(staged);
+        entryState.entryPresentation!.completed = false;
+        entryState.wait = null;
+        const entered = await this.ports.beforeDialogue({ sessionId: owner.id, token: presentationToken, state: entryState, snapshot: owner.snapshot });
+        if (!entered.ok) return failure(asIssue(entered.error, source));
+      }
+      if (this.active !== owner || this.pauseReasons.size) return failure(issue('SCENE_RULE_STALE', 'The scene transition cannot be presented now', source));
+      while (effects.nextSteam < effects.steam.length) {
+        const action = effects.steam[effects.nextSteam]!;
+        try { await this.unlockSteam(owner.domain, action.args); }
+        catch (error) { return failure(asIssue(error, action.source)); }
+        effects.nextSteam++;
+      }
+      if (this.active !== owner || this.pauseReasons.size) return failure(issue('SCENE_RULE_STALE', 'The scene transition cannot be presented now', source));
+      const sequence = owner.sequence;
+      const committed = await this.commit(owner, staged, draft.previewLongTerm!, delta, presentationToken, 'statement', false, prepared.value);
+      if (owner.sequence !== sequence) {
+        this.pendingRuleScene = null;
+        Object.assign(owner, { history: draft.history, trace: draft.trace, executed: draft.executed,
+          explanations: draft.explanations, readingCarry: draft.readingCarry, voiceResolution: draft.voiceResolution, voiceBinding: draft.voiceBinding });
+        if (effects.movieEntry) this.makeCheckpoint(owner, effects.movieEntry, draft.executed.slice(0, -1));
+        else if (owner.state.wait?.kind === 'say' || owner.state.wait?.kind === 'choice') this.makeCheckpoint(owner);
+      }
+      return committed;
+    } finally { prepared.value?.dispose(); }
+  }
+
+  private async prepareProviderCommands(active: Active, staged: RuntimeState, delta: PresentationDelta | null, token: ExecutionToken,
+    prepareVisual = false, sceneRule?: CompiledRuleImageTransition): Promise<Result<PreparedProviderCommands | null>> {
+    if (!sceneRule && !delta?.providerCommands?.length && (!prepareVisual || active.routeBuilding || !this.ports.prepareProviderCommands)) return success(null);
     if (!this.ports.prepareProviderCommands) return failure(issue('STAGE_PROVIDER_COMMAND_UNAVAILABLE', 'The host does not support provider commands'));
     const sequence = active.sequence;
-    const prepared = await this.ports.prepareProviderCommands({ sessionId: active.id, token, state: clone(staged.presentation), commands: clone(delta.providerCommands) });
+    const movieInstruction = sceneRule && staged.wait?.kind === 'animation' ? at(active.snapshot, staged.position) : null;
+    const movieAssetId = movieInstruction?.opcode === 'video' ? object(movieInstruction.args).assetId : null;
+    const movie = movieAssetId ? active.snapshot.assets.find(asset => asset.assetId === movieAssetId && asset.kind === 'video') : null;
+    if (movieAssetId && !movie) return failure(issue('ASSET_MISSING', 'The target movie version is unavailable'));
+    const prepared = await this.ports.prepareProviderCommands({ sessionId: active.id, token, state: clone(staged.presentation),
+      commands: clone(delta?.providerCommands ?? []), voiceBinding: delta?.voiceBinding, ...(sceneRule ? { sceneRule } : {}),
+      ...(movie ? { sceneMovie: { assetId: movie.assetId, variantId: movie.variantId } } : {}) });
     if (!prepared.ok) return prepared;
-    if (!active.routeBuilding && this.active !== active || active.sequence !== sequence) { prepared.value.dispose(); return failure(issue('TOKEN_STALE', 'Provider preparation belongs to another state')); }
+    const owned = active.routeBuilding || this.active === active || [...this.prepared.values()].includes(active);
+    if (!owned || active.sequence !== sequence) { prepared.value.dispose(); return failure(issue('TOKEN_STALE', 'Provider preparation belongs to another state')); }
     staged.presentation = clone(prepared.value.state);
     return prepared;
+  }
+  private shouldContinueDialogue(active: Active, state: RuntimeState, instruction: Instruction | null): boolean {
+    const wait = state.wait;
+    return instruction?.opcode === 'say' && instruction.continuation !== 'wait' && wait?.kind === 'say' &&
+      (!wait.inline || !active.routeBuilding && this.previewInstructionLimit === null && wait.textComplete &&
+        wait.textShown === graphemes(state.presentation.text.text).length);
   }
   private async commit(active: Active, staged: RuntimeState, longTerm: LongTerm, delta: PresentationDelta | null,
     token: ExecutionToken | null, reason: 'start' | 'statement' | 'debug', recordExecution = true, providerCommands: PreparedProviderCommands | null = null,
@@ -852,7 +1016,7 @@ export class SessionController {
       const source = active.snapshot.scenes.flatMap(item => item.instructions).find(item => item.statementId === token.statementId)?.source;
       if (source) { active.trace.push({ token, source }); active.executed.push({ statementId: token.statementId, documentRevision: source.revision }); }
     }
-    if (!videoWait && !this.routeProbes.has(active) && token && recordExecution && (staged.wait?.kind === 'choice' || staged.wait?.kind === 'say' || active.trace.length === 1) && this.pluginWaitPolicy().restorable) this.makeCheckpoint(active);
+    if (!videoWait && !active.sceneSwitchEffects && !this.routeProbes.has(active) && token && recordExecution && (staged.wait?.kind === 'choice' || staged.wait?.kind === 'say' || active.trace.length === 1) && this.pluginWaitPolicy().restorable) this.makeCheckpoint(active);
     const receipt = confirmedPresentation ?? (!active.routeBuilding ? await this.ports.onCommitted?.({ sessionId: active.id, sequence, token: token ?? { sessionId: active.id, occurrence: staged.occurrence, statementId: staged.position.statementId ?? active.snapshot.project.entry.sceneId }, state: clone(staged), delta, presentationPrepared: providerCommands !== null }) : undefined)
       ?? { presentationEntered: true, mediaStarted: false };
     if (readSource) {
@@ -862,7 +1026,7 @@ export class SessionController {
         const withoutRead = sampleFlow(); if (!withoutRead.ok) return withoutRead;
       }
     }
-    if (receipt.mediaStarted && token && (recordExecution || confirmedPresentation)) {
+    if (receipt.mediaStarted && token && (recordExecution || confirmedPresentation || delta?.audio.some(item => item.bus === 'video'))) {
       const instruction = active.snapshot.scenes.flatMap(item => item.instructions).find(item => item.statementId === token.statementId);
       const args = object(instruction?.args), id = String(args.galleryId ?? '');
       if (id && instruction?.opcode === 'changeBg' && args.op !== 'clear' && typeof args.differenceId === 'string')
@@ -873,13 +1037,16 @@ export class SessionController {
     }
     // Enter this dialogue before its departure can replace the previous source.
     const continuingDialogue = reason === 'statement' && receipt.presentationEntered && token && staged.wait?.kind === 'say' &&
-      staged.position.statementId === token.statementId && at(active.snapshot, staged.position)?.continuation !== 'wait';
+      staged.position.statementId === token.statementId && this.shouldContinueDialogue(active, staged, at(active.snapshot, staged.position));
     if (continuingDialogue) {
+      const wait = staged.wait as Extract<RuntimeState['wait'], { kind: 'say' }>;
       active.state.pendingReadStatementId = token.statementId;
       next(active.snapshot, active.state); active.state.wait = null;
-      active.token = null; active.status = active.state.phase === 'completed' ? 'ended' : 'ready'; active.readingCarry = null;
+      active.token = null; active.status = active.state.phase === 'completed' ? 'ended' : 'ready';
+      active.readingCarry = wait.inline ? { textShown: wait.textShown, textAnchor: wait.textAnchor } : null;
     }
     if (active.routeBuilding) {
+      if (delta?.audio.length) active.sceneSwitchEffects?.audio.push(...delta.audio);
       active.previewLongTerm = clone(longTerm);
       return continuingDialogue && active.state.phase === 'completed' ?
         this.commit(active, clone(active.state), clone(longTerm), null, token, 'statement', false) : success(undefined);
@@ -896,11 +1063,11 @@ export class SessionController {
     return success(undefined);
   }
 
-  private makeCheckpoint(active: Active): void {
-    const state = clone(active.state);
+  private makeCheckpoint(active: Active, checkpointState = active.state, executed = active.executed): void {
+    const state = clone(checkpointState);
     if (state.phase === 'entry') state.presentation.voice = null;
     const checkpoint: Checkpoint = { id: createId(), projectId: active.snapshot.projectId,
-      snapshotId: active.snapshot.snapshotId, state, executed: clone(active.executed), createdAt: new Date().toISOString() };
+      snapshotId: active.snapshot.snapshotId, state, executed: clone(executed), createdAt: new Date().toISOString() };
     this.checkpoints.set(checkpoint.id, { sessionId: active.id, checkpoint });
   }
   private evaluateChoices(active: Active, state: RuntimeState, longTerm: LongTerm, instruction: Instruction,
@@ -994,7 +1161,9 @@ export class SessionController {
         if (!this.followRouteInput(active, instruction)) return { count: 0, unknown: true };
       } else if (active.state.wait?.kind === 'plugin') return { count: 0, unknown: true };
       else {
-        if (active.state.wait?.kind === 'say') active.readingCarry = { textShown: active.state.wait.textShown, textAnchor: active.state.wait.textAnchor };
+        if (active.state.wait?.kind === 'say') {
+          const resolved = await this.reduceRouteDialogue(active); if (!resolved.ok) return { count: 0, unknown: true };
+        }
         next(active.snapshot, active.state); active.state.wait = null;
       }
     }
@@ -1049,7 +1218,9 @@ export class SessionController {
         if (!this.followRouteInput(active, instruction)) return complete(false, 'input', 'Valid player input is required');
       } else if (active.state.wait?.kind === 'plugin') return complete(false, 'unknown', 'A plugin interaction needs an explicit response');
       else {
-        if (active.state.wait?.kind === 'say') active.readingCarry = { textShown: active.state.wait.textShown, textAnchor: active.state.wait.textAnchor };
+        if (active.state.wait?.kind === 'say') {
+          const resolved = await this.reduceRouteDialogue(active); if (!resolved.ok) return resolved;
+        }
         next(active.snapshot, active.state); active.state.wait = null;
       }
     }
@@ -1059,6 +1230,34 @@ export class SessionController {
     const instruction = at(active.snapshot, active.state.position);
     const mismatch = instruction && this.routeOccurrenceIssue(active, instruction);
     return mismatch ? failure(mismatch) : this.execute(active);
+  }
+
+  private async reduceRouteDialogue(active: Active): Promise<Result<void>> {
+    const wait = active.state.wait;
+    if (wait?.kind !== 'say') return success(undefined);
+    try {
+      if (wait.inline) await this.reduceDialogue(active, active.state, active.token!, graphemes(active.state.presentation.text.text).length, 'inspection');
+      active.readingCarry = { textShown: wait.textShown, textAnchor: wait.textAnchor };
+      return success(undefined);
+    } catch (error) { return failure(asIssue(error)); }
+  }
+
+  /** Reduce an isolated prepared session before the host prepares and publishes its stage. */
+  async prepareDialogueInspection(id: Id, eventId?: Id): Promise<Result<RuntimeState>> {
+    const active = this.prepared.get(id);
+    if (!active || active.domain.kind === 'player') return failure(issue('PREPARED_MISSING', 'Prepared preview is unavailable'));
+    const staged = clone(active.state), wait = staged.wait;
+    if (wait?.kind !== 'say' || !active.token) return eventId
+      ? failure(issue('DIALOGUE_EVENT_MISSING', 'The selected dialogue event is unavailable')) : success(staged);
+    try {
+      const total = graphemes(staged.presentation.text.text).length;
+      if (wait.inline) await this.reduceDialogue(active, staged, active.token, total, 'inspection', eventId);
+      else if (eventId) return failure(issue('DIALOGUE_EVENT_MISSING', 'The selected dialogue event is unavailable'));
+      else { wait.textShown = total; wait.textComplete = true; }
+      if (this.prepared.get(id) !== active) return failure(issue('PREPARED_MISSING', 'Prepared preview is unavailable'));
+      active.state = staged;
+      return success(clone(staged));
+    } catch (error) { return failure(asIssue(error)); }
   }
 
   classifyUpdate(input: { newSnapshot: Snapshot }): Result<UpdatePlan> {
@@ -1085,6 +1284,7 @@ export class SessionController {
     };
     const onlyCurrentSay = currentId !== null && changedIds.size === 1 && changedIds.has(currentId) &&
       active.state.wait?.kind === 'say' && priorInstructions.get(currentId)?.opcode === 'say' && nextInstructions.get(currentId)?.opcode === 'say' &&
+      !active.state.wait.inline &&
       equal(sayControl(priorInstructions.get(currentId)), sayControl(nextInstructions.get(currentId)));
     const executedChanged = active.executed.some(item => changedIds.has(item.statementId));
     const kind: UpdatePlan['kind'] = pluginChanged ? 'newSession' : structuralChanged || executedChanged && !onlyCurrentSay ? 'rebuild'
@@ -1109,7 +1309,7 @@ export class SessionController {
       return success({ continued: false, inspection });
     if (wait.kind === 'say' && active.state.presentation.text.reading?.mode === 'nvl' && active.state.presentation.text.reading.end === null)
       return success({ continued: true, inspection });
-    const result = await this.dispatch({kind: wait.kind === 'timer' ? 'timer' : 'advance', token: active.token});
+    const result = await this.dispatch({kind: wait.kind === 'timer' ? 'timer' : 'advance', token: active.token, advanceMode: 'skip'});
     return result.ok ? success({continued: true, inspection: result.value}) : failure(result.error);
   }
 
@@ -1125,7 +1325,7 @@ export class SessionController {
       const instruction = at(active.snapshot, active.state.position);
       if ((wait?.kind === 'animation' || wait?.kind === 'timer') && instruction?.skippable === false) return success(this.inspect()!);
       const event: RuntimeEvent = { kind: wait?.kind === 'say' || wait?.kind === 'animation' && instruction?.opcode !== 'video'
-        ? 'advance' : wait?.kind === 'timer' ? 'timer' : 'animation', token: active.token };
+        ? 'advance' : wait?.kind === 'timer' ? 'timer' : 'animation', token: active.token, advanceMode: 'skip' };
       const result = await this.dispatch(event); if (!result.ok) return result;
     }
     return failure(issue('SKIP_LOOP', 'Skip exceeded 10000 waiting points'));
@@ -1175,8 +1375,11 @@ export class SessionController {
 
   updateReadingViewport(input: { token: ExecutionToken; textAnchor: number; atEnd: boolean }): Result<RuntimeInspection> {
     const active = this.active; if (!active || !tokenEqual(active.token, input.token) || active.state.wait?.kind !== 'say') return failure(issue('TOKEN_STALE', 'Reading viewport belongs to another line'));
-    active.state.wait.textAnchor = Math.max(0, Math.min(Math.floor(input.textAnchor), graphemes(active.state.presentation.text.text).length));
-    active.viewportAtEnd = input.atEnd; active.sequence++; return success(this.inspect()!);
+    const anchor = Math.max(0, Math.min(Math.floor(input.textAnchor), graphemes(active.state.presentation.text.text).length));
+    if (active.state.wait.textAnchor !== anchor || active.viewportAtEnd !== input.atEnd) {
+      active.state.wait.textAnchor = anchor; active.viewportAtEnd = input.atEnd; active.sequence++;
+    }
+    return success(this.inspect()!);
   }
   updateNvlLayout(input: { token: ExecutionToken; start: number; end: number }): Result<RuntimeInspection> {
     const active = this.active, wait = active?.state.wait, reading = active?.state.presentation.text.reading;
@@ -1184,16 +1387,21 @@ export class SessionController {
     const total = graphemes(active.state.presentation.text.text).length;
     if (!Number.isSafeInteger(input.start) || !Number.isSafeInteger(input.end) || input.start < 0 || input.end <= input.start || input.end > total || input.end < wait.textShown)
       return failure(issue('NVL_LAYOUT', 'NVL layout must preserve the current logical reading anchor'));
+    if (wait.inline && input.start > wait.textShown && (wait.inline.waiting || (wait.inline.positions[wait.inline.cursor] ?? Infinity) < input.start))
+      return failure(issue('NVL_LAYOUT', 'NVL layout cannot reveal unread dialogue events'));
     reading.start = input.start; reading.end = input.end; wait.textAnchor = reading.start;
     wait.textShown = Math.max(wait.textShown, reading.start);
-    wait.textComplete = wait.textShown >= input.end; active.viewportAtEnd = true; active.sequence++; return success(this.inspect()!);
+    wait.textComplete = wait.textShown >= input.end && !wait.inline?.waiting && (wait.inline?.positions[wait.inline.cursor] ?? Infinity) > input.end;
+    active.viewportAtEnd = true; active.sequence++; return success(this.inspect()!);
   }
-  updateTextProgress(input: { token: ExecutionToken; textShown: number }): Promise<Result<RuntimeInspection>> {
+  updateTextProgress(input: { token: ExecutionToken; textShown: number; expectedSequence?: number }): Promise<Result<RuntimeInspection>> {
     return this.exclusively(() => this.updateTextProgressOwned(input), false);
   }
-  private async updateTextProgressOwned(input: { token: ExecutionToken; textShown: number }): Promise<Result<RuntimeInspection>> {
+  private async updateTextProgressOwned(input: { token: ExecutionToken; textShown: number; expectedSequence?: number }, mode: RevealMode = 'reveal'): Promise<Result<RuntimeInspection>> {
     const active = this.active;
     if (!active || !tokenEqual(active.token, input.token) || active.state.wait?.kind !== 'say') return failure(issue('TOKEN_STALE', 'Text progress belongs to another line'));
+    if (input.expectedSequence !== undefined && active.sequence !== input.expectedSequence) return failure(issue('STATE_CHANGED', 'Text progress belongs to an earlier reading state'));
+    if (!Number.isFinite(input.textShown)) return failure(issue('DIALOGUE_PROGRESS', 'Text progress requires a finite reveal position'));
     if (active.pending) return failure(issue('LONG_TERM_PENDING', 'Long-term write needs retry'));
     if (this.pauseReasons.size || active.status === 'paused') return failure(issue('SESSION_PAUSED', 'Session is paused'));
     const total = graphemes(active.state.presentation.text.text).length;
@@ -1201,6 +1409,7 @@ export class SessionController {
     if (reading?.mode === 'nvl' && reading.end === null) return success(this.inspect()!);
     const limit = reading?.mode === 'nvl' ? reading.end! : total;
     const shown = Math.max(active.state.wait.textShown, Math.min(Math.floor(input.textShown), limit));
+    if (active.state.wait.inline) return this.publishDialogueProgress(active, input.token, shown, mode);
     if (shown < total) { active.state.wait.textShown = shown; active.state.wait.textComplete = shown >= limit; active.sequence++; return success(this.inspect()!); }
     if (active.state.wait.textComplete) return success(this.inspect()!);
     const staged = clone(active.state), longTerm = clone(this.ports.longTerm.current(active.domain));
@@ -1208,6 +1417,114 @@ export class SessionController {
     staged.wait.textShown = total; staged.wait.textComplete = true;
     const committed = await this.commit(active, staged, longTerm, null, null, 'statement');
     return committed.ok ? success(this.inspect()!) : failure(committed.error);
+  }
+
+  private async reduceDialogue(active: Active, staged: RuntimeState, token: ExecutionToken, shown: number, mode: RevealMode, eventId?: Id) {
+    const wait = staged.wait as Extract<RuntimeState['wait'], { kind: 'say' }>, progress = wait.inline!;
+    const instruction = at(active.snapshot, staged.position)!, events = dialogueEvents(instruction);
+    const last = eventId ? events.findIndex(event => event.id === eventId) : events.length - 1;
+    if (eventId && last < progress.cursor) throw issue('DIALOGUE_EVENT_MISSING', 'The selected dialogue event is unavailable', dialogueEventSource(active.snapshot, instruction, eventId));
+    if (eventId) shown = progress.positions[last]!;
+    const delta: PresentationDelta = { objects: [], effects: [], audio: [] };
+    let visualSource: Source | undefined;
+    if (mode !== 'reveal') progress.waiting = null;
+    while (!progress.waiting && progress.cursor <= last && progress.positions[progress.cursor]! <= shown) {
+      const event = events[progress.cursor]!, position = progress.positions[progress.cursor++]!;
+      if (event.kind === 'wait') {
+        if (mode === 'reveal' || mode === 'complete' && event.durationMs === null || event.id === eventId)
+          progress.waiting = { eventId: event.id, remainingMs: event.durationMs };
+        continue;
+      }
+      if (event.kind === 'sound' && mode !== 'reveal') continue;
+      const source = dialogueEventSource(active.snapshot, instruction, event.id);
+      const opcode = event.kind === 'sound' ? '$dialogueSound' : event.kind === 'expression' ? '$dialogueExpression' : '$dialogueLive2DExpression';
+      const prepared = await this.ports.stage.prepare({ state: staged, token, opcode, args: event });
+      if (!prepared.ok) throw asIssue(prepared.error, source);
+      staged.presentation = prepared.value.state.presentation;
+      const effects = prepared.value.delta;
+      if (effects) {
+        delta.objects.push(...effects.objects); delta.audio.push(...effects.audio);
+        if (effects.objects.length) visualSource = source;
+        if (effects.providerCommands?.length) {
+          if (mode === 'inspection') {
+            if (event.kind === 'live2dExpression')
+              effects.providerCommands = [{ objectId: event.objectId, command: { expression: event.expressionName, settleExpression: true } }];
+            const checked = await this.prepareProviderCommands(active, staged, effects, token);
+            if (!checked.ok) throw asIssue(checked.error, source);
+            checked.value?.dispose();
+          } else {
+            (delta.providerCommands ??= []).push(...effects.providerCommands.map(command => ({ ...command, source })));
+            visualSource = source;
+          }
+        }
+      }
+      wait.textShown = position;
+    }
+    wait.textShown = progress.waiting ? progress.positions[progress.cursor - 1]! : shown;
+    const reading = staged.presentation.text.reading;
+    const pageEnd = reading?.mode === 'nvl' && reading.end !== null ? reading.end : graphemes(staged.presentation.text.text).length;
+    wait.textComplete = !progress.waiting && wait.textShown >= pageEnd && (progress.positions[progress.cursor] ?? Infinity) > pageEnd;
+    return { delta: delta.objects.length || delta.audio.length || delta.providerCommands?.length ? delta : null, visualSource };
+  }
+
+  private async publishDialogueProgress(active: Active, token: ExecutionToken, shown: number, mode: RevealMode, releaseWait = false): Promise<Result<RuntimeInspection>> {
+    const waiting = active.state.wait as Extract<RuntimeState['wait'], { kind: 'say' }>;
+    const inline = waiting.inline!, reading = active.state.presentation.text.reading;
+    if (mode === 'reveal' && !releaseWait) {
+      if (inline.waiting) return success(this.inspect()!);
+      const total = graphemes(active.state.presentation.text.text).length;
+      const end = reading?.mode === 'nvl' ? reading.end ?? total : total;
+      if (shown < end && (inline.positions[inline.cursor] ?? Infinity) > shown) {
+        if (shown > waiting.textShown) { waiting.textShown = shown; active.sequence++; }
+        return success(this.inspect()!);
+      }
+    }
+    try {
+      const staged = clone(active.state), wait = staged.wait as typeof waiting;
+      if (releaseWait) wait.inline!.waiting = null;
+      const { delta, visualSource } = await this.reduceDialogue(active, staged, token, shown, mode);
+      if (this.active !== active || !tokenEqual(active.token, token)) return failure(issue('TOKEN_STALE', 'Dialogue progress belongs to another line'));
+      if (this.pauseReasons.size || active.status === 'paused') return failure(issue('SESSION_PAUSED', 'Session is paused'));
+      if (equal(wait, waiting)) return success(this.inspect()!);
+      const continuation = this.shouldContinueDialogue(active, staged, at(active.snapshot, staged.position));
+      if (!delta && !continuation) {
+        // Only the wait changed. Keep the last stage frame captured by the host.
+        active.state.wait = wait; active.sequence++;
+        return success(this.inspect()!);
+      }
+      const prepared = await this.prepareProviderCommands(active, staged, delta, token, !!visualSource);
+      if (!prepared.ok) return failure(asIssue(prepared.error, prepared.error.source ?? visualSource));
+      try {
+        if (this.inspectActivity()?.status === 'paused') return failure(issue('SESSION_PAUSED', 'Session is paused'));
+        const committed = await this.commit(active, staged, clone(this.ports.longTerm.current(active.domain)), delta, token, 'statement', false, prepared.value);
+        return committed.ok ? this.run() : failure(asIssue(committed.error, visualSource));
+      } finally { prepared.value?.dispose(); }
+    } catch (error) { return failure(asIssue(error)); }
+  }
+
+  elapseDialogueWait(input: { token: ExecutionToken; eventId: Id; deltaMs: number }): Result<boolean> {
+    const active = this.active, wait = active?.state.wait;
+    const blocked = wait?.kind === 'say' ? wait.inline?.waiting : null;
+    if (!active || !tokenEqual(active.token, input.token) || blocked?.eventId !== input.eventId || blocked.remainingMs === null)
+      return failure(issue('TOKEN_STALE', 'Time progress belongs to another dialogue wait'));
+    if (this.execution || this.pauseReasons.size || active.pending || active.status !== 'waiting') return success(false);
+    if (Number.isFinite(input.deltaMs) && input.deltaMs > 0 && blocked.remainingMs > 0) {
+      blocked.remainingMs = Math.max(0, blocked.remainingMs - input.deltaMs);
+      active.sequence++;
+    }
+    return success(blocked.remainingMs === 0);
+  }
+
+  releaseDialogueWait(input: { token: ExecutionToken; eventId: Id; expectedSequence: number; mode: 'timed' | 'auto' }): Promise<Result<RuntimeInspection>> {
+    return this.exclusively(() => {
+      const active = this.active, wait = active?.state.wait;
+      if (!active || !tokenEqual(active.token, input.token) || wait?.kind !== 'say' || wait.inline?.waiting?.eventId !== input.eventId)
+        return Promise.resolve(failure(issue('TOKEN_STALE', 'Completion belongs to another dialogue wait')));
+      if (active.sequence !== input.expectedSequence) return Promise.resolve(failure(issue('STATE_CHANGED', 'Completion belongs to an earlier reading state')));
+      if (active.pending || active.status !== 'waiting' || this.pauseReasons.size ||
+        wait.inline.waiting.remainingMs !== (input.mode === 'timed' ? 0 : null)) return Promise.resolve(success(this.inspect()!));
+      return this.publishDialogueProgress(active, input.token, wait.textShown, 'reveal', true);
+    }, false);
   }
   inspectVoice(input: { sessionId: Id; expectedSequence: number; token: ExecutionToken }): Result<VoiceResolution> {
     const active = this.active; if (!active || active.id !== input.sessionId || active.sequence !== input.expectedSequence || !tokenEqual(active.token, input.token)) return failure(issue('STATE_CHANGED', 'Voice inspection requested an old state'));

@@ -11,7 +11,7 @@ import { DefaultTimeoutSecByPurpose } from '@galcraft/contracts';
 import { createAssetIndex } from '@galcraft/assets';
 import { builtinProductionOperations } from '@galcraft/authoring/production/operations';
 import { StudioCollaboration } from './collaboration-providers.mjs';
-import { StudioProduction } from './production-providers.mjs';
+import { StudioProduction } from './production-providers.mts';
 import { compile } from '@galcraft/dsl';
 
 let directory, project, owner, client, production;

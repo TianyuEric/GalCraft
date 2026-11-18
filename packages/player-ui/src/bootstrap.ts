@@ -19,7 +19,7 @@ import { savePreparedRecord } from './save-request.js';
 import { installPluginRuntimes } from './plugin-runtimes.js';
 import { emptyContributions, PluginStateAdapter, type Contributions, type PluginManifest } from '@galcraft/plugins/contracts';
 import { waitForTitleFrame } from './title-media.js';
-import { createVideoBufferLoader, upcomingPlaybackAssets } from './playback-resources.js';
+import { createVideoBufferLoader, upcomingPlaybackReferences, type PlaybackAsset } from './playback-resources.js';
 
 /** One mounted Player reuses exact audio variants within a bounded decoded-buffer budget. */
 export function createAudioBufferLoader(context: AudioContext, resources: PlayerHost['resources'], maximumBytes = 64 * 1024 * 1024, maximumEntries = 32) {
@@ -55,7 +55,7 @@ export type PlayerMount = { view: PlayerView; data: PlayerDataService; session: 
   stage: StageController; restore: RestoreCoordinator; longTerm: PlayerLongTermService;
   updatePreview(snapshot: Snapshot, styles?: Record<string, string>, previewStyleIds?: Id[]): Result<void>;
   setPreviewMuted(muted: boolean): void;
-  activatePreview(prepared: PreparedSession, mode?: 'inspection' | 'current' | 'playtest'): Promise<Result<void>> };
+  activatePreview(prepared: PreparedSession, mode?: 'inspection' | 'current' | 'playtest', options?: { eventId?: Id }): Promise<Result<void>> };
 
 export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapshot: Snapshot,
   domain: Domain = { projectId: rawSnapshot.projectId, kind: 'player', instance: 'default' },
@@ -73,6 +73,11 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
   if(snapshot.characters.some(character=>character.afterstory))completeAfterstoryPage(snapshot.template);
   const stageElement = document.createElement('div'); stageElement.className = 'gc-stage';
   root.append(stageElement);
+  const lockedProviderVersion = (asset: Snapshot['assets'][number]) => {
+    const pluginId = asset.typeData?.provider.id ??
+      (asset.provider === 'galcraft.live2d' ? 'org.galcraft.live2d' : asset.provider?.split('/')[0]);
+    return snapshot.lock.plugins.find(item => item.id === pluginId)?.version;
+  };
   const locations = new Map<string, { uri: string; release(): void }>();
   const resolve: StageResourcePort['resolve'] = async (assetId: Id, variantId: Id) => {
     const asset = snapshot.assets.find(item => item.assetId === assetId && item.variantId === variantId);
@@ -82,7 +87,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     if (!location) { const resolved = await host.resources.resolve(assetId, variantId);
       if (!resolved.ok) return resolved;
       location = { uri: resolved.value.uri, release: resolved.value.release }; locations.set(key, location); }
-    return ok({ asset, url: location.uri, anchor: { x: .5, y: 1 }, providerVersion: snapshot.lock.plugins.find(item => item.id === asset.provider?.split('/')[0])?.version });
+    return ok({ asset, url: location.uri, anchor: { x: .5, y: 1 }, providerVersion: lockedProviderVersion(asset) });
   };
   const resources: StageResourcePort = { resolve, resolveAsset: async assetId => {
     const asset = snapshot.assets.find(item => item.assetId === assetId);
@@ -90,7 +95,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
   } };
   const stage = await StageController.create(stageElement, { width: snapshot.project.canvas.width,
     height: snapshot.project.canvas.height, color: snapshot.project.canvas.stageColor }, resources, stageProviders);
-  const videoElement = document.createElement('video'); videoElement.className = 'gc-video'; videoElement.playsInline = true;
+  const videoElement = document.createElement('video'); videoElement.className = 'gc-video'; videoElement.playsInline = true; videoElement.crossOrigin = 'anonymous';
   let previewMuted = false;
   const mutePreviewMedia = () => { if (domain.kind !== 'player') for (const media of root.querySelectorAll<HTMLMediaElement>('video,audio')) media.muted = previewMuted; };
   const previewMediaObserver = domain.kind === 'player' ? null : new MutationObserver(mutePreviewMedia);
@@ -105,9 +110,9 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
   const videoBuffers = createVideoBufferLoader(host.resources);
   const imagePreparations = new Map<Id, Promise<void>>();
   let preparationDisposed = false, prefetchActive = 0;
-  let prefetchQueue: Id[] = [];
-  const prepareAsset = async (assetId: Id, required = false): Promise<void> => {
-    const asset = snapshot.assets.find(item => item.assetId === assetId); if (!asset || preparationDisposed) return;
+  let prefetchQueue: PlaybackAsset[] = [];
+  const prepareAsset = async ({ assetId, variantId }: PlaybackAsset, required = false): Promise<void> => {
+    const asset = snapshot.assets.find(item => item.assetId === assetId && (!variantId || item.variantId === variantId)); if (!asset || preparationDisposed) return;
     if (asset.kind === 'audio') {
       const levels = data.preferences()!.volumes;
       if (levels.master <= 0) return;
@@ -120,28 +125,28 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       return;
     }
     if (asset.kind !== 'image') return;
-    let pending = imagePreparations.get(assetId);
+    let pending = imagePreparations.get(asset.variantId);
     if (!pending) {
       pending = (async () => {
         const resolved = await host.resources.resolve(asset.assetId, asset.variantId);
         if (!resolved.ok) throw new Error(resolved.error.message);
         try { const image = new Image(); image.src = resolved.value.uri; await image.decode(); }
         finally { resolved.value.release(); }
-      })().catch(error => { imagePreparations.delete(assetId); throw error; });
-      imagePreparations.set(assetId, pending);
+      })().catch(error => { imagePreparations.delete(asset.variantId); throw error; });
+      imagePreparations.set(asset.variantId, pending);
       if (imagePreparations.size > 32) imagePreparations.delete(imagePreparations.keys().next().value!);
     }
     if (required) await pending; else await pending.catch(() => {});
   };
   const pumpPrefetch = () => {
     while (!preparationDisposed && prefetchActive < 2 && prefetchQueue.length) {
-      const id = prefetchQueue.shift()!; prefetchActive++;
-      void prepareAsset(id).catch(() => {}).finally(() => { prefetchActive--; pumpPrefetch(); });
+      const asset = prefetchQueue.shift()!; prefetchActive++;
+      void prepareAsset(asset).catch(() => {}).finally(() => { prefetchActive--; pumpPrefetch(); });
     }
   };
   const prefetchAfter = (statementId: Id) => {
     const preferences = data.preferences()!;
-    prefetchQueue = upcomingPlaybackAssets(snapshot, statementId, preferences.voiceLocale, false, 3,
+    prefetchQueue = upcomingPlaybackReferences(snapshot, statementId, preferences.voiceLocale, false, 3,
       preferences.volumes.master > 0 && preferences.volumes.voice > 0);
     pumpPrefetch();
   };
@@ -157,7 +162,8 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
   const longTerm = new PlayerLongTermService(data);
   const stageCommands = new StageCommandService({ character: id => snapshot.characters.find(character => character.id === id), asset: (assetId, variantId) => {
     const asset = snapshot.assets.find(item => item.assetId === assetId && (!variantId || item.variantId === variantId));
-    return asset ? ok({ variantId: asset.variantId, kind: asset.kind, provider: asset.provider, providerVersion: null, imageAnimation: asset.metadata.imageAnimation, loop: asset.metadata.loop }) :
+    return asset ? ok({ variantId: asset.variantId, kind: asset.kind, provider: asset.provider, providerVersion: lockedProviderVersion(asset) ?? null,
+      imageAnimation: asset.metadata.imageAnimation, loop: asset.metadata.loop }) :
       fail('ASSET_MISSING', `素材 ${assetId} 不在当前快照`);
   }, animation: animationResourceReader(snapshot, host.resources) });
   let renderGeneration = 0;
@@ -178,9 +184,11 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     if (!synced.ok) view.setStageError(synced.error);
     return synced;
   };
+  let releaseCompletedMovie: (() => void) | null = null;
   const video = new VideoController(videoElement, completion => {
     const generation = videoGeneration, location = videoLocation;
     const releasePresentation=view.holdVideoPresentation();
+    releaseCompletedMovie = releasePresentation;
     void syncStage().then(synced => synced.ok ? session.dispatch({ kind: 'animation', token: completion.token }) : synced).then(async result => {
       if (result.ok) {
         view.render(); await view.completeVideoPresentation();
@@ -189,10 +197,55 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
         location?.release(); videoLocation = null; audio.setPause('video', false);
       }
       else {root.classList.remove('gc-video-active');view.showError(result.error);view.render();}
-    }).catch(error=>{root.classList.remove('gc-video-active');view.showError(issueFromError(error,'M07'));view.render();}).finally(releasePresentation);
+    }).catch(error=>{root.classList.remove('gc-video-active');view.showError(issueFromError(error,'M07'));view.render();}).finally(() => {
+      if (releaseCompletedMovie === releasePresentation) releaseCompletedMovie = null;
+      releasePresentation();
+    });
   });
+  type MovieLocation = Extract<Awaited<ReturnType<typeof host.resources.resolve>>, { ok: true }>['value'];
+  let sceneMovie: { token: ExecutionToken; location: MovieLocation } | null = null;
+  const movieLocation = async (asset: Snapshot['assets'][number]): Promise<Result<MovieLocation>> => {
+    try {
+      const bytes = asset.files.find(file => file.path === asset.entry)?.bytes ?? 0;
+      return bytes <= videoBuffers.maximumBytes ? ok(await videoBuffers.load(asset.assetId, asset.variantId)) :
+        await host.resources.resolve(asset.assetId, asset.variantId);
+    } catch (error) { return fail('VIDEO_PLAY_FAILED', String(error)); }
+  };
+  const movieFrame = (element: HTMLVideoElement) => {
+    const frame = document.createElement('canvas');
+    frame.width = snapshot.project.canvas.width; frame.height = snapshot.project.canvas.height;
+    const context = frame.getContext('2d')!;
+    context.fillStyle = '#000'; context.fillRect(0, 0, frame.width, frame.height);
+    const scale = Math.min(frame.width / element.videoWidth, frame.height / element.videoHeight);
+    const width = element.videoWidth * scale, height = element.videoHeight * scale;
+    context.drawImage(element, (frame.width - width) / 2, (frame.height - height) / 2, width, height);
+    context.getImageData(0, 0, 1, 1);
+    return frame;
+  };
+  const prepareSceneMovie = async ({ assetId, variantId }: { assetId: Id; variantId: Id }):
+    Promise<Result<{ location: MovieLocation; frame: HTMLCanvasElement }>> => {
+    const asset = snapshot.assets.find(item => item.assetId === assetId && item.variantId === variantId && item.kind === 'video');
+    if (!asset) return fail('VIDEO_PLAY_FAILED', '规则图目标影片版本不可用');
+    const location = await movieLocation(asset);
+    if (!location.ok) return location;
+    const element = document.createElement('video');
+    element.preload = 'auto'; element.muted = true; element.crossOrigin = 'anonymous';
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = AbortSignal.timeout(20_000);
+        element.addEventListener('loadeddata', () => resolve(), { once: true });
+        element.addEventListener('error', () => reject(new Error('目标影片首帧读取失败')), { once: true });
+        timeout.addEventListener('abort', () => reject(new Error('目标影片首帧读取超时')), { once: true });
+        element.src = location.value.uri;
+      });
+      return ok({ location: location.value, frame: movieFrame(element) });
+    } catch (error) {
+      location.value.release();
+      return fail('VIDEO_PLAY_FAILED', String(error));
+    } finally { element.removeAttribute('src'); element.load(); }
+  };
   let storyVideoVolume=1;
-  const startStoryVideo = async (token:ExecutionToken):Promise<Result<Id>> => {
+  const startStoryVideo = async (token:ExecutionToken, reserved?: MovieLocation):Promise<Result<Id>> => {
     const releasePresentation=view.holdVideoPresentation();
     try {
     const generation = ++videoGeneration;
@@ -201,13 +254,8 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     const instruction=snapshot.scenes.flatMap(scene=>scene.instructions).find(item=>item.statementId===token.statementId);
     const args=instruction?.args as {assetId?:Id;skipFadeMs?:number;volume?:number}|undefined;
     const asset=snapshot.assets.find(item=>item.assetId===args?.assetId);
-    if(!inspection||instruction?.opcode!=='video'||!asset)return fail('VIDEO_STALE','影片已失效');
-    let resolved: Awaited<ReturnType<typeof host.resources.resolve>>;
-    try {
-      const bytes=asset.files.find(file=>file.path===asset.entry)?.bytes??0;
-      resolved=bytes<=videoBuffers.maximumBytes?ok(await videoBuffers.load(asset.assetId,asset.variantId)):
-        await host.resources.resolve(asset.assetId,asset.variantId);
-    } catch(error) { return fail('VIDEO_PLAY_FAILED',String(error)); }
+    if(!inspection||instruction?.opcode!=='video'||!asset){reserved?.release();return fail('VIDEO_STALE','影片已失效');}
+    const resolved = reserved ? ok(reserved) : await movieLocation(asset);
     if(!resolved.ok)return resolved;
     if(generation!==videoGeneration||session.inspectActivity()?.sessionId!==token.sessionId){resolved.value.release();return fail('VIDEO_STALE','影片已失效');}
     storyVideoVolume=args?.volume??1;videoLocation?.release();videoLocation=resolved.value;
@@ -240,15 +288,36 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       return entryPresentation.enterBody(sessionId,state);
     },
     prepareProviderCommands: async input => {
+      const release = view.holdResourcePreparation();
+      try {
       await stagePending;
-      const prepared = await stage.prepareStage(input.sessionId, input.state, null, voiceBindings.get(input.sessionId) ?? null, input.commands);
-      if (!prepared.ok) { if (session.inspectActivity()?.sessionId === input.sessionId) view.setStageError(prepared.error); return prepared; }
+      const binding = input.voiceBinding === undefined ? voiceBindings.get(input.sessionId) ?? null : input.voiceBinding;
+      const movie = input.sceneMovie ? await prepareSceneMovie(input.sceneMovie) : ok(null);
+      if (!movie.ok) return movie;
+      let reserved = movie.value?.location;
+      let prepared: Awaited<ReturnType<StageController['prepareStage']>>;
+      let priorMovieFrame: HTMLCanvasElement | undefined;
+      try {
+        if (input.sceneRule && !view.fastForwarding && video.state === 'finished' && !videoElement.hidden && videoElement.readyState >= 2)
+          priorMovieFrame = movieFrame(videoElement);
+        prepared = await stage.prepareStage(input.sessionId, input.state, null, binding, input.commands,
+          input.sceneRule && !view.fastForwarding ? { settings: input.sceneRule, movieFrame: movie.value?.frame, priorMovieFrame } : undefined);
+      } catch (error) { reserved?.release(); throw error; }
+      if (!prepared.ok) { reserved?.release(); if (session.inspectActivity()?.sessionId === input.sessionId) view.setStageError(prepared.error); return prepared; }
       return ok({ state: prepared.value.state,
         commit: () => { const result = stage.commitStage(prepared.value.id, input.token);
-          if (result.ok) { activeStageSessionId = input.sessionId; stageCurrent = true; }
+          if (result.ok) {
+            activeStageSessionId = input.sessionId; stageCurrent = true;
+            if (priorMovieFrame && stage.sceneRuleActive) {
+              videoElement.hidden = true; root.classList.remove('gc-video-active');
+              releaseCompletedMovie?.(); releaseCompletedMovie = null;
+            }
+            if (reserved) { sceneMovie?.location.release(); sceneMovie = { token: input.token, location: reserved }; reserved = undefined; }
+          }
           else if (session.inspectActivity()?.sessionId === input.sessionId) view.setStageError(result.error);
           return result; },
-        dispose: () => stage.discardPrepared(prepared.value.id) });
+        dispose: () => { reserved?.release(); reserved = undefined; stage.discardPrepared(prepared.value.id); } });
+      } finally { release(); }
     },
     onCommitted: async ({ sessionId, token, state, delta, presentationPrepared }) => {
       const releaseResources = view.holdResourcePreparation();
@@ -269,13 +338,29 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       const audioStarts: Promise<boolean>[] = [];
       let movieStart: Promise<boolean> | null = null;
       for (const item of delta?.audio ?? []) {
-        if (item.bus === 'video') continue;
+        if (item.bus === 'video' || item.dialogueEventId) continue;
         if (item.bus === 'bgm' || item.bus === 'sfx' || item.bus === 'ui')
           audioStarts.push(audioRouter.applyStage(sessionId, { bus: item.bus, id: item.id, state: item.state }).then(id => { if(id&&item.bus==='bgm'&&item.state.assetId)entryPresentation.bgmStarted(sessionId,id,item.state.assetId);const inspected=id?audio.inspect({sessionId,source:{kind:'instance',id}}):null; return !!inspected?.ok && inspected.value.status==='playing'; }));
       }
       const movie = delta?.audio.find(item => item.bus === 'video' && item.state.assetId && item.state.variantId);
       if (movie?.state.assetId && movie.state.variantId) {
-        movieStart=startStoryVideo(token).then(started=>{if(!started.ok&&started.error.code!=='VIDEO_STALE'&&session.inspectActivity()?.sessionId===sessionId){view.showError(started.error);view.navigation.replace('videoError');}return started.ok&&videoElement.readyState>=2&&!videoElement.paused;});
+        const reserved = sceneMovie;
+        sceneMovie = null;
+        movieStart = (async () => {
+          if (reserved) {
+            releaseResources();
+            if (view.preparingResources) stage.completeSceneRule();
+            await stage.waitForSceneRule();
+            if (view.isDisposed || generation !== renderGeneration || session.inspectActivity()?.sessionId !== sessionId ||
+              reserved.token.statementId !== token.statementId || reserved.token.occurrence !== token.occurrence) {
+              reserved.location.release(); return false;
+            }
+          }
+          const started = await startStoryVideo(token, reserved?.location);
+          if (reserved) stage.finishSceneRule();
+          if(!started.ok&&started.error.code!=='VIDEO_STALE'&&session.inspectActivity()?.sessionId===sessionId){view.showError(started.error);view.navigation.replace('videoError');}
+          return started.ok&&videoElement.readyState>=2&&!videoElement.paused;
+        })();
       } else if (video.state !== 'idle' && video.state !== 'finished' && state.wait?.kind !== 'animation') {
         video.returnTitle(); videoElement.hidden = true; root.classList.remove('gc-video-active');
         videoLocation?.release(); videoLocation = null;
@@ -306,6 +391,11 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       await stagePending;
       if (generation !== renderGeneration || session.inspectActivity()?.sessionId !== sessionId || !stageCurrent)
         return { presentationEntered: false, mediaStarted: false };
+      for (const item of delta?.audio ?? []) if (item.bus === 'sfx' && item.dialogueEventId) {
+        const source = snapshot.sourceMap.find(entry => entry.statementId === token.statementId && entry.source.eventId === item.dialogueEventId)?.source;
+        void audioRouter.applyStage(sessionId, { bus: 'sfx', id: item.id, state: item.state }, token,
+          problem => { if (problem.code !== 'AUDIO_STALE') view.showError(source ? { ...problem, source } : problem); });
+      }
       audioRouter.applyDialogue({ sessionId, token, state, delta });
       if (movieStart) { const started = await movieStart; return { presentationEntered: started, mediaStarted: started }; }
       const waitingForMovie = state.wait?.kind === 'animation' && snapshot.scenes.flatMap(scene => scene.instructions).some(instruction => instruction.statementId === token.statementId && instruction.opcode === 'video');
@@ -321,6 +411,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
   const releaseClock=host.subscribeLifecycle(event=>{if(event.type==='blur'||event.type==='focus')resetPlayClock();});
   document.addEventListener('visibilitychange',resetPlayClock);
   const publishSessionStage = (sessionId: Id, previousSessionId: Id | null) => {
+    sceneMovie?.location.release(); sceneMovie = null;
     videoGeneration++; videoFrameLifetime?.abort();
     enteredVideo = null;
     renderGeneration++; video.returnTitle(); videoElement.hidden = true;
@@ -351,14 +442,14 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     waitForStage: () => stagePending, syncStage,
     prepareOpeningAssets: async position => {
       const preferences = data.preferences()!;
-      const assets = upcomingPlaybackAssets(snapshot, position.statementId!, preferences.voiceLocale, true, 1,
+      const assets = upcomingPlaybackReferences(snapshot, position.statementId!, preferences.voiceLocale, true, 1,
         preferences.volumes.master > 0 && preferences.volumes.voice > 0);
       // The actual stage/video entry owns errors and retry. A failed warm-up leaves that path available.
       await Promise.all(assets.map(id => prepareAsset(id, true).catch(() => {})));
     },
     prepareChoiceAssets: async assetIds => {
       // The selected branch supplies only its first screen. This never runs script or starts media.
-      prefetchQueue = [...new Set(assetIds)].slice(0, 12); pumpPrefetch();
+      prefetchQueue = [...new Set(assetIds)].slice(0, 12).map(assetId => ({ assetId })); pumpPrefetch();
     },
     commitSessionStage: (preparedStageId, owner, previousSessionId) => {
       const committed = stage.commitStage(preparedStageId, owner);
@@ -375,7 +466,7 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       entryPresentation.stop();
       if (activeStageSessionId === sessionId) { activeStageSessionId = null; stageCurrent = false; }
       view.setStageError(null); },
-    onDispose: () => {previewMediaObserver?.disconnect();releaseClock();document.removeEventListener('visibilitychange',resetPlayClock);videoFrameLifetime?.abort();videoLocation?.release(); for (const location of locations.values()) location.release(); locations.clear();
+    onDispose: () => {previewMediaObserver?.disconnect();releaseClock();document.removeEventListener('visibilitychange',resetPlayClock);videoFrameLifetime?.abort();videoLocation?.release();sceneMovie?.location.release();sceneMovie=null; for (const location of locations.values()) location.release(); locations.clear();
       audioRouter.clear();
       preparationDisposed = true; prefetchQueue = []; imagePreparations.clear(); videoBuffers.clear(); audioBuffers.clear();
       void audioContext.close(); resizeObserver.disconnect(); } });
@@ -405,12 +496,15 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
   };
   stage.onCompletion(completeStageWait);
   let timerCompleting = false;
+  let failedDialogueWait: string | null = null;
   const frame = (now: number) => { if (!root.isConnected || view.isDisposed) return;
     const prefs=data.preferences()!;
     videoElement.volume=Math.min(1,Math.max(0,storyVideoVolume*prefs.volumes.master*prefs.volumes.video/10000));stage.setVisualPreferences(prefs.effects,prefs.reducedMotion);
     const elapsedMs = Math.max(0, now - prior); const deltaMs = Math.min(100, elapsedMs); prior = now;
     if(view.playTimeActive)session.elapsePlayTime(elapsedMs);
+    const sceneRuleActive = stage.sceneRuleActive;
     if(!view.preparingResources)stage.tick(deltaMs, audio.voiceLevel(), audio.voicePCM(deltaMs));
+    if (sceneRuleActive && !stage.sceneRuleActive) view.render();
     video.tick(deltaMs); audio.tick(deltaMs); view.updateMediaFrame(deltaMs);
     if (video.state === 'error' && !videoElement.hidden) {
       videoElement.hidden = true; root.classList.remove('gc-video-active'); audio.setPause('video', false);
@@ -425,9 +519,23 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
         else { view.updateIntroFrame(captured.value.intro); view.updateStageFrame(captured.value); } }
     }
     if(view.storyActive&&pendingAnimationCompletion&&!stageAnimationCompleting){const pending=pendingAnimationCompletion;pendingAnimationCompletion=null;completeStageWait(pending);}
-    if (stageCurrent && view.storyActive && !timerCompleting) {
+    if (stageCurrent && view.storyActive && !stage.sceneRuleActive && !timerCompleting) {
       const waiting = session.inspectActivity();
-      if (waiting?.token && waiting.waitKind === 'timer') {
+      if (waiting?.token && waiting.dialogueWait && waiting.dialogueWait.remainingMs !== null) {
+        const { token, dialogueWait: { eventId } } = waiting;
+        const key = `${token.sessionId}/${token.occurrence}/${eventId}`;
+        const elapsed = session.elapseDialogueWait({ token, eventId, deltaMs: elapsedMs });
+        if (elapsed.ok && elapsed.value && key !== failedDialogueWait) {
+          timerCompleting = true;
+          const expectedSequence = session.inspectActivity()!.sequence;
+          void session.releaseDialogueWait({ token, eventId, expectedSequence, mode: 'timed' }).then(result => {
+            if (result.ok) view.render();
+            else if (!['TOKEN_STALE', 'STATE_CHANGED', 'SESSION_PAUSED'].includes(result.error.code)) {
+              failedDialogueWait = key; view.showError(result.error);
+            }
+          }).finally(() => { timerCompleting = false; });
+        }
+      } else if (waiting?.token && waiting.waitKind === 'timer') {
         const elapsed = session.elapseTimer({ token: waiting.token, deltaMs });
         if (elapsed.ok && elapsed.value) {
           timerCompleting = true;
@@ -470,9 +578,11 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
     setPreviewMuted: muted => {
       if (domain.kind === 'player') return;
       previewMuted = muted; audio.setOutputMuted(muted); mutePreviewMedia();
-    }, activatePreview: async (prepared, mode = 'playtest') => {
+    }, activatePreview: async (prepared, mode = 'playtest', options) => {
     if (domain.kind === 'player') return fail('PREVIEW_DOMAIN', '调试入口只适用于预览资料域');
-    const previewPresentation = mode === 'inspection' ? inspectionPresentation(prepared.state.presentation) : prepared.state.presentation;
+    const inspected = mode === 'inspection' ? await session.prepareDialogueInspection(prepared.id, options?.eventId) : ok(prepared.state);
+    if (!inspected.ok) return inspected;
+    const previewPresentation = mode === 'inspection' ? inspectionPresentation(inspected.value.presentation) : inspected.value.presentation;
     const visual = await stage.prepareStage(prepared.sessionId, previewPresentation, null, prepared.voiceBinding);
     if (!visual.ok) return visual;
     const previous = session.inspectActivity()?.sessionId;
@@ -500,10 +610,6 @@ export async function mountPlayer(root: HTMLElement, host: PlayerHost, rawSnapsh
       if (inspected?.token && inspected.state.wait?.kind === 'animation' && snapshot.scenes.flatMap(scene => scene.instructions).find(instruction => instruction.statementId === inspected.token!.statementId)?.opcode === 'video') {
         const movie = await startStoryVideo(inspected.token); if (!movie.ok) return movie;
         const paused = await video.setPause(true); if (!paused.ok) return paused;
-      }
-      if (inspected?.token && inspected.state.wait?.kind === 'say') {
-        const revealed = await session.updateTextProgress({ token: inspected.token, textShown: Number.MAX_SAFE_INTEGER });
-        if (!revealed.ok) return revealed;
       }
       session.setPreviewPaused(true);
     }

@@ -8,7 +8,7 @@ import { zipSync, unzipSync } from 'fflate';
 import { ConnectionConfigSchema, IdSchema, readPluginDocumentInstances } from '@galcraft/contracts';
 import type { Artifact, Asset, CancelResult, ConnectionConfig, EditPlan, EditReceipt, Id, Issue, Json, RemoteStatus, Result, VersionRef } from '@galcraft/contracts';
 import type { ProjectSession } from '@galcraft/documents';
-import type { Candidate, GenerationAdapter, GenerationAdapterLease, GenerationProviderSnapshot, GenerationInput, GenerationReadiness, MediaInput, ProductionFormDraft, ReviewProvider, SubmissionContext, Task, TaskSummary, TaskItem, TaskPlan, TaskPlanInput } from './types.js';
+import type { Candidate, GenerationAdapter, GenerationAdapterLease, GenerationProviderSnapshot, GenerationInput, GenerationReadiness, MediaInput, ProductionFormDraft, ProductionTaskProblem, ReviewProvider, SubmissionContext, Task, TaskSummary, TaskItem, TaskPlan, TaskPlanInput } from './types.js';
 import { ProductionStore } from './store.js';
 import { fail, issue, ok, validateItems } from './validation.js';
 import { defaultOperation, normalizeProductionDraft } from './draft.js';
@@ -65,6 +65,22 @@ export class ProductionService {
   private serial<T>(action: () => Promise<T>): Promise<T> { const result = this.mutation.catch(() => {}).then(action); this.mutation = result; return result; }
   listTasks(): Task[] { return structuredClone([...this.tasks.values()].filter(task => !this.removedTasks.has(task.id))); }
   listTaskSummaries(): TaskSummary[] { return [...this.tasks.values()].filter(task => !this.removedTasks.has(task.id)).map(({ id, name, revision, createdAt, updatedAt, items }) => ({ id, name, revision, createdAt, updatedAt, items: items.map(({ id, state }) => ({ id, state })) })); }
+  listTaskProblems(): ProductionTaskProblem[] {
+    const superseded = new Set([...this.tasks.values()].filter(task => task.previousTaskId && task.previousItemId)
+      .map(task => `${task.previousTaskId}:${task.previousItemId}`));
+    return [...this.tasks.values()].filter(task => !this.removedTasks.has(task.id)).map(task => ({
+      id: task.id, name: task.name, revision: task.revision,
+      failures: task.items.flatMap(item => {
+        if (superseded.has(`${task.id}:${item.id}`) || !['failed', 'blocked', 'interrupted'].includes(item.state)) return [];
+        const issues = item.issues.filter(issue => issue.severity === 'error' || issue.severity === 'warning');
+        if (!issues.length && item.state === 'interrupted') issues.push({ code: 'PRODUCTION_INTERRUPTED', owner: 'M10', severity: 'warning',
+          message: '制作项已中断。打开原任务查看可用的恢复操作。', related: [], actions: ['locate'] });
+        if (!issues.length && item.state === 'failed') issues.push({ code: 'PRODUCTION_FAILED', owner: 'M10', severity: 'error',
+          message: '制作项执行失败。打开原任务查看详情与可用操作。', related: [], actions: ['locate'] });
+        return issues.length ? [{ itemId: item.id, attemptId: item.attempts.at(-1)?.id ?? item.id, issues: structuredClone(issues) }] : [];
+      }),
+    }));
+  }
   getTask(id: Id): Task | null { return this.removedTasks.has(id) ? null : structuredClone(this.tasks.get(id) ?? null); }
   listImageCandidates(): Pick<Candidate, 'id' | 'taskId' | 'artifacts' | 'provenance'>[] {
     return [...this.candidates.values()].filter(candidate => !this.removedTasks.has(candidate.taskId) && candidate.artifacts.some(artifact => artifact.kind === 'image' && artifact.role === 'primary')).map(({ id, taskId, artifacts, provenance }) => structuredClone({ id, taskId, artifacts, provenance }));
@@ -226,7 +242,7 @@ export class ProductionService {
       if (!this.versionsMatch(expected)) return fail('TASK_SOURCE_CHANGED', '任务来源已变化');
       if(input.externalCallId) { const previous=[...this.tasks.values()].find(task=>task.externalCallId===input.externalCallId);if(previous) { const saved=await this.store.read<TaskPlan>(this.store.path('external-plans',`${encodeURIComponent(input.externalCallId)}.json`));if(saved)return ok(saved); } }
       const now = new Date().toISOString(), task: Task = { schemaVersion: 1, id: createId([this.tasks, this.candidates, this.removedTasks, this.options.project.documents]), projectId: input.projectId, revision: 1, name: input.name, createdAt: now, updatedAt: now,
-        stagePolicy: input.stagePolicy ?? 'interactive', collaboration: structuredClone(input.collaboration), externalCallId:input.externalCallId, previousTaskId:input.previousTaskId, previousItemId:input.previousItemId, presetId: null, sourceDraftId: input.sourceDraftId ?? null, context: structuredClone(input.context.filter(part => part.included)), items, policy: input.policy, selectionRule: input.selectionRule };
+        origin: structuredClone(input.origin), stagePolicy: input.stagePolicy ?? 'interactive', collaboration: structuredClone(input.collaboration), externalCallId:input.externalCallId, previousTaskId:input.previousTaskId, previousItemId:input.previousItemId, presetId: null, sourceDraftId: input.sourceDraftId ?? null, context: structuredClone(input.context.filter(part => part.included)), items, policy: input.policy, selectionRule: input.selectionRule };
       const plan: TaskPlan = { sourceDraftRevision: input.sourceDraftRevision, planId: createId([this.tasks, this.candidates, this.removedTasks, this.options.project.documents]), expected, task, issues: [], sendSummary: items.filter(item => item.configSnapshot).map(item => ({ itemId: item.id,
         destination: item.configSnapshot!.baseUrl, model: item.configSnapshot!.model, textCharacters: inputTextSummary(item.input as GenerationInput).textCharacters,
         media: this.mediaPaths(item.input), requests: 1, price: null })) };
@@ -648,7 +664,8 @@ export class ProductionService {
       delete item.remoteError;delete item.resourceRelease;delete item.resourceWait;item.progress={phase:'',completed:null,total:null};
       item.attempts=[];item.candidateIds=[];item.selectedCandidateId=null;item.issues=[];item.needsReview=false;
       item.dependencies=[];item.sourceVersions=item.sourceVersions.map(value=>({...value,revision:this.options.project.readDocument(value.ref.id)?.revision??value.revision}));
-      return this.planTask({projectId:task.projectId,name:`${task.name} · 新请求`,context:task.context,items:[item],policy:'waitForSelection',selectionRule:null,previousTaskId:task.id,previousItemId:original.id,stagePolicy:task.stagePolicy,collaboration:task.collaboration});
+      const origin = task.origin ?? (task.sourceDraftId ? (await this.store.loadDraft(task.sourceDraftId))?.origin : undefined);
+      return this.planTask({projectId:task.projectId,name:`${task.name} · 新请求`,origin,context:task.context,items:[item],policy:'waitForSelection',selectionRule:null,previousTaskId:task.id,previousItemId:original.id,stagePolicy:task.stagePolicy,collaboration:task.collaboration});
     }catch(error){return fail('TASK_REPREPARE',String(error));}
   }
   async cancel(taskId: Id): Promise<Result<CancelResult>> {

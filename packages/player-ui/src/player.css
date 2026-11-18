@@ -239,6 +239,8 @@
 .gc-dialogue-measure { visibility: hidden; pointer-events: none; }
 .gc-dialogue-visible ruby { ruby-align: center; }
 .gc-dialogue-visible rt { font-size: .5em; line-height: 1; }
+.gc-dialogue-pause::after { content: '…'; margin-inline-start: .35em; opacity: .8; }
+.gc-dialogue-pause[data-kind=input]::after { content: '▸'; }
 .galcraft-player .gc-nvl { position:absolute!important;inset:0!important;transform:none!important;width:100%!important;height:100%!important;max-height:none!important;box-sizing:border-box!important;display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:minmax(0,1fr) auto!important;padding:var(--gc-nvl-padding,48px)!important;gap:var(--gc-nvl-gap,16px)!important;background:var(--gc-nvl-scrim,#000a)!important; }
 .galcraft-player .gc-nvl > .gc-speaker { display: none !important; }
 .galcraft-player .gc-nvl > .gc-body { grid-row:1!important;grid-column:1!important;position:relative!important;inset:auto!important;transform:none!important;display:block!important;width:100%!important;height:100%!important;min-height:0!important;max-height:none!important;overflow:hidden!important;line-height:var(--gc-nvl-line-height,1.8)!important;white-space:pre-wrap;overflow-wrap:anywhere; }

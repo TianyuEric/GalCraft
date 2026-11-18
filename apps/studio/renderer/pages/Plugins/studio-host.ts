@@ -1,13 +1,13 @@
 import { displayMessage, localizedFields } from '@galcraft/plugins/contracts';
 import type { DocumentWorkspace } from '../../components/workbench/document-workspace.js';
-import { createId, LockSchema, type DocumentView, type EditInput, type EditReceipt, type Issue, type Json, type Result, type Source, type StudioBridge } from '@galcraft/contracts';
+import { createId, LockSchema, readPluginDocumentInstances, type DocumentView, type EditInput, type EditReceipt, type Issue, type Json, type Result, type Source, type StudioBridge } from '@galcraft/contracts';
 import { PluginManifestSchema, type PluginManifest, type StudioContribution, type StudioContributionDeclaration,
   type StudioPlugin, type StudioPluginContext, type StudioSlot, type GalCraftPlugin, type Contributions, type PluginContext,
   type PluginDefinition, type PluginToolResult, type StudioScope, type StudioCorePage, type ToolContribution } from '@galcraft/plugins/contracts';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ContributionRegistry, createRuntimeDependencyAccess } from '@galcraft/plugins/registry';
-import { AuthorContributions, ToolRunner, ToolResult, type AuthorContributionServices, type AuthorDocument, type AuthorDocumentEntry, type AuthorToolEntry } from './author-contributions.js';
+import { AuthorContributions, openPluginDocument, ToolRunner, ToolResult, type AuthorContributionServices, type AuthorDocument, type AuthorDocumentEntry, type AuthorToolEntry } from './author-contributions.js';
 import { pluginReferencesFromDocuments, type PluginReference, type PublicFieldEditor } from './plugin-fields.js';
 import { mountStudioDialog } from './studio-dialog.js';
 import { installStudioPluginRuntimes, readPluginDefinition } from './plugin-runtimes.js';
@@ -61,7 +61,7 @@ export class StudioPluginHost {
   readonly diagnostics: Issue[] = [];
   private handle: string | null = null;
   private views = new Map<string, { root: HTMLElement; dispose(): void }>();
-  private documentReleases = new Set<() => void>();
+  private documentReleases = new Map<string, { release(): void; dirty(): boolean }>();
   private dialogs = new Set<{ dispose(): void }>();
   private generation = 0;
   constructor(private bridge: Pick<StudioBridge, 'documents' | 'plugins'>, readonly projectId: string, private locale: () => string,
@@ -133,7 +133,11 @@ export class StudioPluginHost {
       pages: { open: async (key, input) => { const opened = await this.open(key, input, entry.manifest.id); return opened.ok ? ok(null) : opened; } },
       log: issue => { this.diagnostics.push(issue); } };
   }
+  hasUnappliedDocuments() {
+    return [...this.documentReleases.values()].some(document => document.dirty());
+  }
   async load(): Promise<Result<void>> {
+    if (this.hasUnappliedDocuments()) return fail('请先应用或关闭插件文档中的未应用修改。');
     installStudioPluginRuntimes();
     const generation = ++this.generation, listed = await this.bridge.documents.list();
     if (!listed.ok) { this.loadError = listed.error.message; return listed; }
@@ -192,7 +196,8 @@ export class StudioPluginHost {
         if (!instances.some(value => value.abort === abort)) instances.push({ instance: { deactivate: async () => {} }, abort, releases });
       }
       if (generation !== this.generation) throw new Error('作品插件加载已取消');
-      this.unmountViews(); for (const release of this.documentReleases) release(); this.documentReleases.clear();
+      if (this.hasUnappliedDocuments()) throw new Error('请先应用或关闭插件文档中的未应用修改。');
+      this.unmountViews(); for (const document of this.documentReleases.values()) document.release(); this.documentReleases.clear();
       const previous = this.active, previousHandle = this.handle;
       this.entries = []; this.authors = []; this.active = []; this.handle = null;
       await this.retire(previous);
@@ -224,10 +229,10 @@ export class StudioPluginHost {
     if (!view) { view = this.view(entry); this.views.set(entry.contribution.key, view); }
     parent.append(view.root);
   }
-  mountSlot(slot: StudioSlot, parent: HTMLElement) {
+  mountSlot(slot: StudioSlot, parent: HTMLElement, includeAuthorContributions = true) {
     const entries = this.entries.filter(item => item.declaration.slot === slot);
     const publicLocation = slot === 'plugins.configuration' ? 'tools.list' : slot;
-    const publicContent = this.tools(publicLocation).length > 0 || slot === 'plugins.configuration' && this.documentTypes().length > 0;
+    const publicContent = includeAuthorContributions && (this.tools(publicLocation).length > 0 || slot === 'plugins.configuration' && this.documentTypes().length > 0);
     if (!entries.length && !publicContent) return;
     const region = document.createElement('aside'); region.className = 'studio-plugin-slot'; region.dataset.slot = slot;
     for (const entry of entries) {
@@ -255,7 +260,7 @@ export class StudioPluginHost {
   }
   tools(location: string): AuthorToolEntry[] {
     const scope = this.scope();
-    return this.authors.flatMap(entry => entry.contributions.tools.filter(tool => (tool.locations ?? ['tools.list']).includes(location as never)).map(tool => {
+    return this.authors.flatMap(entry => entry.contributions.tools.filter(tool => location === 'all' || (tool.locations ?? ['tools.list']).includes(location as never)).map(tool => {
       let available = true, reason = '';
       if (tool.scope?.pages?.length && !tool.scope.pages.includes(scope.page)) { available = false; reason = this.locale() === 'en' ? 'Open the required page' : this.locale() === 'ja' ? '対象ページを開いてください' : '请先打开适用页面'; }
       const selection = tool.scope?.selection;
@@ -302,12 +307,14 @@ export class StudioPluginHost {
   readonly authorServices: AuthorContributionServices = {
     workspace: { open: (id, title, mount) => {
       if (!this.options?.workspace) throw new Error('文档工作区不可用');
-      let release: () => void;
-      release = this.options.workspace.open(id, title, (done, changed) => {
+      const release = this.options.workspace.open(id, title, (done, changed) => {
         const editor = mount(done, changed);
-        return { ...editor, dispose: () => { editor.dispose(); this.documentReleases.delete(release); } };
+        this.documentReleases.set(id, { release: done, dirty: () => editor.dirty() });
+        return { ...editor, dispose: () => { this.documentReleases.delete(id); editor.dispose(); } };
       });
-      this.documentReleases.add(release); return release;
+      const document = this.documentReleases.get(id);
+      if (document) document.release = release;
+      return release;
     } },
     tools: location => this.tools(location), documentTypes: () => this.documentTypes(), scope: () => this.scope(), references: () => this.references(),
     translate: (pluginId, key) => this.translate(pluginId, key), editor: (pluginId, contribution, field) => this.editor(pluginId, contribution, field),
@@ -330,6 +337,17 @@ export class StudioPluginHost {
     openProduction: result => this.options?.navigate('production', result) ?? Promise.resolve(fail('制作导航不可用')),
   };
   private async applyPrepared(planned: Result<EditInput>): Promise<Result<void>> { if (!planned.ok) return planned; const applied = await this.apply(planned.value); return applied.ok ? ok(undefined) : applied; }
+  async reopenDocument(documentId: string): Promise<Result<void>> {
+    if (!this.options?.workspace) return fail('文档工作区不可用');
+    const listed = await this.bridge.documents.list();
+    if (!listed.ok) return listed;
+    const document = readPluginDocumentInstances(listed.value.filter(item => item.documentId === documentId))[0];
+    if (!document) return fail(`找不到插件文档 ${documentId}`);
+    const entry = this.documentTypes().find(item => item.pluginId === document.pluginId && item.definition.key === document.contributionKey);
+    if (!entry) return fail(`文档 ${documentId} 缺少插件贡献 ${document.contributionKey}；作品内容已保留。`);
+    openPluginDocument(document, entry, this.authorServices, this.locale());
+    return ok(undefined);
+  }
   openPublicTool(pluginId: string, key: string) {
     const entry = this.tools('commands.palette').find(item => item.pluginId === pluginId && item.tool.key === key);
     if (!entry?.available) return;
@@ -360,7 +378,7 @@ export class StudioPluginHost {
     for (const view of [...this.views.values(), ...this.publicViews.values(), ...this.dialogs]) try { view.dispose(); } catch (error) { this.diagnostics.push({ code: 'PLUGIN_VIEW_RELEASE', severity: 'warning', owner: 'M09', message: String(error), related: [], actions: [] }); }
     this.views.clear(); this.publicViews.clear(); this.publicRenders.clear();
   }
-  async dispose() { ++this.generation; this.unmountViews(); for (const release of this.documentReleases) release(); this.documentReleases.clear();
+  async dispose() { ++this.generation; this.unmountViews(); for (const document of this.documentReleases.values()) document.release(); this.documentReleases.clear();
     const active = this.active, handle = this.handle;
     this.active = []; this.handle = null; this.entries = []; this.authors = []; this.listeners.clear(); this.documentContexts.clear(); this.plans.clear();
     await this.retire(active); if (handle) await this.bridge.plugins.release(handle); }

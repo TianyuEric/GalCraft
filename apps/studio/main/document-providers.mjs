@@ -8,6 +8,7 @@ import { createOfficialTemplate, createTemplateDocuments } from '@galcraft/templ
 import { CoreCommandSpecs, parse } from '@galcraft/dsl';
 import { backgroundReferences } from './asset-providers.mjs';
 import { fail, ok } from './result.mjs';
+import { checkProjectEngine } from './restore-dependency.mts';
 
 const envelope = (documentId, data) => JSON.stringify({ schemaVersion: 1, documentId, revision: 1, data }, null, 2) + '\n';
 const sameDirectory = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
@@ -50,12 +51,19 @@ function referenceParent(source, documents) {
 }
 function resolveKnownRef(ref, documents, source) {
   const parent = source ? referenceParent(source, documents) : null;
+  if (ref.kind === 'object' && (!source || source.path === '#source')) {
+    for (const document of documents.values()) for (const [path, text] of Object.entries(document.files)) {
+      if (path.endsWith('/script.gal') && parse({ documentId: document.documentId, revision: document.revision, text }).cst.some(node =>
+        node.valid && ['changeFigure', 'changeIllustration'].includes(node.command) &&
+        node.object?.value?.op !== 'exit' && node.object?.value?.objectId === ref.id)) return true;
+    }
+  }
   if (ref.kind !== 'asset' && ref.kind !== 'variant') {
     for (const document of documents.values()) for (const [path, raw] of Object.entries(document.files)) {
       if (!path.endsWith('.json')) continue;
       const data = JSON.parse(raw).data;
       if (ref.kind === 'chapter' && path === 'project.json' && data.chapters.some(chapter => chapter.id === ref.id)) return true;
-      if (ref.kind === 'object' && path.startsWith('characters/') && (!source || source.documentId === document.documentId) && data.differences?.some(difference => difference.id === ref.id)) return true;
+      if (ref.kind === 'object' && path.startsWith('characters/') && (!source || source.path === '#source' || source.documentId === document.documentId) && data.differences?.some(difference => difference.id === ref.id)) return true;
       if (ref.kind === 'label' && path.endsWith('/scene.json') && (!parent?.sceneId || parent.sceneId === data.id)) {
         const text = Object.entries(document.files).find(([path]) => path.endsWith('/script.gal'))?.[1];
         if (text && parse({ documentId: document.documentId, revision: document.revision, text }).cst.some(node => node.valid && node.command === 'label' && node.object?.value?.labelId === ref.id)) return true;
@@ -103,8 +111,14 @@ function requiredDocumentReferences(documents) {
   for (const document of documents.values()) {
     const text = Object.entries(document.files).find(([path]) => path.endsWith('/script.gal'))?.[1];
     if (!text) continue;
-    for (const node of parse({ documentId: document.documentId, revision: document.revision, text }).cst)
-      if (node.valid && node.command !== 'label' && node.object) commandReferences(document.documentId, commandFields.get(node.command) ?? [], node.object.value);
+    for (const node of parse({ documentId: document.documentId, revision: document.revision, text }).cst) {
+      if (!node.valid || node.command === 'label' || !node.object) continue;
+      commandReferences(document.documentId, commandFields.get(node.command) ?? [], node.object.value);
+      if (node.command === 'say' && Array.isArray(node.object.value.events)) for (const event of node.object.value.events) {
+        if (event?.kind !== 'expression') continue;
+        for (const id of [event.objectId, event.differenceId]) if (IdSchema.safeParse(id).success) add(document.documentId, '#source', 'object', id);
+      }
+    }
   }
   for (const document of documents.values()) for (const [path, raw] of Object.entries(document.files)) {
     if (!path.endsWith('.json')) continue;
@@ -198,7 +212,7 @@ export class ProjectDocuments {
 
   list() {
     const session = this.#current?.session;
-    return session ? ok([...session.documents.keys()].map(id => session.readDocument(id)))
+    return session ? ok([...session.documents.keys()].map(id => session.readAuthoringDocument(id)))
       : fail('PROJECT_SESSION_MISSING', '请先打开作品', 'M02');
   }
 
@@ -251,9 +265,10 @@ export class ProjectDocuments {
       session = await openFromAccess(this.projectAccess, sessionId, project.projectId,
         { resolveRequiredRef: this.resolveRequiredRef, requiredReferences: requiredDocumentReferences });
       validateEditableDocuments(session);
+      if (this.engineCatalog?.resolveProjectEngine) await checkProjectEngine(this.engineCatalog, session);
       const recovery = await session.listRecovery();
       if (!recovery.ok) throw new Error(recovery.error.message);
-      if (!recovery.value) {
+      if (!recovery.value && !session.writeBlocked) {
         const normalized=normalizeAuthoringFields(session);if(!normalized.ok)throw new Error(normalized.error.message);
         const initialized = initializeMenuLanguages(session);
         if (!initialized.ok) throw new Error(initialized.error.message);
@@ -352,6 +367,7 @@ export class ProjectDocuments {
     if (!session) return fail('PROJECT_SESSION_MISSING', '请先打开作品', 'M02');
     const recovered = await session.recover(choice);
     if (!recovered.ok) return recovered;
+    if (session.writeBlocked) return recovered;
     const normalized=normalizeAuthoringFields(session);if(!normalized.ok)return normalized;
     const initialized = initializeMenuLanguages(session);
     return initialized.ok ? recovered : initialized;
@@ -362,6 +378,7 @@ export class ProjectDocuments {
     if (!session) return fail('PROJECT_SESSION_MISSING', '请先打开作品', 'M02');
     const recovered = await session.resolveRecoveryConflict(choice, copyPath);
     if (!recovered.ok) return recovered;
+    if (session.writeBlocked) return recovered;
     const normalized=normalizeAuthoringFields(session);if(!normalized.ok)return normalized;
     const initialized = initializeMenuLanguages(session);
     return initialized.ok ? recovered : initialized;

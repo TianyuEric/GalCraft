@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile, rm, stat, realpath } from 'node:fs/promises';
 import { join, resolve, dirname, sep, relative, isAbsolute } from 'node:path';
 import { createRequire } from 'node:module';
-import { StudioProduction } from '../apps/studio/main/production-providers.mjs';
+import { StudioProduction } from '../apps/studio/main/production-providers.mts';
 
 const repo = resolve(import.meta.dirname, '..'), temporaryRoot = join(repo, 'tmp/testing');
 const consumer = join(temporaryRoot, 'studio-npm-maintenance'), profile = join(consumer, 'profile'), runtime = join(consumer, 'runtime');

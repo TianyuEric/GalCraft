@@ -1,8 +1,8 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { FixtureSnapshot } from '@galcraft/contracts/fixtures';
 
-const calls=vi.hoisted(()=>[] as {root:Element;resolve:(player:unknown)=>void}[]);
-vi.mock('./player-preview.js',()=>({openPlayerPreview:vi.fn((root:Element)=>new Promise(resolve=>calls.push({root,resolve})))}));
+const calls=vi.hoisted(()=>[] as {root:Element;resolve:(player:unknown)=>void;reject:(error:Error)=>void}[]);
+vi.mock('./player-preview.js',()=>({openPlayerPreview:vi.fn((root:Element)=>new Promise((resolve,reject)=>calls.push({root,resolve,reject})))}));
 vi.mock('monaco-editor',()=>({}));
 vi.mock('../components/monaco-workers.js',()=>({configureMonacoWorkers:()=>{}}));
 vi.mock('./asset-picker.js',()=>({openAssetPicker:()=>{}}));
@@ -12,7 +12,9 @@ import { PageDesigner } from './page-designer.js';
 class Element {
   children:Element[]=[];parentElement:Element|null=null;style:Record<string,string>={};dataset:Record<string,string>={};
   clientWidth=1920;textContent='';className='';
+  inert=false;
   append(...children:Element[]){this.children.push(...children);for(const child of children)child.parentElement=this;}
+  contains(node:Element|null):boolean{return node===this||this.children.some(child=>child.contains(node));}
   setAttribute(){}
   querySelector(selector:string):Element|null{return this.children.find(child=>selector==='.'+child.className)??null;}
   replaceChildren(...children:Element[]){for(const child of this.children)child.parentElement=null;this.children=children;for(const child of children)child.parentElement=this;}
@@ -25,7 +27,7 @@ function setup(){
   vi.stubGlobal('ResizeObserver',class {observe(){}disconnect(){}});
   const surface=new Element(),canvas=new Element();canvas.parentElement=new Element();
   return Object.assign(Object.create(PageDesigner.prototype),{disposed:false,generation:0,previewQueue:Promise.resolve(),previewMounts:0,page:'title',sample:'normal',state:'normal',zoom:'fit',snapshot:structuredClone(FixtureSnapshot),template:structuredClone(FixtureSnapshot.template),documents:[],selected:new Set(),surface,canvas,inspector:new Element(),overlay:new Element(),notice:new Element(),services:{},geometry:null,player:null,resize:null}) as {
-    preview():Promise<void>;page:string;player:unknown;surface:Element;notice:Element;
+    preview():Promise<void>;page:string;player:unknown;surface:Element;notice:Element;workbenchCanvas?:boolean;
   };
 }
 function player(root:Element,newGame=async()=>{}){
@@ -63,4 +65,50 @@ test('ready page navigation updates the existing Player and keeps its mount',asy
   expect(calls).toHaveLength(1);expect(current.updatePreview).toHaveBeenCalledOnce();
   expect(current.view.navigation.replace).toHaveBeenLastCalledWith('settings');expect(current.dispose).not.toHaveBeenCalled();
   expect(designer.surface.children).toEqual([calls[0]!.root]);expect(designer.surface.dataset.previewMounts).toBe('1');
+});
+test('a failed passive rebuild leaves the retained workbench preview interactive', async () => {
+  const designer = setup();
+  designer.workbenchCanvas = true;
+  const first = designer.preview();
+  await vi.waitFor(() => expect(calls).toHaveLength(1));
+  const retained = calls[0]!.root;
+  const current = player(retained);
+  calls[0]!.resolve(current);
+  await first;
+
+  current.updatePreview.mockImplementationOnce(() => ({ ok: false, value: undefined, warnings: [] }));
+  const rebuild = designer.preview();
+  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  expect(retained.inert).toBe(true);
+  calls[1]!.reject(new Error('Preview engine unavailable'));
+  await rebuild;
+
+  expect(retained.inert).toBe(false);
+  expect(designer.surface.children).toEqual([retained]);
+  expect(current.dispose).not.toHaveBeenCalled();
+  expect(designer.surface.dataset.previewStatus).toBe('error');
+});
+test('workbench viewport is separate from the formal chrome and exposes its status', () => {
+  setup();
+  const designer = new PageDesigner({} as ConstructorParameters<typeof PageDesigner>[0], async () => {});
+  const canvas = designer.useWorkbenchCanvas();
+  expect(canvas.viewport.className).toBe('designer-center');
+  expect(canvas.status.className).toBe('designer-notice');
+  expect(canvas.viewport.parentElement).toBeNull();
+  expect(designer.useWorkbenchCanvas()).toEqual(canvas);
+});
+test('workbench dimension preview changes a temporary template and can restore the source value', () => {
+  const designer = setup() as unknown as {
+    previewWorkbenchField: PageDesigner['previewWorkbenchField'];
+    preview(template?: typeof FixtureSnapshot.template): Promise<void>;
+    template: typeof FixtureSnapshot.template;
+  };
+  const root = designer.template.pages.find(page => page.key === 'title')!.root;
+  const original = structuredClone(root.layout.width);
+  const preview = vi.spyOn(designer, 'preview').mockResolvedValue();
+  designer.previewWorkbenchField({ kind: 'dimension', componentId: root.id, field: 'width', value: 300 });
+  expect(preview.mock.calls[0]?.[0]?.pages.find(page => page.key === 'title')!.root.layout.width).toEqual({ unit: original.unit === 'auto' ? 'px' : original.unit, value: 300 });
+  expect(root.layout.width).toEqual(original);
+  designer.previewWorkbenchField(null);
+  expect(preview.mock.calls[1]).toEqual([]);
 });

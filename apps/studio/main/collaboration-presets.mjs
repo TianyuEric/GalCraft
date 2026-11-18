@@ -2,11 +2,12 @@ import { localizeRecipe } from '@galcraft/authoring/recipes/operations';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { createId, ObjectTargetSchema, StageStationSchema, StageWeatherPresets, VersionRefSchema } from '@galcraft/contracts';
-import { parse, patchFields, toDocumentPatch } from '@galcraft/dsl';
+import { CoreCommandSpecs, createCommandArgs, parse, patchFields, toDocumentPatch } from '@galcraft/dsl';
 import { AnimationPresets, createAnimationPreset } from '@galcraft/stage/presets';
 import { applyReadingPreset, componentDefinition, createUIAnimationPreset, findComponent, putUIAnimation, readTemplateDocuments, templateEdit, UIAnimationPresets } from '@galcraft/templates';
 import { CollaborationError } from '@galcraft/collaboration';
 import { ActionIconPresets } from './action-icon-presets.mjs';
+import { studioApplicationRoot } from './application-root.mjs';
 
 const str=z.string().min(1),versions=z.array(VersionRefSchema),schema=value=>z.toJSONSchema(value,{io:'input'});
 const unwrap=result=>{if(!result.ok)throw new CollaborationError(result.error.code,result.error.message,result.error);return result.value;};
@@ -81,7 +82,14 @@ function scene(owner,input,context){
 }
 const editFor=(document,label,patches,refs=[])=>({label,origin:'preset',expected:[{ref:{kind:'document',id:document.documentId},revision:document.revision}],patches,preparedAssets:[],requiredRefs:refs});
 function writeStatement(source,command,args,label,refs=[]){
-  const {node,text,document}=source,id=node?.id??createId(source.project.documents),after=`${command} ${JSON.stringify(args)} @${id};`;
+  const {node,text,document,project}=source, allocate=()=>createId(project.documents), id=node?.id??allocate();
+  if(!node){
+    const projectDocument=[...project.documents.values()].find(item=>item.files['project.json']);
+    const textLocale=projectDocument?JSON.parse(projectDocument.files['project.json']).data.languages?.textDefault??'zh-CN':'zh-CN';
+    const spec=CoreCommandSpecs.find(item=>item.key===command);
+    args=createCommandArgs(spec,args,{textLocale},allocate);
+  }
+  const after=`${command} ${JSON.stringify(args)} @${id};`;
   const terminal=source.parsed.cst.find(item=>item.valid&&['end','changeScene','return','jumpLabel'].includes(item.command)&&!item.object?.value?.when),at=node?.start??terminal?.start??text.length;
   return editFor(document,label,[{kind:'text',documentId:document.documentId,edits:[{start:at,end:node?.end??at,before:node?text.slice(node.start,node.end):'',after:node?after:`${at&&!text.slice(0,at).endsWith('\n')?'\n':''}${after}\n`}]}],refs);
 }
@@ -121,7 +129,7 @@ export async function preparePresetEdit(owner,raw,context,check){
       if(preset.lifecycle==='property'){
         if(source.node&&!['setAnimation','setComplexAnimation'].includes(source.node.command))fail('ANIMATION_STATEMENT','Select an animation statement, or use statementId:null to append one.');
         const target=fields.stageTarget??args.target;if(!target)fail('ANIMATION_TARGET','Choose the stage, a concrete object or a station.');
-        const next={...args,animationId:args.animationId??createId(project.documents),target,animation:preset.animation,keepFinal:preset.keepFinal,loop:preset.loop};for(const key of ['presetId','resourceId','segments','parameters'])delete next[key];
+        const next={...args,...(source.node?{animationId:args.animationId??createId(project.documents)}:{}),target,animation:preset.animation,keepFinal:preset.keepFinal,loop:preset.loop};for(const key of ['presetId','resourceId','segments','parameters'])delete next[key];
         edit=writeStatement(source,'setComplexAnimation',next,'Apply stage animation preset');
       }else{
         const background=source.node?.command==='changeBg',exit=preset.lifecycle==='exit';
@@ -132,7 +140,7 @@ export async function preparePresetEdit(owner,raw,context,check){
     }else if(input.operationKey==='stage.applyWeatherPreset'){
       const source=scene(owner,input,context);if(source.node&&source.node.command!=='pixi')fail('WEATHER_STATEMENT','Select a pixi statement, or use statementId:null to append weather.');
       const preset=StageWeatherPresets[fields.key],index=owner.assets.current()?.index;if(!index)fail('ASSET_INDEX_MISSING','Open a project with an asset index.');check({effects:['edit'],documents:[index.documentId]});
-      resource=unwrap(await owner.assets.prepareBuiltinPreset({file:join(import.meta.dirname,'../resources/practice/textures',preset.texture),tag:`galcraft-weather:${fields.key}`,source:{kind:'template',description:`OpenWebGAL/WebGAL_Terre · ${preset.texture} · MPL-2.0`,usage:'redistributable'}}));
+      resource=unwrap(await owner.assets.prepareBuiltinPreset({file:join(studioApplicationRoot(),'resources/practice/textures',preset.texture),tag:`galcraft-weather:${fields.key}`,source:{kind:'template',description:`OpenWebGAL/WebGAL_Terre · ${preset.texture} · MPL-2.0`,usage:'redistributable'}}));
       const args=source.node?.object?.value??{};edit=writeStatement(source,'pixi',{...args,effectId:fields.effectId??args.effectId??createId(project.documents),type:fields.key,target:fields.target,enabled:true,resourceId:resource.asset.id,density:fields.density??preset.density,speed:fields.speed??preset.speed,directionDeg:fields.directionDeg??preset.directionDeg,parameters:{...preset.parameters,...fields.parameters},layer:fields.layer},'Apply weather preset',[{kind:'asset',id:resource.asset.id}]);combine(edit,resource);includeIndex(edit,index);
     }else{
       const documents=[...project.documents.values()],template=readTemplateDocuments(documents),component=input.target.componentId?findComponent(template,input.target.componentId):null;
@@ -144,7 +152,7 @@ export async function preparePresetEdit(owner,raw,context,check){
         else{
           if(!componentDefinition(component.part)?.imageSlots.includes('icon'))fail('ICON_SLOT_MISSING','Choose a component with a public icon slot.');
           const index=owner.assets.current()?.index;if(!index)fail('ASSET_INDEX_MISSING','Open a project with an asset index.');check({effects:['edit'],documents:[index.documentId]});
-          resource=unwrap(await owner.assets.prepareBuiltinPreset({file:join(import.meta.dirname,'../resources/practice/ui',`spring-${fields.key}.svg`),tag:`galcraft:action-icon:${fields.key}`,source:{kind:'template',description:`GalCraft core action icon · ${fields.key}`,usage:'redistributable'}}));
+          resource=unwrap(await owner.assets.prepareBuiltinPreset({file:join(studioApplicationRoot(),'resources/practice/ui',`spring-${fields.key}.svg`),tag:`galcraft:action-icon:${fields.key}`,source:{kind:'template',description:`GalCraft core action icon · ${fields.key}`,usage:'redistributable'}}));
           const visual=fields.state==='normal'?component.normal:component.states[fields.state]??={};(visual.images??={}).icon={assetId:resource.asset.id,variantId:resource.asset.activeVariantId,mode:'contain',positionX:.5,positionY:.5,colorMode:'mask',tint:null,opacity:1,slices:null,borders:null,fillCenter:false};
           edit=templateEdit(documents,template,'Apply action icon');edit.requiredRefs.push({kind:'asset',id:resource.asset.id});combine(edit,resource);includeIndex(edit,index);
         }

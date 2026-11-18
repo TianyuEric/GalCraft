@@ -9,6 +9,7 @@ import { ProjectSession } from '@galcraft/documents';
 import { projectData } from '@galcraft/documents/backup';
 import { sameSavedVersions } from '@galcraft/publishing/build';
 import { fail, ok } from './result.mjs';
+import { isUpgradeValidationComplete, upgradeImpact } from './upgrade-review.mts';
 
 const value = result => { if (!result.ok) throw new Error(result.error.message); return result.value; };
 const vector = documents => documents.map(document => ({ ref: { kind: 'document', id: document.documentId }, revision: document.revision }));
@@ -83,14 +84,9 @@ export class StudioUpgrades {
             if (after.project.projectId !== input.projectId || after.project.engineVersion !== plan.to || after.lock.engine.version !== plan.to)
               throw new Error('转换结果的作品身份或引擎锁不匹配');
             const beforeFiles = record.originalFiles, afterFiles = filesOf(converted);
-            plan.changes = [...new Set([...Object.keys(beforeFiles), ...Object.keys(afterFiles)])].filter(file => beforeFiles[file] !== afterFiles[file])
-              .map(file => ({ file, description: beforeFiles[file] === undefined ? 'added' : afterFiles[file] === undefined ? 'removed' : 'modified', converted: true }));
-            const oldDependencies = lock.plugins, newDependencies = after.lock.plugins;
-            plan.dependencyChanges = [...new Set([...oldDependencies, ...newDependencies].map(item => item.id))].flatMap(id => {
-              const from = oldDependencies.find(item => item.id === id)?.version ?? null, to = newDependencies.find(item => item.id === id)?.version ?? null;
-              return from === to ? [] : [{ pluginId: id, from, to,
-                affected: converted.filter(document => Object.keys(document.files).some(path => path.startsWith(`plugins/${id}/`))).map(document => ({ kind: 'document', id: document.documentId })),
-                savedData: input.representativeSaves, dependencies: newDependencies.filter(dependency => dependency.id === id), conversions: [], issues: [] }]; });
+            const impact = upgradeImpact(beforeFiles, afterFiles, lock.plugins, after.lock.plugins, converted, input.representativeSaves);
+            plan.changes = impact.changes;
+            plan.dependencyChanges = impact.dependencyChanges;
             plan.validation = await this.validate({ directory: plan.workingCopy, projectId: input.projectId, targets: record.targets,
               representativeSaves: input.representativeSaves, signal: controller.signal });
             plan.validation.sourceVersions = base;
@@ -121,8 +117,7 @@ export class StudioUpgrades {
       const record = await this.load(id), session = this.projects.currentSession, { plan } = record;
       if (!session || session.projectId !== record.projectId || resolve(session.root) !== resolve(record.sourceRoot)) throw new Error('作品会话不匹配');
       if (session.dirtyIds().length || !sameSavedVersions(vector([...session.documents.values()]), plan.base)) return fail('PLAN_STALE', '验证后作品已有修改，请重新准备升级', 'M11');
-      if (!plan.validation || record.targets.some(target => ['dsl', 'template', 'plugin', 'resource', 'save', 'playtest'].some(kind =>
-        !plan.validation.checks.some(check => check.target === target && check.kind === kind && check.result === 'pass'))))
+      if (!isUpgradeValidationComplete(plan.validation, record.targets))
         return fail('UPGRADE_VALIDATION_REQUIRED', '全部目标和验证项通过后才能确认升级', 'M11');
       const candidate = await ProjectSession.open(plan.workingCopy, record.projectId);
       try { if (!isDeepStrictEqual(filesOf([...candidate.documents.values()]), record.validatedFiles)) return fail('PLAN_STALE', '升级副本文档已变化，请重新验证', 'M11'); }

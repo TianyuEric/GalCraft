@@ -1,4 +1,4 @@
-import type { Asset, ConnectionConfig, ConnectionSelection, IpcArgs, IpcReturn, Result, StudioBridge, Target } from '@galcraft/contracts';
+import type { Asset, ConnectionConfig, ConnectionSelection, DocumentView, IpcArgs, IpcReturn, Result, StudioBridge, Target } from '@galcraft/contracts';
 import type { DesktopBridge, StudioIpc } from '../desktop-bridge.js';
 import type { ProjectSession } from '@galcraft/documents';
 
@@ -27,6 +27,7 @@ export interface StudioHandlerContext {
     register(input: { projectId: string; directory: string }): Promise<void>;
   };
   projects?: Omit<StudioIpc['projects'], 'create'> & {
+    list?(): Result<DocumentView[]>;
     currentSession: ProjectSession | null;
     currentRoot: string;
     create(input: IpcArgs<StudioIpc['projects']['create']>[0], prepare?: (candidate: unknown) => Promise<void>): IpcReturn<StudioIpc['projects']['create']>;
@@ -47,6 +48,7 @@ export interface StudioHandlerContext {
   preferences: RawPreferences;
   entryPreferences?: () => RawPreferences;
   assets?: Omit<StudioIpc['assets'], 'picker' | 'verifyTarget' | 'iconPresets' | 'importIconPreset'> & {
+    importBatch(paths: string[], batchId?: string, projectId?: string): ReturnType<StudioIpc['assets']['import']>;
     verifyTarget(target: Target, operationId?: string, progress?: (value: import('@galcraft/contracts').AssetVerificationProgress) => void): ReturnType<StudioIpc['assets']['verifyTarget']>;
     picker(input: IpcArgs<StudioIpc['assets']['picker']>[0], recent: string[]): IpcReturn<StudioIpc['assets']['picker']>;
     current(): { session: ProjectSession; index: { data: { assets: Asset[] } } } | null;
@@ -63,7 +65,12 @@ export interface StudioHandlerContext {
     pluginPrepare(projectId: string, input: IpcArgs<StudioIpc['language']['pluginPrepare']>[0]): IpcReturn<StudioIpc['language']['pluginPrepare']>;
   };
   plugins?: Omit<StudioIpc['plugins'], 'list' | 'planChange'> & {
-    acquireDefinitions?(session:ProjectSession|null,options:{allowMissing:boolean}):Promise<Result<{commands:import('@galcraft/contracts').CommandSpec[];release():Promise<void>}>>;
+    acquireDefinitions?(session: ProjectSession | null, options?: { allowMissing: boolean }): Promise<Result<{
+      commands: import('@galcraft/contracts').CommandSpec[];
+      conditions: Pick<import('@galcraft/plugins/contracts').PluginCondition, 'key' | 'fields'>[];
+      documents: import('@galcraft/plugins/contracts').DocumentContribution[];
+      release(): Promise<void>;
+    }>>;
     list(session: ProjectSession | null): IpcReturn<StudioIpc['plugins']['list']>;
     planChange(input: IpcArgs<StudioIpc['plugins']['planChange']>[0], session: ProjectSession | null): IpcReturn<StudioIpc['plugins']['planChange']>;
   };

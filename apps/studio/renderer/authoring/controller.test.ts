@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { FixtureAsset, FixtureCharacters, FixtureIds, FixtureProject, FixtureScenes, FixtureSnapshot, FixtureVoiceAssets } from '@galcraft/contracts/fixtures';
 import { DefaultStudioPreferences } from '@galcraft/contracts';
 import { replaceDialogueText, styleDialogueRange } from '@galcraft/contracts';
-import type { Result, StudioBridge } from '@galcraft/contracts';
+import type { DocumentView, Issue, Result, SavePlan, SaveScope, StudioBridge } from '@galcraft/contracts';
 import { ProjectSession } from '@galcraft/documents';
 import { compile, createCommandRegistry, parse } from '@galcraft/dsl';
 import { AuthoringController, classifyAssetDrop, mergeDialoguePaste, previewDialoguePaste, queryDialogueText, reorderIds, resolveResume } from './controller.js';
@@ -18,6 +18,11 @@ const secondId = FixtureIds.statements[1];
 const sourceText = `say {speaker:{kind:"character",id:"${FixtureIds.an}"}, text:"原句", voice:"${FixtureIds.voices[0]}"} @${firstId};\n// 第一条说明\n` +
   `say {speaker:{kind:"narrator"}, text:"后句"} @${secondId};\n`;
 const envelope = (id: string, data: unknown) => JSON.stringify({ schemaVersion: 1, documentId: id, revision: 1, data }, null, 2) + '\n';
+const saveIssue: Issue = { code: 'SAVE_WRITE', message: 'The destination is busy', severity: 'error', owner: 'M02', related: [], actions: ['retry'] };
+const plannedSave = (documentId: string, revision = 1, objects: SavePlan['objects'] = [{ documentId, kind: 'document', objectId: null, key: `${documentId}:document`, revision, name: documentId, paths: [] }]): SavePlan => ({
+  planId: `Save${documentId}`, members: [documentId], versions: [{ ref: { kind: 'document', id: documentId }, revision }],
+  files: [], extraDirtyMembers: [], objects, requestedObjects: objects.map(object => object.key), reasons: [], preview: [],
+});
 let session: ProjectSession | null = null;
 
 async function fresh(options: Parameters<typeof ProjectSession.createProject>[3] = {}, initialText = sourceText) {
@@ -41,7 +46,8 @@ async function fresh(options: Parameters<typeof ProjectSession.createProject>[3]
       const scene = JSON.parse(meta).data as { id: string; name: string; chapterId: string };
       const text = Object.entries(document.files).find(([path]) => path.endsWith('/script.gal'))![1];
       return { sceneId: scene.id, documentId: document.documentId, revision: document.revision,
-        savedRevision: document.savedRevision, dirty: document.dirty, name: scene.name, chapterId: scene.chapterId, text };
+        savedRevision: document.savedRevision, dirty: document.dirty, name: scene.name, chapterId: scene.chapterId, text,
+        lastValidSceneSource: session!.readAuthoringDocument(document.documentId)?.lastValidSceneSource };
     });
     const createdCharacters = [...session!.documents.values()].flatMap(document => Object.entries(document.files)
       .filter(([path]) => path.startsWith('characters/') && path.endsWith('.json'))
@@ -74,6 +80,15 @@ async function fresh(options: Parameters<typeof ProjectSession.createProject>[3]
   };
   return { controller: new AuthoringController(services), services, read, getResume: () => resume };
 }
+
+async function freshWithVoiceAssets(initialText = sourceText) {
+  const fixture = await fresh({}, initialText);
+  const documentId = 'Assets';
+  session!.registerDocument({ documentId, revision: 1, format: 'json',
+    files: { 'assets/index.json': envelope(documentId, { assets: FixtureVoiceAssets }) } });
+  return fixture;
+}
+
 afterEach(async () => { if (session) await session.dispose('discard'); session = null; await rm(root, { recursive: true, force: true }); });
 
 describe('M01 authoring over M02/M03', () => {
@@ -262,6 +277,186 @@ describe('M01 authoring over M02/M03', () => {
     expect(controller.status.compilation.state).toBe('lastValid');
     expect(controller.status.preview).toBe('none');
   });
+  it('retains failed compile and read results without confusing incomplete checks with empty diagnostics', async () => {
+    const { controller, services } = await fresh();
+    const compileIssue: Issue = { code: 'COMPILE_REQUEST', message: 'Compiler did not respond', severity: 'error', owner: 'M03', related: [], actions: ['retry'] };
+    services.compilePreview = async () => ({ ok: false, error: compileIssue, issues: [] });
+    await controller.open();
+    expect(controller.status.issues).toEqual([]);
+    expect(controller.compilationFailureIssues).toEqual([compileIssue]);
+    expect(controller.compilationIncomplete).toBe(true);
+    const read = services.read;
+    const readIssue = { ...saveIssue, code: 'READ_FAILED' };
+    services.read = async () => ({ ok: false, error: readIssue, issues: [] });
+    await controller.refresh();
+    expect(controller.readIssue).toEqual(readIssue);
+    expect(controller.status.issues).toEqual([]);
+    expect(controller.compilationFailureIssues).toEqual([compileIssue]);
+    services.read = read;
+    services.compilePreview = async () => ({ ok: true, value: { snapshot: null, lastValid: null, current: false, issues: [compileIssue] }, warnings: [] });
+    await controller.refresh();
+    expect(controller.readIssue).toBeNull();
+    expect(controller.compilationIncomplete).toBe(false);
+    expect(controller.compilationFailureIssues).toEqual([]);
+    expect(controller.status.issues).toEqual([compileIssue]);
+    controller.close();
+    expect(controller.compilationIncomplete).toBe(true);
+    expect(controller.readIssue).toBeNull();
+  });
+  it('keeps the last completed compiler diagnostics when a later compiler call fails', async () => {
+    const { controller, services } = await fresh();
+    const contentIssue: Issue = { code: 'DSL_INVALID', message: 'Invalid statement', severity: 'error', owner: 'M03', related: [], actions: ['edit'] };
+    services.compilePreview = async () => ({ ok: true, value: { snapshot: FixtureSnapshot, lastValid: null, current: true, issues: [contentIssue] }, warnings: [] });
+    await controller.open();
+    const previousCompilation = controller.status.compilation;
+    const callIssue = { ...contentIssue, code: 'COMPILER_UNAVAILABLE', message: 'The compiler service is unavailable' };
+    services.compilePreview = async () => ({ ok: false, error: callIssue, issues: [] });
+    await controller.refresh();
+    expect(controller.status.issues).toEqual([contentIssue]);
+    expect(controller.compilationFailureIssues).toEqual([callIssue]);
+    expect(controller.compilationIncomplete).toBe(true);
+    expect(controller.status.compilation).toEqual({ ...previousCompilation, state: 'failed' });
+    controller.close();
+    expect(controller.compilationFailureIssues).toEqual([]);
+  });
+  it('keeps save failures per document through compilation and clears only the saved scope', async () => {
+    const { controller, services } = await fresh();
+    const compileIssue: Issue = { code: 'DSL_INVALID', message: 'Invalid statement', severity: 'error', owner: 'M03', related: [], actions: ['edit'] };
+    services.compilePreview = async () => ({ ok: true, value: { snapshot: null, lastValid: FixtureSnapshot, current: false, issues: [compileIssue] }, warnings: [] });
+    await controller.open();
+    services.bridge.documents.save = async () => ({ ok: false, error: saveIssue, issues: [] });
+    const scenePlan = plannedSave(sceneDocumentId), projectPlan = plannedSave(projectDocumentId);
+    await controller.savePlanned(scenePlan);
+    await controller.savePlanned(projectPlan);
+    expect(controller.status.issues).toEqual([compileIssue]);
+    expect([...controller.saveFailures.values()].every(failure => failure.issues[0]?.code === 'SAVE_WRITE')).toBe(true);
+    await controller.refresh();
+    expect(controller.saveFailures.size).toBe(2);
+    services.bridge.documents.save = async () => ({ ok: true, value: { transactionId: 'SavedScene', saved: scenePlan.versions, remainingDirty: [projectDocumentId] }, warnings: [] });
+    await controller.savePlanned(scenePlan);
+    expect([...controller.saveFailures.keys()]).toEqual([`${projectDocumentId}:document`]);
+    expect(controller.status.save).toBe('failed');
+    expect(controller.status.issues).toEqual([compileIssue]);
+    services.bridge.documents.save = async () => ({ ok: true, value: { transactionId: 'SavedProject', saved: projectPlan.versions, remainingDirty: [] }, warnings: [] });
+    await controller.savePlanned(projectPlan);
+    expect(controller.saveFailures.size).toBe(0);
+    expect(controller.status.save).toBe('idle');
+  });
+  it('gives each retry of the same save plan a new attempt and clears only the scopes actually saved by M02', async () => {
+    const { controller, services } = await fresh(); await controller.open();
+    controller.select([firstId]);
+    expect((await controller.editFields([{ field: 'text', op: 'set', value: '重试后保存的正文' }])).ok).toBe(true);
+    expect((await controller.authorOperation({ op: 'project.update', changes: { description: '另一个尚未保存的范围' } })).ok).toBe(true);
+    const scene = await services.bridge.documents.planSave({ kind: 'current', documentId: sceneDocumentId });
+    const project = await services.bridge.documents.planSave({ kind: 'current', documentId: projectDocumentId });
+    if (!scene.ok) throw scene.error;
+    if (!project.ok) throw project.error;
+    const sceneKey = scene.value.objects.find(object => object.documentId === sceneDocumentId)!.key;
+    const projectKey = project.value.objects.find(object => object.documentId === projectDocumentId)!.key;
+    const save = services.bridge.documents.save;
+    const attemptedPlans: string[] = [];
+    services.bridge.documents.save = async planId => { attemptedPlans.push(planId); return { ok: false, error: saveIssue, issues: [] }; };
+    expect((await controller.savePlanned(scene.value)).ok).toBe(false);
+    const first = controller.saveFailures.get(sceneKey)!;
+    expect(first.attemptId).toEqual(expect.any(String));
+    expect(first.attemptId).not.toBe(scene.value.planId);
+    expect(first.objects).toEqual([{ kind: 'document', documentId: sceneDocumentId, objectId: null }]);
+    expect((await controller.savePlanned(scene.value)).ok).toBe(false);
+    const retried = controller.saveFailures.get(sceneKey)!;
+    expect(retried.attemptId).not.toBe(first.attemptId);
+    expect(retried.objects).toEqual(first.objects);
+    expect(attemptedPlans).toEqual([scene.value.planId, scene.value.planId]);
+    expect((await controller.savePlanned(project.value)).ok).toBe(false);
+    const otherFailure = controller.saveFailures.get(projectKey)!;
+
+    services.bridge.documents.save = save;
+    expect((await controller.savePlanned(scene.value)).ok).toBe(true);
+    expect([...controller.saveFailures.keys()]).toEqual([projectKey]);
+    expect(controller.saveFailures.get(projectKey)).toBe(otherFailure);
+    expect(controller.status.save).toBe('failed');
+    expect(await readFile(resolve(root, `scenes/${FixtureIds.street}/script.gal`), 'utf8')).toContain('重试后保存的正文');
+    expect(session!.readDocument(projectDocumentId)!.dirty).toBe(true);
+    expect((await controller.savePlanned(project.value)).ok).toBe(true);
+    expect(controller.saveFailures.size).toBe(0);
+    expect(controller.status.save).toBe('idle');
+    expect(JSON.parse(await readFile(resolve(root, 'project.json'), 'utf8')).data.description).toBe('另一个尚未保存的范围');
+  });
+  it('preserves another asset failure when a successful save shares its index document', async () => {
+    const { controller, services } = await fresh(); await controller.open();
+    const assetPlan = (id: string) => plannedSave('Assets', 2, [{ documentId: 'Assets', kind: 'asset', objectId: id, key: `Assets:asset:${id}`, revision: 2, name: id, paths: ['assets/index.json'] }]);
+    const first = assetPlan('FirstAsset'), second = assetPlan('SecondAsset');
+    services.bridge.documents.save = async () => ({ ok: false, error: saveIssue, issues: [] });
+    await controller.savePlanned(first); await controller.savePlanned(second);
+    expect(controller.saveFailures.get('Assets:asset:FirstAsset')?.objects)
+      .toEqual([{ kind: 'asset', documentId: 'Assets', objectId: 'FirstAsset' }]);
+    services.bridge.documents.save = async () => ({ ok: true, value: { transactionId: 'SavedSecond', saved: second.versions, remainingDirty: ['Assets'] }, warnings: [] });
+    await controller.savePlanned(second);
+    expect([...controller.saveFailures.keys()]).toEqual(['Assets:asset:FirstAsset']);
+    expect(controller.status.save).toBe('failed');
+    services.bridge.documents.save = async () => ({ ok: true, value: { transactionId: 'SavedFirst', saved: first.versions, remainingDirty: [] }, warnings: [] });
+    await controller.savePlanned(first);
+    expect(controller.saveFailures.size).toBe(0);
+  });
+  it('retains a failed save-all plan until a receipt confirms every dirty scope is saved', async () => {
+    const { controller, services } = await fresh(); await controller.open();
+    services.bridge.documents.planSave = async () => ({ ok: false, error: saveIssue, issues: [] });
+    expect((await controller.save(true)).ok).toBe(false);
+    expect(controller.status.issues).toEqual([]);
+    expect(controller.saveFailures.get('all')?.issues).toEqual([saveIssue]);
+    const scenePlan = plannedSave(sceneDocumentId), projectPlan = plannedSave(projectDocumentId);
+    services.bridge.documents.save = async () => ({ ok: true, value: { transactionId: 'SavedScene', saved: scenePlan.versions, remainingDirty: [projectDocumentId] }, warnings: [] });
+    await controller.savePlanned(scenePlan);
+    expect(controller.saveFailures.has('all')).toBe(true);
+    services.bridge.documents.save = async () => ({ ok: true, value: { transactionId: 'SavedProject', saved: projectPlan.versions, remainingDirty: [] }, warnings: [] });
+    await controller.savePlanned(projectPlan);
+    expect(controller.saveFailures.size).toBe(0);
+    controller.recordSaveFailure({ error: saveIssue, issues: [] }, { kind: 'current', documentId: projectDocumentId });
+    controller.close();
+    expect(controller.saveFailures.size).toBe(0);
+  });
+  it('clears a transient failure after verifying an unchanged current document while retaining other scopes', async () => {
+    const { controller, services } = await fresh(); await controller.open();
+    const planSave = services.bridge.documents.planSave;
+    services.bridge.documents.planSave = async () => ({ ok: false, error: saveIssue, issues: [] });
+    expect((await controller.save()).ok).toBe(false);
+    controller.recordSaveFailure({ error: saveIssue, issues: [] }, { kind: 'current', documentId: projectDocumentId });
+    services.bridge.documents.planSave = planSave;
+    const plan = await planSave({ kind: 'current', documentId: sceneDocumentId });
+    expect(plan.ok && plan.value.files).toEqual([]);
+    expect((await controller.save()).ok).toBe(true);
+    expect([...controller.saveFailures.keys()]).toEqual([`${projectDocumentId}:document`]);
+    expect(controller.status.save).toBe('failed');
+    expect((await controller.saveProject()).ok).toBe(true);
+    expect(controller.saveFailures.size).toBe(0);
+    expect(controller.status.save).toBe('idle');
+    controller.recordSaveFailure({ error: saveIssue, issues: [] }, { kind: 'all' });
+    expect((await controller.save(true)).ok).toBe(true);
+    expect(controller.saveFailures.size).toBe(0);
+  });
+  it('reconciles an unversioned asset failure only for the exact clean object or its saved receipt', async () => {
+    const { controller, services } = await fresh(); await controller.open();
+    const scope = (objectId: string): SaveScope => ({ kind: 'objects', objects: [{ documentId: 'Assets', kind: 'asset', objectId }], expected: [] });
+    const firstScope = scope('FirstAsset'), secondScope = scope('SecondAsset');
+    const before = [{ id: 'FirstAsset', name: 'First' }, { id: 'SecondAsset', name: 'Second' }];
+    const after = [{ id: 'FirstAsset', name: 'First' }, { id: 'SecondAsset', name: 'Changed second' }];
+    const document: DocumentView = { documentId: 'Assets', revision: 2, savedRevision: 1, format: 'json', dirty: true,
+      files: { 'assets/index.json': envelope('Assets', { assets: after }) }, savedFiles: { 'assets/index.json': envelope('Assets', { assets: before }) } };
+    const emptyPlan = plannedSave('Assets', 2, []);
+    controller.recordSaveFailure({ error: saveIssue, issues: [] }, firstScope);
+    controller.recordSaveFailure({ error: saveIssue, issues: [] }, secondScope);
+    expect(controller.saveFailures.get('Assets:asset:FirstAsset')?.issues).toEqual([saveIssue]);
+    controller.reconcileCleanSave({ kind: 'current', documentId: 'Assets' }, [document], emptyPlan);
+    controller.reconcileCleanSave(secondScope, [document], emptyPlan);
+    expect(controller.saveFailures.size).toBe(2);
+    controller.reconcileCleanSave(firstScope, [document], emptyPlan);
+    expect([...controller.saveFailures.keys()]).toEqual(['Assets:asset:SecondAsset']);
+    expect(controller.status.save).toBe('failed');
+    const secondPlan = plannedSave('Assets', 2, [{ documentId: 'Assets', kind: 'asset', objectId: 'SecondAsset', key: 'Assets:asset:SecondAsset', revision: 2, name: 'Second', paths: ['assets/index.json'] }]);
+    services.bridge.documents.save = async () => ({ ok: true, value: { transactionId: 'SavedSecond', saved: secondPlan.versions, remainingDirty: ['Assets'] }, warnings: [] });
+    await controller.savePlanned(secondPlan);
+    expect(controller.saveFailures.size).toBe(0);
+    expect(controller.status.save).toBe('idle');
+  });
   it('edits a selected source field, keeps the existing voice and saves the actual M02 revision', async () => {
     const { controller, read } = await fresh(); expect((await controller.open()).ok).toBe(true);
     controller.select([firstId]);
@@ -275,14 +470,40 @@ describe('M01 authoring over M02/M03', () => {
     expect(controller.status.dirty).toBe(false);
     expect(session!.readDocument(sceneDocumentId, 'saved')!.files[`scenes/${FixtureIds.street}/script.gal`]).toContain('新句');
   });
-  it('keeps invalid raw script editable while cards show the last valid source', async () => {
+  it('reopens invalid raw source and the read-only last valid scene from disk', async () => {
     const { controller } = await fresh(); await controller.open(); controller.parsed();
+    const validRevision = controller.scene!.revision;
     expect((await controller.editScript('say { text:"broken" @' + firstId + ';')).ok).toBe(true);
     expect(controller.parsed()?.readOnly).toBe(true);
     expect(controller.parsed()?.parsed.statements[0]?.args.text).toBe('原句');
     expect((await controller.editFields([{ field: 'text', op: 'set', value: 'blocked' }], [firstId])).ok).toBe(false);
     expect((await controller.save()).ok).toBe(true);
     expect(session!.readRaw(sceneDocumentId, 'saved')!.raw).toContain('broken');
+    controller.close();
+    await session!.dispose('discard');
+    session = await ProjectSession.open(root, FixtureProject.projectId);
+    expect((await controller.open()).ok).toBe(true);
+    expect(controller.parsed('script')).toMatchObject({ readOnly: false, lastValidRevision: null, parsed: { text: expect.stringContaining('broken') } });
+    expect(controller.parsed('writing')).toMatchObject({ readOnly: true, lastValidRevision: validRevision });
+    expect(controller.parsed('cards')?.parsed.statements[0]?.args.text).toBe('原句');
+    expect((await controller.editScript(sourceText)).ok).toBe(true);
+    expect(controller.parsed('writing')).toMatchObject({ readOnly: false, lastValidRevision: null });
+  });
+
+  it('edits a captured statement in its own scene and rejects a stale target', async () => {
+    const { controller } = await fresh();
+    await controller.open();
+    const fixed = controller.scene!;
+    const target = { projectId: FixtureProject.projectId, sceneId: fixed.sceneId, documentId: fixed.documentId,
+      revision: fixed.revision, statementIds: [firstId] };
+    controller.selectScene(FixtureIds.bookshop);
+
+    expect(await controller.editFields([{ field: 'text', op: 'set', value: '固定目标' }], undefined, target)).toMatchObject({ ok: true });
+    expect(controller.scene?.sceneId).toBe(FixtureIds.bookshop);
+    expect(controller.source?.scenes.find(scene => scene.documentId === fixed.documentId)?.text).toContain('固定目标');
+    expect(await controller.editFields([{ field: 'text', op: 'set', value: '过期目标' }], undefined, target)).toMatchObject({
+      ok: false, error: { code: 'EDIT_TARGET_CHANGED' },
+    });
   });
 
   it('reuses the current scene parse while invalidating edited and reopened content', async () => {
@@ -369,8 +590,8 @@ describe('M01 authoring over M02/M03', () => {
     expect(controller.scene!.text).toBe(sourceText);
   });
   it('moves a statement across scenes in one M02 edit group and undoes both documents together', async () => {
-    const { controller } = await fresh(); await controller.open();
-    const moved = await controller.moveToScene([firstId], FixtureIds.bookshop); expect(moved.ok).toBe(true);
+    const { controller } = await freshWithVoiceAssets(); await controller.open();
+    const moved = await controller.moveToScene([firstId], FixtureIds.bookshop); expect(moved.ok, JSON.stringify(moved)).toBe(true);
     expect(controller.scene?.sceneId).toBe(FixtureIds.bookshop);
     expect(controller.scene?.text).toContain(firstId);
     expect(session!.readRaw(sceneDocumentId)?.raw).not.toContain(firstId);
@@ -380,14 +601,14 @@ describe('M01 authoring over M02/M03', () => {
     expect(session!.readRaw(FixtureIds.bookshopDocument)?.raw).toBe('');
   });
   it('moves a non-contiguous selection before a target instruction and restores both scenes with one undo', async () => {
-    const extraId = 'ExtraA', targetId = 'Target', source = sourceText + `say {text:"第三句"} @${extraId};\n`;
-    const { controller } = await fresh({}, source); await controller.open();
+    const extraId = 'ExtraA', targetId = 'Target', source = sourceText + `say {speaker:{kind:"narrator"}, text:"第三句"} @${extraId};\n`;
+    const { controller } = await freshWithVoiceAssets(source); await controller.open();
     controller.selectScene(FixtureIds.bookshop);
-    expect((await controller.editScript(`say {text:"目标原句"} @${targetId};\n`)).ok).toBe(true);
+    expect((await controller.editScript(`say {speaker:{kind:"narrator"}, text:"目标原句"} @${targetId};\n`)).ok).toBe(true);
     const originalTarget = controller.scene!.text;
     controller.selectScene(FixtureIds.street);
     const moved = await controller.moveToScene([extraId, firstId], FixtureIds.bookshop, targetId);
-    expect(moved.ok).toBe(true);
+    expect(moved.ok, JSON.stringify(moved)).toBe(true);
     expect(controller.scene?.sceneId).toBe(FixtureIds.bookshop);
     expect(parse({ documentId: FixtureIds.bookshopDocument, revision: controller.scene!.revision, text: controller.scene!.text }).cst.map(node => node.id)).toEqual([firstId, extraId, targetId]);
     expect(controller.selection?.statementIds).toEqual(expect.arrayContaining([firstId, extraId]));
@@ -418,11 +639,12 @@ describe('M01 authoring over M02/M03', () => {
     if (saved.ok) expect(saved.value.saved.map(item => item.ref.id)).toEqual(expect.arrayContaining([scene.documentId, projectDocumentId]));
   });
   it('inserts and copies a command with new stable statement identity', async () => {
-    const { controller } = await fresh(); await controller.open();
+    const { controller } = await freshWithVoiceAssets(); await controller.open();
     expect((await controller.insertCommand('wait', { durationMs: 0 }, secondId)).ok).toBe(true);
     const before = parse({ documentId: sceneDocumentId, revision: controller.scene!.revision, text: controller.scene!.text });
     expect(before.cst.map(node => node.command)).toEqual(['say', 'wait', 'say']);
-    expect((await controller.copyStatements([firstId])).ok).toBe(true);
+    const copied = await controller.copyStatements([firstId]);
+    expect(copied.ok, JSON.stringify(copied)).toBe(true);
     const after = parse({ documentId: sceneDocumentId, revision: controller.scene!.revision, text: controller.scene!.text });
     expect(after.cst).toHaveLength(4);
     expect(after.cst[3]!.id).not.toBe(firstId);
@@ -489,6 +711,43 @@ describe('M01 authoring over M02/M03', () => {
   });
 });
 
+
+describe('problem refresh lifecycle', () => {
+  it('discards a late read after close and reopen instead of restoring its diagnostics', async () => {
+    const { controller, services } = await fresh(); await controller.open();
+    const read = services.read;
+    let finish!: (value: Awaited<ReturnType<typeof read>>) => void;
+    services.read = () => new Promise(resolve => { finish = resolve; });
+    const pending = controller.refresh();
+    controller.close(); services.read = read; await controller.open();
+    const current = controller.source;
+    finish({ ok: false, error: saveIssue, issues: [saveIssue] }); await pending;
+    expect(controller.source).toBe(current); expect(controller.readIssue).toBeNull();
+    controller.close();
+  });
+  it('keeps the newer read and compilation when an older check finishes last', async () => {
+    const { controller, services } = await fresh(); await controller.open();
+    const read = services.read;
+    let finishRead!: (value: Awaited<ReturnType<typeof read>>) => void;
+    services.read = () => new Promise(resolve => { finishRead = resolve; });
+    const oldRead = controller.refresh();
+    services.read = read;
+    services.compilePreview = async () => ({ ok: true, value: { snapshot: FixtureSnapshot, lastValid: null, current: true, issues: [] }, warnings: [] });
+    await controller.refresh();
+    finishRead({ ok: false, error: saveIssue, issues: [saveIssue] }); await oldRead;
+    expect(controller.readIssue).toBeNull(); expect(controller.compilationIncomplete).toBe(false);
+    let finishCompile!: (value: Awaited<ReturnType<NonNullable<AuthoringServices['compilePreview']>>>) => void;
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    services.compilePreview = () => new Promise(resolve => { finishCompile = resolve; entered(); });
+    const oldCompile = controller.refresh(); await started;
+    services.compilePreview = async () => ({ ok: true, value: { snapshot: FixtureSnapshot, lastValid: null, current: true, issues: [] }, warnings: [] });
+    await controller.refresh();
+    finishCompile({ ok: false, error: saveIssue, issues: [saveIssue] }); await oldCompile;
+    expect(controller.compilationFailureIssues).toEqual([]); expect(controller.compilationIncomplete).toBe(false);
+    controller.close();
+  });
+});
 
 describe('protagonist name settings', () => {
   it('creates the progress string variable in the same edit and reuses its identity', async () => {

@@ -30,3 +30,4 @@ export { prepareSaveSample } from './save-samples.js';
 export { playerVariableValues } from './variables.js';
 
 export * from './observation.js';
+export type { BlueprintRunIdentity, BlueprintRunOptions, BlueprintRunResult, BlueprintStep, BlueprintTrigger } from './blueprint.js';

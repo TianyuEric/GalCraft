@@ -1,9 +1,9 @@
-import { DialogueContentSchema, dialoguePlainText } from '@galcraft/contracts';
+import { DialogueContentSchema, dialoguePlainText, stageCommandAssetBindings } from '@galcraft/contracts';
 import type { AssetReference, CommandSpec, FieldSpec, Id, Issue, Lock, Ref, Result, SemanticHit, SemanticPage, SemanticQuery, Source, Variable, VersionRef } from '@galcraft/contracts';
 import { createCommandRegistry } from './catalog.js';
 import { parseExpression, variableReads } from './expression.js';
 import { dialogueInterpolations } from './interpolation.js';
-import { fieldAt } from './parser.js';
+import { dialogueEventSource, fieldAt } from './parser.js';
 import type { ParseResult, StatementNode, ValueNode } from './parser.js';
 
 export type { SemanticQuery, SemanticHit, SemanticPage } from '@galcraft/contracts';
@@ -20,6 +20,8 @@ function equal(left: unknown, right: unknown): boolean {
   return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && equal(left[key], right[key]));
 }
 const source = (parsed: ParseResult, node: StatementNode, path: string): Source => {
+  const event = /^events\.(\d+)(?:\.(.+))?$/.exec(path);
+  if (node.command === 'say' && event) return dialogueEventSource(parsed, node, Number(event[1]), event[2]);
   const field = node.object ? fieldAt(node.object, path.split('.')) : undefined;
   return { documentId: parsed.documentId, revision: parsed.revision, ...(node.id ? { statementId: node.id } : {}), field: path,
     range: { start: field?.valueNode.start ?? node.start, end: field?.valueNode.end ?? node.end } };
@@ -123,6 +125,8 @@ export class SemanticIndex {
         }
       };
       assetFields(args, this.registry.get(node.command)?.fields ?? []);
+      for (const binding of stageCommandAssetBindings(node.command, args))
+        add(node, binding.path.join('.'), { kind: 'asset', id: binding.assetId }, 'assetUse', binding.assetId);
       if (asRecord(args.voiceByLocale)) for (const [locale, id] of Object.entries(args.voiceByLocale)) if (typeof id === 'string') add(node, `voiceByLocale.${locale}`, { kind: 'asset', id }, 'assetUse', id);
     }
     this.coverage.push({ documentId: parsed.documentId, revision: parsed.revision, state: parsed.issues.some(issue => issue.severity === 'error') || valid.some(node => node.command.includes('/')) ? 'partial' : 'complete', issues: [...parsed.issues] });

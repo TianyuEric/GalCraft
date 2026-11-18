@@ -76,7 +76,9 @@ export const RuntimeStateSchema = z.strictObject({
   route: z.array(z.strictObject({ statementId: IdSchema, occurrence: z.number().int().nonnegative(), optionId: IdSchema })),
   presentation: PresentationStateSchema,
   wait: z.union([
-    z.null(), z.strictObject({ kind: z.literal('say'), textShown: z.number().int().nonnegative(), textComplete: z.boolean(), textAnchor: z.number().int().nonnegative() }),
+    z.null(), z.strictObject({ kind: z.literal('say'), textShown: z.number().int().nonnegative(), textComplete: z.boolean(), textAnchor: z.number().int().nonnegative(),
+      inline: z.strictObject({ sourceKey: z.string(), positions: z.array(z.number().int().nonnegative()).min(1),
+        cursor: z.number().int().nonnegative(), waiting: z.strictObject({ eventId: IdSchema, remainingMs: finite.nonnegative().nullable() }).nullable() }).optional() }),
     z.strictObject({ kind: z.literal('choice'), optionIds: z.array(IdSchema), visibleOptionIds: z.array(IdSchema).optional() }),
     z.strictObject({ kind: z.literal('input'), draft: z.string() }),
     z.strictObject({ kind: z.literal('timer'), remainingMs: finite }),

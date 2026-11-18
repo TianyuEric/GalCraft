@@ -1,7 +1,8 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import type { Result, SemanticPage } from '@galcraft/contracts';
 import { FixtureCharacters, FixtureIds, FixtureProject } from '@galcraft/contracts/fixtures';
-import { initialSidebarState, runSidebarSearch, sidebarAssetQuery } from './sidebar.js';
+import { createAuthoringSidebar, initialSidebarState, runSidebarSearch } from './sidebar.js';
 import type { AuthoringServices, AuthoringSource } from './controller.js';
 
 const text = (value: string, id: string) => `say {speaker:{kind:"narrator"},text:${JSON.stringify(value)}} @${id};\n`;
@@ -62,19 +63,25 @@ describe('authoring sidebar working-document search', () => {
     const found = await runSidebarSearch({ state, source: source(), sceneId: null, locale: 'en', services: { searchSemantic } as unknown as AuthoringServices });
     expect(found).toBeNull(); expect(state.error).toContain('Select a scene'); expect(searchSemantic).not.toHaveBeenCalled();
   });
-});
-
-describe('authoring sidebar asset categories', () => {
-  it('keeps image portraits distinct from Live2D and pages twelve results', () => {
-    const state = initialSidebarState(); state.assetCategory = 'figure'; state.assetTerm = 'An';
-    expect(sidebarAssetQuery(state, FixtureIds.street)).toMatchObject({ kind: 'image', allowedKinds: ['image'], usage: 'figure', text: 'An', limit: 12, sceneId: null });
-    state.assetCategory = 'live2d';
-    expect(sidebarAssetQuery(state, FixtureIds.street)).toMatchObject({ kind: 'live2d', allowedKinds: ['live2d'], usage: null });
-  });
-  it('combines hard audio kind, selected purpose and current-scene context', () => {
-    const state = initialSidebarState(); state.assetCategory = 'audio'; state.assetUsage = 'voice'; state.assetTab = 'context'; state.assetOffset = 12;
-    expect(sidebarAssetQuery(state, FixtureIds.street)).toMatchObject({ kind: 'audio', allowedKinds: ['audio'], usage: 'voice', sceneId: FixtureIds.street, offset: 12 });
-    state.assetCategory = 'all'; state.assetTab = 'all';
-    expect(sidebarAssetQuery(state, FixtureIds.street)).toMatchObject({ kind: null, usage: null, sceneId: null });
+  it('restores scene search and suspends it while the central document is incompatible', async () => {
+    const working = source();
+    const state = initialSidebarState({ mode: 'text', term: 'rain', target: '', targetLabel: '', scope: 'scene',
+      variableAccess: 'both', offset: 0, hasSearched: true, searchScrollTop: 0 });
+    const search = createAuthoringSidebar({ services: {} as AuthoringServices, source: working, sceneId: null, state, locale: 'en',
+      cache: () => {}, locate: async () => {} });
+    const input = search.node.querySelector('input')!;
+    try {
+      expect(input.disabled).toBe(true);
+      expect(search.node.querySelector('.sidebar-source')?.textContent).toContain('Open a scene');
+      search.update(working, FixtureIds.street);
+      await vi.waitFor(() => expect(search.node.querySelector('.sidebar-hit-current')?.textContent).toBe('unsaved rain'));
+      expect(input.disabled).toBe(false);
+      search.update(working, null);
+      expect(search.node.querySelector('.sidebar-search-hit')).toBeNull();
+      expect(input.value).toBe('rain');
+      search.update(working, FixtureIds.bookshop);
+      await vi.waitFor(() => expect(search.node.querySelector('.sidebar-hit-current')?.textContent).toBe('rain in shop'));
+      expect(search.node.querySelector('input')).toBe(input);
+    } finally { search.dispose(); }
   });
 });

@@ -21,11 +21,11 @@
 .restore-report summary:hover { color:var(--primary); }
 .restore-report summary:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 .restore-dependencies { list-style:none; padding:0; margin:8px 0 0; }
-.restore-dependencies li { display:flex; gap:12px; justify-content:space-between; padding-block:12px; border-bottom:1px solid var(--border); }
-.restore-dependencies li > div:first-child { min-width:0; display:grid; gap:4px; overflow-wrap:anywhere; }
-.restore-dependencies strong { font-weight:500; }
-.restore-dependencies small, .restore-dependencies span { color:var(--muted-foreground); }
+.restore-dependencies > li { display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; padding-block:12px; border-bottom:1px solid var(--border); }
+.restore-dependencies > li > div:first-child { flex: 1 1 20rem; min-width:0; display:grid; gap:4px; overflow-wrap:anywhere; }
+.restore-dependencies > li > div > strong { font-weight:500; }
+.restore-dependencies > li > div > :is(small, span) { color:var(--muted-foreground); }
 .restore-readiness { display:grid; list-style:none; gap:8px; margin:0; padding:0; }
 .restore-readiness li, .restore-progress { display:flex; gap:8px; align-items:center; }
 .project-restore > footer { position:sticky; bottom:0; background:var(--workbench-editor,var(--background)); padding-block:12px; display:grid; gap:8px; }
-@media (max-width:700px) { .project-restore > header, .restore-dependencies li { flex-direction:column; } .restore-file-choice { align-items:flex-start; flex-direction:column; } }
+@media (max-width:700px) { .project-restore > header, .restore-file-choice { align-items:flex-start; flex-direction:column; } }

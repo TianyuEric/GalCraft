@@ -6,9 +6,7 @@ import { IssueNotice } from '../../components/issue-notice.js';
 import { TaskItemFeedback } from './TaskItemFeedback.js';
 import { ConversationPanel, CandidateUsage } from './ConversationPanel.js';
 import { CandidatePlacement } from './CandidatePlacement.js';
-import { ServiceConnections } from './ServiceConnections.js';
-import { readWorkflow } from './workflow-model.js';
-import { WorkflowDialog } from './WorkflowDialog.js';
+import { ConnectionWorkbench } from './ConnectionWorkbench.js';
 import { ContextTable } from './ContextTable.js';
 import { Disclosure } from '../../components/disclosure.js';
 import { SaveChangeList } from '../../components/change-list.js';
@@ -45,6 +43,7 @@ import {
   Image,
   Music2,
   Trash2,
+  ListTree,
 } from "lucide-react";
 import type {
   Candidate,
@@ -53,7 +52,7 @@ import type {
   UIPlanProposal,
 } from "@galcraft/authoring/production";
 import type { CreationRecipe } from "@galcraft/authoring/recipes";
-import type { EditPlan, DocumentView } from "@galcraft/contracts";
+import type { Asset, EditPlan, DocumentView } from "@galcraft/contracts";
 import type { UIComposition } from "@galcraft/templates";
 import {
   Button,
@@ -64,9 +63,9 @@ import {
   Badge,
 } from "../../components/controls.js";
 import { unwrap } from "./bridge.js";
-import { ProductionSession } from "./session.js";
+import { ProductionSession, type ProductionDirectoryState, type ProductionRecord } from "./session.js";
 import "./production.css";
-import { UIPlanEditor } from "./UIPlanEditor.js";
+import { planDependencies, planStepTitle, UIPlanEditor } from "./UIPlanEditor.js";
 import { CompositionReview } from "./CompositionReview.js";
 import type { AuthoringServices } from "../../authoring/controller.js";
 import { quickLabels } from './QuickTask.js';
@@ -75,9 +74,13 @@ import { TaskExecutionStatus } from './TaskExecutionStatus.js';
 import { DraftWorkstation } from './DraftWorkstation.js';
 import type { ProductionEditorHost } from './ExtensionOperationForm.js';
 import { CandidateMediaPreview } from './CandidateMediaPreview.js';
+import { WholeFigureComparison } from './WholeFigureComparison.js';
+import type { GenerationInput } from '@galcraft/authoring/production';
+import type { ProductionOrigin } from '@galcraft/authoring/production/draft';
 import { OutlineEditor } from './OutlineEditor.js';
 import { openAssetPicker } from '../../authoring/asset-picker.js';
 import { ScriptCandidatePreview } from './ScriptCandidatePreview.js';
+import { ProductionDirectory, taskRunning } from './ProductionDirectory.js';
 import * as monaco from 'monaco-editor';
 import { languageId, monarchLanguage } from '@galcraft/dsl';
 
@@ -100,7 +103,7 @@ const states: Record<string, [string, string, string]> = {
   submitting: ["提交中", "Submitting", "送信中"],
   running: ["生成中", "Running", "生成中"],
   fetching: ["下载结果", "Fetching", "取得中"],
-  review: ["执行：生成完成", "Execution: generated", "実行：生成完了"],
+  review: ["生成完成，待查看候选", "Results ready to review", "生成結果を確認できます"],
   interrupted: ["状态待确认", "Needs reconciliation", "状態確認待ち"],
   failed: ["失败", "Failed", "失敗"],
   cancelled: ["已取消", "Cancelled", "キャンセル済み"],
@@ -113,66 +116,93 @@ export function Production({
   locale,
   page = "production",
   navigate,
+  returnToOrigin,
+  bindFigure,
   changed,
   services,
-  documentActive = true,
+  documentActive: activeDocument = true,
   inspectorContainer,
   explorerContainer,
+  directory,
   revealInspector,
   onUnappliedChange,
   onReviewChange,
   productionHost,
+  openConnections,
 }: {
   session: ProductionSession;
   locale: string;
   page?: string;
   navigate(page: string): void;
+  returnToOrigin?(origin: ProductionOrigin): Promise<void>;
+  bindFigure?(asset: Asset, variantId: string, characterId?: string): void;
   changed(receipt?: EditReceipt): Promise<void>;
   services: AuthoringServices;
   documentActive?: boolean;
   inspectorContainer?: HTMLElement;
   explorerContainer?: HTMLElement;
+  directory?: {
+    container: HTMLElement;
+    initial: ProductionDirectoryState;
+    onChange(state: Partial<ProductionDirectoryState>): void;
+    open(): void;
+    openDocument(): Promise<boolean>;
+    focusDocument(): void;
+  };
   revealInspector?(): void;
   onUnappliedChange?(dirty: boolean): void;
   onReviewChange?(reviewing: boolean): void;
   productionHost?: ProductionEditorHost | null;
+  openConnections?(): void;
 }) {
   s.displayLocale = () => locale;
   useSyncExternalStore(s.subscribe, s.snapshot);
   const t = (zh: string, en: string, ja: string) => tr(locale, zh, en, ja);
-  const mediaRoot = useRef<HTMLElement>(null), taskSidebar = useRef<HTMLElement>(null);
+  const goToOrigin = async () => {
+    const origin = s.recordOrigin;
+    if (origin && returnToOrigin) await returnToOrigin(origin);
+    else navigate(origin?.page ?? 'editor');
+  };
+  const mediaRoot = useRef<HTMLElement>(null);
+  const [surfaceVisible, setSurfaceVisible] = useState(activeDocument);
+  const documentActive = directory ? surfaceVisible : activeDocument;
   const changeSection = (value: string) => {
+    if (value === 'connections' && openConnections) { openConnections(); return; }
     for (const element of mediaRoot.current?.querySelectorAll<HTMLMediaElement>('audio,video') ?? []) { element.pause(); element.currentTime = 0; }
     setActiveReview('');
     setTab(value);
   };
-  const [searches, setSearches] = useState<Record<string, string>>({ tasks: '', recipes: '', connections: '' }), [taskFilter, setTaskFilter] = useState('all');
+  const [searches, setSearches] = useState<Record<string, string>>({ recipes: '', connections: '' });
   const [recipeCategory, setRecipeCategory] = useState('all'), [recipeScope, setRecipeScope] = useState('all');
   const [librarySelection, setLibrarySelection] = useState<string[]>([]);
-  const [workflowDocuments, setWorkflowDocuments] = useState<NonNullable<ProductionSession['guiDraft']>['workflowDocuments']>(s.guiDraft?.workflowDocuments??[]);
-  const [activeWorkflow, setActiveWorkflow] = useState(s.guiDraft?.activeWorkflow??'');
   const [removeTask, setRemoveTask] = useState<{id:string;name:string}|null>(null);
   const [removeDraft, setRemoveDraft] = useState<{ id: string; name: string } | null>(null);
-  const closeWorkflow = (id: string) => { setWorkflowDocuments(items => items.filter(item => item.id !== id)); setActiveWorkflow(current => current === id ? '' : current); };
-  const selectWorkflow = (id?: string, importText?: string) => {
-    const resumeDraft = id?.startsWith('workflow-draft:') ?? false;
-    id = id?.replace(/^workflow-draft:/, '');
-    const opened = id && workflowDocuments.find(item => (readWorkflow(item.text)?.id ?? item.id) === id);
-    if (opened) { setActiveWorkflow(opened.id); return; }
-    const existing = s.data.workflows.find(w => w.id === id);
-    const storedDraft = s.data.workflowDrafts?.find(draft => draft.id === id);
-    const workflow = (resumeDraft ? storedDraft?.workflow : existing) ?? storedDraft?.workflow ?? existing ?? { id: createId(s.data), revision: 0, name: '', purpose: null, imageUsages: null, graphVersion: '1', apiGraph: {}, editorWorkflowPath: null, inputs: [], uploads: [], outputs: [], requiredNodes: [], modelNotes: [] };
-    setWorkflowDocuments(items => items.some(item => item.id === workflow.id) ? items : [...items, { id: workflow.id, text: JSON.stringify(workflow, null, 2), title: workflow.name || t('未命名工作流', 'Untitled workflow', '無題ワークフロー'), dirty: Boolean(importText), importText, paste: resumeDraft ? storedDraft?.paste ?? '' : '', draftRevision: storedDraft?.revision ?? null, expectedRevision: resumeDraft && storedDraft ? storedDraft.availableRevision : existing?.revision ?? null, closeRequest: 0 }]);
-    setActiveWorkflow(workflow.id);
-  };
-  const [tab, setTab] = useState(s.guiDraft?.tab??"tasks"),
+  const [tab, setTab] = useState(() => openConnections && s.guiDraft?.tab === "connections" ? "tasks" : s.guiDraft?.tab ?? "tasks"),
     [modal, setModal] = useModalState(""),
     [busy, setBusy] = useState(false);
   const [stepsOpen, setStepsOpen] = useState(false);
-  const [taskPage, setTaskPage] = useState(0), [draftPage, setDraftPage] = useState(0), [candidatePage, setCandidatePage] = useState(0);
-  const [taskDetailsOpen, setTaskDetailsOpen] = useState(false), [taskHistoryOpen, setTaskHistoryOpen] = useState(true), [draftHistoryOpen, setDraftHistoryOpen] = useState(true);
-  useEffect(() => { s.setVisible(documentActive); }, [s, documentActive]);
-  useEffect(() => { setTaskPage(0); setDraftPage(0); setTaskHistoryOpen(true); if (searches.tasks) setDraftHistoryOpen(true); }, [searches.tasks, taskFilter]);
+  const [candidatePage, setCandidatePage] = useState(0);
+  const [taskDetailsOpen, setTaskDetailsOpen] = useState(false);
+  const directoryContainer = directory?.container;
+  useEffect(() => {
+    if (!directoryContainer) s.setVisible(activeDocument);
+  }, [s, activeDocument, directoryContainer]);
+  useEffect(() => {
+    if (!directoryContainer) return;
+    const visible = new Map<Element, boolean>();
+    const workface = mediaRoot.current;
+    s.setVisible([workface, directoryContainer].some(node => node?.isConnected && !node.closest('[hidden]')));
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) visible.set(entry.target, entry.isIntersecting);
+      const central = Boolean(workface && visible.get(workface));
+      setSurfaceVisible(central);
+      if (!central) for (const element of workface?.querySelectorAll<HTMLMediaElement>('audio,video') ?? []) { element.pause(); element.currentTime = 0; }
+      s.setVisible([...visible.values()].some(Boolean));
+    });
+    if (workface) observer.observe(workface);
+    observer.observe(directoryContainer);
+    return () => observer.disconnect();
+  }, [s, directoryContainer]);
   useEffect(() => { setCandidatePage(0); setTaskDetailsOpen(false); }, [s.taskId]);
 
   const [retryPlan,setRetryPlan]=useState<import('@galcraft/authoring/production').TaskPlan|null>(null);
@@ -222,8 +252,10 @@ export function Production({
   const [discardReview, setDiscardReview] = useState(false);
   const reviewTitle = (id: string) => id === 'save' ? t('保存审阅', 'Save review', '保存レビュー') : id === 'adopt' ? t('采用审阅', 'Adoption review', '採用レビュー') : id === 'recipe-import' ? t('导入审阅', 'Import review', '読み込みレビュー') : t('UI 计划与请求', 'UI plan & requests', 'UI 計画とリクエスト');
   const uiDirty = !!uiProposal && JSON.stringify(uiProposal) !== uiBaseline;
-  const unapplied = s.connectionDirty || uiDirty || workflowDocuments.some(item => item.dirty) || !!recipe && recipe.scope !== 'official' && JSON.stringify(recipe) !== recipeBaseline;
-  useEffect(()=>{s.guiDraft={workflowDocuments,activeWorkflow,tab,recipe,recipeBaseline,uiProposal,uiSource,uiBaseline};},[s,workflowDocuments,activeWorkflow,tab,recipe,recipeBaseline,uiProposal,uiSource,uiBaseline]);
+  const unapplied = (!openConnections && (s.connectionDirty || s.workflowDirty)) || uiDirty || !!recipe && recipe.scope !== 'official' && JSON.stringify(recipe) !== recipeBaseline;
+  useEffect(() => {
+    s.guiDraft = { workflowDocuments: [], activeWorkflow: '', ...s.guiDraft, tab, recipe, recipeBaseline, uiProposal, uiSource, uiBaseline };
+  }, [s, tab, recipe, recipeBaseline, uiProposal, uiSource, uiBaseline]);
   useEffect(() => { onUnappliedChange?.(unapplied); }, [unapplied, onUnappliedChange]);
   useEffect(() => () => onUnappliedChange?.(false), []);
   const finishReview = (id: ReviewKind) => {
@@ -265,8 +297,6 @@ export function Production({
     if (running.current) return;
     running.current = true;
     setBusy(true);
-    s.error = "";
-    s.diagnostic = null;
     try {
       await action();
       if (refresh) await s.refresh();
@@ -321,6 +351,15 @@ export function Production({
   const useRecipe = async (r: CreationRecipe) => { await s.openRecipe(r, r.uses.includes(recipeCategory as CreationRecipe['uses'][number]) ? recipeCategory as CreationRecipe['uses'][number] : r.uses[0]); setTab('tasks'); setModal(''); };
   const begin = () => void run(() => s.startQuick(page === 'pages' ? 'page' : 'script'));
   const active = s.task;
+  const unavailableRecord = s.unavailableRecord;
+  const openRecord = (record: ProductionRecord) => void run(async () => {
+    if (directory && !await directory.openDocument()) return;
+    if (record.kind === 'task') await s.openTask(record.id);
+    else await s.openDraft(record.id);
+    changeSection('tasks');
+    setModal('');
+    directory?.focusDocument();
+  }, false);
   const candidates = s.candidates();
   const currentCandidatePage = Math.min(candidatePage, Math.max(0, Math.ceil(candidates.length / 12) - 1));
   const pageCandidates = candidates.slice(currentCandidatePage * 12, (currentCandidatePage + 1) * 12);
@@ -357,36 +396,52 @@ export function Production({
   const recipeKind = (item: CreationRecipe) => item.parameterPreset ? 'parameters' : item.production ? 'scheme' : 'promptRule';
   const recipeKindLabel = (kind: string) => kind === 'parameters' ? t('参数预设', 'Parameter presets', 'パラメータプリセット') : kind === 'scheme' ? t('制作方案', 'Production schemes', '制作方法') : t('提示规则', 'Prompt rules', 'プロンプトルール');
   const filteredRecipes = s.data.recipes.map(item => localizeRecipe(item, locale)).filter(item => item.name.toLocaleLowerCase().includes(searches.recipes!.toLocaleLowerCase()) && (recipeScope === 'all' || item.scope === recipeScope) && (recipeCategory === 'all' || recipeCategory === 'promptRule' ? recipeCategory !== 'promptRule' || recipeKind(item) === 'promptRule' : item.uses.includes(recipeCategory as CreationRecipe['uses'][number])));
-  const visibleTasks = [...s.tasks].reverse().filter(task => task.name.toLocaleLowerCase().includes(searches.tasks!.toLocaleLowerCase()) && (taskFilter === 'all' || task.items.some(item => taskFilter === 'active' ? ['queued','submitting','running','fetching','blocked'].includes(item.state) : taskFilter === 'review' ? item.state === 'review' : ['failed','interrupted'].includes(item.state))));
-  const visibleDrafts = s.data.drafts.filter(draft => !draft.submittedTaskId && (draft.name ?? draft.activeUse).toLocaleLowerCase().includes(searches.tasks!.toLocaleLowerCase()));
-  const currentTaskPage = Math.min(taskPage, Math.max(0, Math.ceil(visibleTasks.length / 20) - 1));
-  const currentDraftPage = Math.min(draftPage, Math.max(0, Math.ceil(visibleDrafts.length / 20) - 1));
-  useEffect(() => { const index = visibleTasks.findIndex(task => task.id === s.taskId); if (index >= 0) setTaskPage(Math.floor(index / 20)); }, [s.taskId]);
+  const records = <ProductionDirectory tasks={s.tasks} drafts={s.data.drafts} record={s.selectedRecord}
+    locale={locale} status={status} loaded={s.overviewLoaded} busy={busy} initial={directory?.initial} onChange={directory?.onChange}
+    hidden={!directory && (!documentActive || tab !== 'tasks' || !!activeReview)} error={(!s.overviewLoaded || !documentActive) && s.error ? s.error : undefined} onOpen={openRecord}/>;
   const showExecutionSteps = () => { setStepsOpen(true); requestAnimationFrame(() => { const destination = mediaRoot.current?.querySelector<HTMLElement>('[data-production-sources] summary'); destination?.scrollIntoView({block:'start'}); destination?.focus({preventScroll:true}); }); };
   return (
-    <Tabs className="production-page" data-review-active={!!activeReview} data-inspector-external={!!inspectorContainer} data-explorer-external={!!explorerContainer} render={<main ref={mediaRoot}/>} variant="underline" value={tab} onValueChange={value => changeSection(String(value))}>
-      {placeExplorer(<nav className="production-explorer-sections" hidden={!documentActive} aria-label={t('制作分区','Production sections','制作の区分')}>
+    <Tabs className="production-page" data-review-active={!!activeReview} data-inspector-external={!!inspectorContainer} data-explorer-external={!!explorerContainer} data-directory-docked={!!directory} render={<main ref={mediaRoot}/>} variant="underline" value={tab} onValueChange={value => changeSection(String(value))}>
+      {directory && createPortal(records, directory.container)}
+      {!directory && placeExplorer(<nav className="production-explorer-sections" hidden={!documentActive} aria-label={t('制作分区','Production sections','制作の区分')}>
         <TabsList className="workbench-tabs" aria-label={t('制作工作台分区', 'Production sections', '制作ワークスペースの区分')}>
-          {[['tasks', t('制作与候选', 'Production & candidates', '制作と候補')], ['recipes', t('方案库', 'Scheme library', '制作方法ライブラリ')], ['connections', t('连接与工具', 'Connections & tools', '接続とツール')]].map(([id, label]) => <TabsTrigger key={id} value={id}>{id==='tasks'?<WandSparkles size={15}/>:id==='recipes'?<Layers size={15}/>:<SlidersHorizontal size={15}/>} {label}</TabsTrigger>)}
+          {[['tasks', t('制作与候选', 'Production & candidates', '制作と候補')], ['recipes', t('方案库', 'Scheme library', '制作方法ライブラリ')], ...(openConnections ? [] : [['connections', t('连接与工具', 'Connections & tools', '接続とツール')]])].map(([id, label]) => <TabsTrigger key={id} value={id}>{id==='tasks'?<WandSparkles size={15}/>:id==='recipes'?<Layers size={15}/>:<SlidersHorizontal size={15}/>} {label}</TabsTrigger>)}
         </TabsList>
-        <Input className="production-global-search" aria-label={t('搜索当前制作分区', 'Search the current production section', '現在の制作区分を検索')} placeholder={t('搜索当前分区…', 'Search this section…', 'この区分を検索…')} value={taskSearch} onChange={e => setTaskSearch(e.target.value)}/>
+        {tab !== 'tasks' && <Input className="production-global-search" aria-label={t('搜索当前制作分区', 'Search the current production section', '現在の制作区分を検索')} placeholder={t('搜索当前分区…', 'Search this section…', 'この区分を検索…')} value={taskSearch} onChange={e => setTaskSearch(e.target.value)}/>}
       </nav>)}
       {(adoption || recipeImport || uiProposal || savePinned) && <div className="production-review-navigation"><DocumentTabs active={activeReview || 'overview'} documents={[
         { id: 'overview', title: t('制作工作台', 'Production workspace', '制作ワークスペース'), icon: <Layers size={15}/>, closable: false },
         ...(['adopt', 'recipe-import', 'ui-plan', 'save'] as const).filter(id => id === 'adopt' ? adoption : id === 'recipe-import' ? recipeImport : id === 'save' ? savePinned : uiProposal).map(id => ({ id, title: reviewTitle(id), icon: <FileText size={15}/>, dirty: id === 'ui-plan' && uiDirty })),
       ]} onSelect={id => setActiveReview(id === 'overview' ? '' : id as ReviewKind)} onPin={() => {}} onClose={async id => { if (id === 'overview') return false; await run(() => closeReview(id as ReviewKind)); return false; }}/></div>}
       {pendingReceipt && <div className="production-adoption-refresh" role="status"><p>{t('内容已采用，正在同步工作区。', 'Content adopted; synchronizing the workspace.', '採用済み。ワークスペースを同期しています。')}</p>{refreshError && <><p role="alert">{t('工作区刷新失败；采用已经完成，请重试刷新。', 'Workspace refresh failed. Adoption completed; retry refreshing.', '更新に失敗しました。採用済みです。更新を再試行してください。')} {refreshError}</p><Button disabled={busy} onClick={() => void run(() => refreshAdoption(pendingReceipt, false), false)}>{t('重试刷新', 'Retry refresh', '更新を再試行')}</Button></>}</div>}
-      {documentActive && activeReview === 'ui-plan' && uiProposal && placeExplorer(<nav className="production-plan-outline" aria-label={t('计划步骤', 'Plan steps', '計画のステップ')}><h3>{t('计划步骤与依赖', 'Plan steps and dependencies', '計画のステップと依存関係')}</h3>{uiProposal.steps.map((step, index) => <Button key={step.key} onClick={() => mediaRoot.current?.querySelectorAll('.plan-step-editor')[index]?.scrollIntoView({block:'start',behavior:'smooth'})}><span>{index + 1}. {step.description || step.key}<small>{t('先完成', 'After', '先行ステップ')}: {step.dependsOn.join(', ') || '—'}</small></span></Button>)}</nav>)}
+      {documentActive && activeReview === 'ui-plan' && uiProposal && placeExplorer(
+        <nav className="production-plan-outline" aria-label={t('计划步骤', 'Plan steps', '計画のステップ')}>
+          <h3>{t('计划步骤与依赖', 'Plan steps and dependencies', '計画のステップと依存関係')}</h3>
+          {uiProposal.steps.map((step, index) => <Button key={step.key} onClick={() => {
+            const destination = mediaRoot.current?.querySelectorAll<HTMLElement>('.plan-step-editor')[index];
+            destination?.focus({ preventScroll: true });
+            destination?.scrollIntoView({ block: 'start' });
+          }}>
+            <span>{index + 1}. {planStepTitle(step, index, locale)}
+              {step.dependsOn.length > 0 && <small>{t('先完成', 'After', '先行ステップ')} · {planDependencies(uiProposal.steps, step, locale)}</small>}
+            </span>
+          </Button>)}
+        </nav>
+      )}
       <header className="production-workbench-toolbar">
-        <div className="production-section-select"><Choice label={t('制作分区','Production section','制作の区分')} value={tab} onChange={changeSection} options={[{value:'tasks',label:t('制作与候选','Production & candidates','制作と候補')},{value:'recipes',label:t('方案库','Scheme library','制作方法ライブラリ')},{value:'connections',label:t('连接与工具','Connections & tools','接続とツール')}]}/></div>
+        <div className="production-section-select"><Choice label={t('制作分区','Production section','制作の区分')} value={tab} onChange={changeSection} options={[{value:'tasks',label:t('制作与候选','Production & candidates','制作と候補')},{value:'recipes',label:t('方案库','Scheme library','制作方法ライブラリ')},...(openConnections ? [] : [{value:'connections',label:t('连接与工具','Connections & tools','接続とツール')}])]}/></div>
         <ProductionCreateMenu locale={locale} busy={busy} entries={[
           ...(['script', 'stage', 'background', 'figure', 'cg', 'difference', 'voice', 'music', 'page', 'ui-assets'] as const).map(intent => ({ id:intent, label:t(...quickLabels[intent]), group:['script','stage'].includes(intent) ? t('剧情与演出','Story & staging','シナリオと演出') : ['voice','music'].includes(intent) ? t('声音','Sound','音声') : ['page','ui-assets'].includes(intent) ? t('页面与界面','Pages & UI','ページとUI') : t('画面素材','Artwork','画像素材'), run:() => { setTab('tasks'); setActiveReview(''); void run(() => s.startQuick(intent)); } })),
           ...(s.data.operations ?? []).filter(operation => operation.provider).map(operation => ({ id:operation.id, label:operationTitle(operation, locale), group:t('插件制作','Plugin production','プラグイン制作'), detail:operationDescription(operation, locale), run:() => { setTab('tasks'); setActiveReview(''); void run(() => s.openOperation(operation, locale)); } })),
         ]}/>
+        {openConnections && <Button tone="quiet" onClick={openConnections}><SlidersHorizontal size={15}/>{t('管理连接与工作流', 'Manage connections and workflows', '接続とワークフローを管理')}</Button>}
         {tab==='tasks'&&<Button tone="quiet" onClick={() => setModal(modal === 'outline' ? '' : 'outline')}><FileText size={15}/>{t('作品大纲', 'Project outline', '作品のあらすじ')}</Button>}
+        {directory && tab === 'tasks' && <Button tone="quiet" onClick={directory.open}><ListTree size={15}/>{t('打开制作记录', 'Open production records', '制作履歴を開く')}</Button>}
+        {directory && tab !== 'tasks' && <Input className="production-global-search" aria-label={t('搜索当前制作分区', 'Search the current production section', '現在の制作区分を検索')} placeholder={t('搜索当前分区…', 'Search this section…', 'この区分を検索…')} value={taskSearch} onChange={event => setTaskSearch(event.target.value)}/>}
+        {tab === 'tasks' && !active && !unavailableRecord && draft && !draft.submittedTaskId && <Button tone="quiet" disabled={busy} onClick={() => setRemoveDraft({ id: draft.id, name: draft.name || t('未命名草稿', 'Untitled draft', '無題の下書き') })}><Trash2 size={14}/>{t('删除草稿', 'Delete draft', '下書きを削除')}</Button>}
       </header>
       {!!s.data.migrationIssues?.length && <Disclosure><span>{t('制作数据需要处理','Production data needs attention','制作データの確認が必要です')} ({s.data.migrationIssues.length})</span><ul>{s.data.migrationIssues.map((message,index)=><li key={index}>{message}</li>)}</ul></Disclosure>}
-      {s.error && (
+      {s.error && s.revealedFeedback?.surface !== 'connections' && (
         <div role="alert" className="workbench-error">
           {s.diagnostic ? <IssueNotice issue={s.diagnostic} locale={locale}/> : <>
           <p>{/Cannot read|TypeError|undefined|SyntaxError/.test(s.error) ? t('无法完成此操作，请检查当前表单或重新打开工作台。详细信息可用于定位问题。', 'This action could not complete. Check the form or reopen the workbench; details can help diagnose it.', '処理できませんでした。フォームを確認するか、制作画面を開き直してください。') : s.error.replace(/^Error: /, '')}</p>
@@ -396,67 +451,13 @@ export function Production({
         </div>
       )}
       <TabsContent keepMounted value="tasks" className="production-layout" data-section-active={tab === 'tasks'}>
-          {placeExplorer(<aside ref={taskSidebar} className="task-sidebar" hidden={!documentActive || tab !== 'tasks' || activeReview === 'ui-plan'}>
-            <div className="task-list-title">
-              <h2>{t("制作任务", "Production tasks", "制作タスク")}</h2>
-              <Badge>{s.tasks.length}</Badge>
-            </div>
-            {!s.tasks.length && !s.data.drafts.length && <p className="task-empty">{t('任务会保留在这里，你可以随时回来继续。', 'Your tasks stay here, ready to continue.', 'タスクはここに保存され、いつでも再開できます。')}</p>}
-            <div className="task-filters">
-            <Choice label={t("任务状态","Task status","タスクの状態")} value={taskFilter} options={[{value:'all',label:t("全部任务","All tasks","すべてのタスク")},{value:'active',label:t("进行中","In progress","進行中")},{value:'review',label:t("待审阅","Ready for review","レビュー待ち")},{value:'failed',label:t("失败或中断","Failed or interrupted","失敗・中断")}]} onChange={setTaskFilter}/>
-            </div>
-            {!visibleTasks.length && !visibleDrafts.length && (!!searches.tasks || taskFilter !== 'all') && <p className="task-empty">{t('没有匹配的任务或草稿。清除搜索或切换状态可查看其他记录。','No matching tasks or drafts. Clear search or change status to see other records.','一致するタスクや下書きがありません。検索をクリアするか状態を変更してください。')}<Button tone="quiet" onClick={() => { setTaskSearch(''); setTaskFilter('all'); }}>{t('显示全部任务','Show all tasks','すべてのタスクを表示')}</Button></p>}
-            <Disclosure open={taskHistoryOpen} onOpenChange={setTaskHistoryOpen}><span>{t('制作记录','Production history','制作履歴')} · {visibleTasks.length}</span>
-            <Pagination total={visibleTasks.length} page={currentTaskPage} pageSize={20} onPageChange={page=>{setTaskPage(page);taskSidebar.current?.scrollIntoView({block:'start'});}} locale={locale} label={t('制作记录分页','Production history pages','制作履歴のページ')}/>
-            {visibleTasks.slice(currentTaskPage * 20, (currentTaskPage + 1) * 20).map((task) => (
-              <div key={task.id} className="draft-row"><button
-                key={task.id}
-                data-task-id={task.id}
-                className={`task-row ${s.taskId === task.id ? "selected" : ""}`}
-                onClick={() => {
-                  setActiveReview(''); s.taskId = task.id;
-                  s.selected.clear();
-                  s.changed(); void run(() => s.refresh(), false);
-                }}
-              >
-                <span>
-                  <Layers size={15} />
-                  <strong title={task.name}>{task.name.length > 40 ? `${task.name.slice(0, 40)}…` : task.name}</strong>
-                </span>
-                <small>
-                  {task.items.length} {t("个步骤", "steps", "ステップ")} ·{" "}
-                  {new Date(task.createdAt).toLocaleDateString(locale)}
-                </small>
-                <Badge>{status(task.items.at(-1)?.state ?? "draft")}</Badge>
-              </button><Button tone="quiet" className="task-remove" aria-label={t('移除记录', 'Remove record', '記録を削除')} disabled={task.items.some(item => ['queued','submitting','running','fetching','blocked'].includes(item.state))} title={t('移除记录，保留已采用内容和来源文件', 'Remove the record; keep adopted content and source files', '記録を削除し、採用した内容と元ファイルを保持')} onClick={() => setRemoveTask({id:task.id,name:task.name})}><Trash2 size={14}/></Button></div>
-            ))}
-            </Disclosure>
-            <Disclosure open={draftHistoryOpen} onOpenChange={setDraftHistoryOpen}><span>{t('制作草稿','Drafts','下書き')} · {visibleDrafts.length}</span>
-            <Pagination total={visibleDrafts.length} page={currentDraftPage} pageSize={20} onPageChange={setDraftPage} locale={locale} label={t('制作草稿分页','Draft pages','下書きのページ')}/>
-            {visibleDrafts.slice(currentDraftPage * 20, (currentDraftPage + 1) * 20)
-              .map((d) => (
-                <div key={d.id} className="draft-row"><button
-                  key={d.id}
-                  data-draft-id={d.id}
-                  className="task-row"
-                  onClick={() => {
-                    void run(() => s.openDraft(d.id));
-                    setModal("");
-                  }}
-                >
-                  <FileText size={15} />
-                  {d.name ?? uses.find((u) => u[0] === d.activeUse)?.[
-                      locale === "en" ? 2 : locale === "ja" ? 3 : 1
-                    ]
-                  }
-                  <small>{new Date(d.updatedAt).toLocaleString(locale)}</small>
-                </button><Button tone="quiet" className="task-remove" aria-label={t('删除草稿', 'Delete draft', '下書きを削除')} title={t('删除草稿', 'Delete draft', '下書きを削除')} onClick={() => setRemoveDraft({ id: d.id, name: d.name || t('未命名草稿', 'Untitled draft', '無題の下書き') })}><Trash2 size={14}/></Button></div>
-              ))}
-            </Disclosure>
-          </aside>)}
+          {!directory && placeExplorer(records)}
           <section className="task-detail">
-            {draft && v && !draft.submittedTaskId && <div className="production-draft-view" hidden={!!active || modal === 'outline'}><DraftWorkstation productionHost={productionHost} key={draft.id} session={s} locale={locale} services={services} busy={busy} run={run} generated={() => setModal('')} navigate={navigate} active={documentActive && !activeReview && tab === 'tasks' && !active && modal !== 'outline'} inspectorContainer={inspectorContainer} revealInspector={revealInspector}/></div>}
-            {modal === 'outline' ? <OutlineEditor inline session={s} locale={locale} changed={changed} close={() => setModal('')}/> : !active && draft && v && !draft.submittedTaskId ? null : !active ? (
+            {draft && v && !draft.submittedTaskId && <div className="production-draft-view" hidden={!!active || !!unavailableRecord || modal === 'outline'}><DraftWorkstation productionHost={productionHost} key={draft.id} session={s} locale={locale} services={services} busy={busy} run={run} generated={() => setModal('')} navigate={navigate} returnToOrigin={() => void run(goToOrigin, false)} active={documentActive && !activeReview && tab === 'tasks' && !active && !unavailableRecord && modal !== 'outline'} inspectorContainer={inspectorContainer} revealInspector={revealInspector}/></div>}
+            {modal === 'outline' ? <OutlineEditor inline session={s} locale={locale} changed={changed} close={() => setModal('')}/> : unavailableRecord ? (
+              <Empty title={t('原制作记录暂不可用', 'Previous production record is unavailable', '以前の制作履歴を利用できません')}
+                detail={t(`记录 ${unavailableRecord.id} 暂不可用。可从制作记录打开其他任务或草稿。`, `Record ${unavailableRecord.id} is unavailable. Choose another task or draft from Production records.`, `記録 ${unavailableRecord.id} を利用できません。制作履歴から別のタスクか下書きを選択してください。`)}/>
+            ) : !active && draft && v && !draft.submittedTaskId ? null : !active ? (
               <Empty
                 title={t(
                   "开始下一项制作",
@@ -479,9 +480,13 @@ export function Production({
                 <div className="task-detail-heading">
                   <div>
                     <h2>{active.name}</h2>
+                    {s.recordOrigin && <Button tone="quiet" disabled={busy} onClick={() => void run(goToOrigin, false)}><ArrowLeft size={14}/>{t('返回来源', 'Return to source', '元の場所に戻る')}</Button>}
                     <Disclosure open={taskDetailsOpen} onOpenChange={setTaskDetailsOpen}><span>{t('制作详情', 'Production details', '制作の詳細')}</span>{taskDetailsOpen&&<CodeBlock code={JSON.stringify({ taskId: active.id, name: active.name, steps: active.items.map(item => ({ id: item.id, requestId: item.remote?.id ?? null, service: item.configSnapshot?.name ?? null, model: item.configSnapshot?.model ?? null, input: item.input })) }, null, 2)} language="json" locale={locale}/>}</Disclosure>
                   </div>
                   <div className="gc-actions">
+                    <Button tone="quiet" disabled={busy || taskRunning(active)} onClick={() => setRemoveTask({ id: active.id, name: active.name })}>
+                      <Trash2 size={14}/>{t('移除记录', 'Remove record', '記録を削除')}
+                    </Button>
                     <Button
                       disabled={busy}
                       onClick={() =>
@@ -586,8 +591,16 @@ export function Production({
                   <div className="candidate-page">
                   <Pagination total={candidates.length} page={currentCandidatePage} pageSize={12} onPageChange={setCandidatePage} locale={locale} label={t('候选分页','Candidate pages','候補のページ')}/>
                   <div className="candidate-grid">
-                    {pageCandidates.map((c) => (
-                      <article
+                    {pageCandidates.map((c) => {
+                      const item = active.items.find(value => value.id === c.itemId);
+                      const input = item?.input as GenerationInput | undefined;
+                      const comparison = item?.target.usage === 'difference' && input?.purpose === 'image' ? input : null;
+                      const adoptedAsset = comparison && s.data.candidates.find(entry => entry.candidate.id === c.id)?.adoption !== 'unadopted'
+                        ? s.data.assets.find(asset => asset.source?.taskId === c.taskId && asset.source?.candidateId === c.id && asset.kind === 'image')
+                        : undefined;
+                      const media = documentActive && tab === 'tasks' && !activeReview && content[c.id]?.media.length
+                        ? content[c.id]!.media.map((m, index) => <CandidateMediaPreview key={m.uri} candidate={c} index={index} media={content[c.id]!.media} services={services} locale={locale} editAnimation={async animation => { unwrap(await s.bridge.production.editCandidate({ id: c.id, text: JSON.stringify(animation) })); await s.refresh(); }} label={t('生成候选', 'Generated candidate', '生成候補')}/>) : null;
+                      return <article
                         className={`candidate-card ${s.selected.has(c.id) ? "selected" : ""}`}
                         key={c.id}
                         data-candidate-id={c.id}
@@ -610,7 +623,9 @@ export function Production({
                             )}
                           </Badge>
                         </button>
-                        {documentActive && tab === 'tasks' && !activeReview && content[c.id]?.media.map((m, index) => <CandidateMediaPreview key={m.uri} candidate={c} index={index} media={content[c.id]!.media} services={services} locale={locale} editAnimation={async animation => { unwrap(await s.bridge.production.editCandidate({ id: c.id, text: JSON.stringify(animation) })); await s.refresh(); }} label={t("生成候选", "Generated candidate", "生成候補")}/>)}
+                        {comparison && media ? <WholeFigureComparison input={comparison} asset={s.data.assets.find(asset => asset.id === comparison.references[0]?.assetId)}
+                          output={c.artifacts.find(artifact => artifact.kind === 'image' && artifact.role === 'primary')} resources={services.runtimeAssets} locale={locale}>{media}</WholeFigureComparison> : media}
+                        {adoptedAsset && bindFigure && <Button onClick={() => bindFigure(adoptedAsset, adoptedAsset.originalVariantId, item?.target.characterId ?? undefined)}>{t('绑定采用版本为共同差分', 'Bind adopted version as a shared difference', '採用したバージョンを共通差分に割り当て')}</Button>}
                         {c.artifacts.some(
                           (a) => a.kind !== "text" && a.role === "primary",
                         ) && (
@@ -1029,8 +1044,8 @@ export function Production({
                             </Button>
                           )}
                         </div>
-                      </article>
-                    ))}
+                      </article>;
+                    })}
                   </div>
                   </div>
                 )}
@@ -1115,10 +1130,6 @@ export function Production({
                 </Disclosure></div>
                 <ConversationPanel key={active.id} session={s} task={active} view={s.continuationView(active.id)} locale={locale}/>
                 <footer className="production-footer">
-                  <Button onClick={() => navigate(s.origin?.page ?? "editor")}>
-                    <ArrowLeft size={14} />
-                    {t("返回来源", "Return to source", "元の場所に戻る")}
-                  </Button>
                   <Button
                     onClick={() =>
                       void run(async () => {
@@ -1204,13 +1215,11 @@ export function Production({
         }}/>}
           {!recipe && <Empty title={t('选择方案或提示规则', 'Choose a scheme or prompt rule', '制作方法またはルールを選択')} detail={t('制作方案决定实际执行能力；提示规则只参与明确的文字步骤。', 'Schemes choose execution capabilities. Prompt rules apply only to explicit text steps.', '制作方法は実行能力を指定。ルールは明示したテキスト処理に使用します。')}/>}</section>
       </TabsContent>
-      <TabsContent keepMounted value="connections" data-section-active={tab === 'connections'}><ServiceConnections session={s} locale={locale} search={searches.connections} active={documentActive && !activeReview && tab === 'connections'} explorerContainer={explorerContainer} inspectorContainer={inspectorContainer} workflowActive={!!activeWorkflow} selectedWorkflow={readWorkflow(workflowDocuments.find(item => item.id === activeWorkflow)?.text ?? '')?.id ?? activeWorkflow} showConnection={() => setActiveWorkflow('')} workflowEditor={workflowDocuments.length ? <section className="workflow-documents" hidden={!activeWorkflow}>
-        <DocumentTabs documents={workflowDocuments.map(item => ({ ...item, icon: <Layers/> }))} active={activeWorkflow} onSelect={setActiveWorkflow} onPin={() => {}} onReorder={ids => setWorkflowDocuments(items => ids.map(id => items.find(item => item.id === id)!))} onClose={id => setWorkflowDocuments(items => items.map(item => item.id === id ? { ...item, closeRequest: item.closeRequest + 1 } : item))}/>
-        {workflowDocuments.map(item => <div key={item.id} hidden={item.id !== activeWorkflow} className="workflow-document-content"><WorkflowDialog inline initialText={item.text} initialImportText={item.importText} initialBaseline={item.baseline} initialPaste={item.paste} operations={s.data.operations} outputConnections={s.data.connections.filter(connection => connection.protocol === 'comfyUI')} discoverOutputs={async (connectionId, workflow, historyTaskId) => { if (!workflow.purpose) throw new Error(t('请先选择用途或操作。', 'Choose a purpose or operation first.', '用途・操作を選択してください。')); return unwrap(await s.bridge.production.discoverWorkflowOutputs({ connectionId, workflow: { ...workflow, purpose: workflow.purpose }, historyTaskId })); }} existingWorkflows={s.data.workflows} availableRevision={item.expectedRevision} onIdentityChange={expectedRevision => setWorkflowDocuments(items => items.map(current => current.id === item.id ? { ...current, expectedRevision, draftRevision: null } : current))} saveDraft={async (workflow, paste) => { const result = unwrap(await s.bridge.production.saveWorkflowDraft({ draft: { schemaVersion: 1, id: workflow.id, revision: item.draftRevision ?? 0, name: workflow.name, workflow, paste, availableRevision: item.expectedRevision, updatedAt: new Date().toISOString() }, expectedRevision: item.draftRevision ?? null })); setWorkflowDocuments(items => items.map(current => current.id === item.id ? { ...current, draftRevision: result.revision } : current)); await s.refresh(); }} locale={locale} closeRequest={item.closeRequest} chooseImport={s.bridge.files.readImport ? async () => unwrap(await s.bridge.files.readImport!({ purpose: 'production', extensions: ['json'] })) : undefined} onState={state => setWorkflowDocuments(items => items.map(current => current.id === item.id ? { ...current, ...state, importText: undefined } : current))} close={() => closeWorkflow(item.id)} save={async workflow => {
-          const updated = unwrap(await s.bridge.production.saveWorkflow({ workflow, expectedRevision: item.expectedRevision }));
-          setWorkflowDocuments(items => items.map(current => current.id === item.id ? { ...current, expectedRevision: updated.revision } : current)); await s.refresh(); return updated;
-        }}/></div>)}
-      </section> : undefined} editWorkflow={selectWorkflow} importWorkflow={s.bridge.files.readImport ? async () => { const selected = unwrap(await s.bridge.files.readImport!({ purpose: 'production', extensions: ['json'] })); if (selected) selectWorkflow(undefined, selected.text); } : undefined}/></TabsContent>      {inspectorContainer && createPortal(<aside className="production-section-inspector" hidden={!documentActive || !!activeReview || tab !== 'recipes'}>
+      {!openConnections && <TabsContent keepMounted value="connections" data-section-active={tab === 'connections'}>
+        <ConnectionWorkbench session={s} locale={locale} active={documentActive && !activeReview && tab === 'connections'}
+          embedded={{ search: searches.connections ?? '', explorer: explorerContainer, inspector: inspectorContainer }}/>
+      </TabsContent>}
+      {inspectorContainer && createPortal(<aside className="production-section-inspector" hidden={!documentActive || !!activeReview || tab !== 'recipes'}>
         <InspectorSection title={recipe ? localizeRecipe(recipe, locale).name : t('方案库', 'Scheme library', '制作方法ライブラリ')}>
           {recipe ? <><Badge>{recipeKindLabel(recipeKind(recipe))}</Badge><p>{localizeRecipe(recipe, locale).description || t('在中央工作区查看与编辑方案。', 'View and edit this scheme in the document area.', '中央のワークスペースで制作方法を確認・編集できます。')}</p><dl className="production-object-summary"><dt>{t('归属', 'Scope', '所有範囲')}</dt><dd>{presetSource(recipe.scope, locale)}</dd><dt>{t('编辑状态', 'Editing state', '編集状態')}</dt><dd>{recipe.scope === 'official' ? t('官方只读 · 可复制', 'Official · copy to edit', '公式・コピーして編集') : JSON.stringify(recipe) !== JSON.stringify(s.data.recipes.find(item => item.id === recipe.id)) ? t('有未保存修改', 'Unsaved changes', '未保存の変更') : t('已保存', 'Saved', '保存済み')}</dd><dt>{t('适用用途', 'Uses', '用途')}</dt><dd>{recipe.uses.map(use => uses.find(item => item[0] === use)?.[locale === 'en' ? 2 : locale === 'ja' ? 3 : 1] ?? use).join(' · ')}</dd></dl></> : <p>{t('从 Explorer 选择制作方案、参数预设或提示规则。', 'Select a production scheme, parameter preset, or prompt rule in Explorer.', 'Explorer から制作方法、パラメータプリセット、ルールを選択してください。')}</p>}
         </InspectorSection><InspectorSection title={t('使用与保存', 'Using and saving', '使用と保存')}><p>{t('保存更新可复用内容；使用会进入对应制作草稿。检查实际输入后再发送生成请求。', 'Save updates reusable content. Use opens a production draft; review the actual input before sending a request.', '保存は再利用内容を更新し、使用は制作下書きを開きます。生成前に実際の入力を確認してください。')}</p></InspectorSection>
@@ -1353,6 +1362,7 @@ export function Production({
             )}
           </p>
           <Button
+            tone={uiPlan ? undefined : 'primary'}
             disabled={busy || !uiSource}
             onClick={() =>
               void run(async () => {

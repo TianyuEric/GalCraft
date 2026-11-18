@@ -1,11 +1,12 @@
-import { ExprSchema } from '@galcraft/contracts';
+import { DialogueContentSchema, DialogueEventSchema, ExprSchema, reanchorDialogueEvents } from '@galcraft/contracts';
 import type { Id, Issue, Json, Patch, Result, Revision, RuntimeState, Source } from '@galcraft/contracts';
 import { commandSpec, fieldSpec } from './catalog.js';
 import { printExpression } from './expression.js';
 import { presentationValue } from './presentation.js';
-import { fieldAt, parse } from './parser.js';
+import { dialogueEventSource, fieldAt, parse } from './parser.js';
 import type { FieldNode, ParseResult, StatementNode, ValueNode } from './parser.js';
 import type { CommandSpec } from '@galcraft/contracts';
+import { z } from 'zod';
 
 export type FieldPatchInput = { documentId: Id; revision: Revision; statementIds: Id[]; changes: { field: string; op: 'set' | 'inherit'; value: Json }[] };
 export type TextEdit = { start: number; end: number; text: string; oldText: string };
@@ -63,7 +64,21 @@ export function patchFields(parsed: ParseResult, input: FieldPatchInput): Result
   for (const id of input.statementIds) {
     const node = parsed.cst.find(statement => statement.id === id);
     if (!node?.object || !node.valid) return fail('STATEMENT_MISSING', `Statement ${id} is unavailable`);
-    for (const original of input.changes) {
+    const changes = [...input.changes];
+    const textChange = changes.find(change => change.field === 'text' && change.op === 'set');
+    if (node.command === 'say' && textChange && !changes.some(change => change.field === 'events' || change.field.startsWith('events.'))) {
+      const args = node.object.value as Record<string, unknown>;
+      const before = DialogueContentSchema.safeParse(args.text), after = DialogueContentSchema.safeParse(textChange.value);
+      const events = z.array(DialogueEventSchema).safeParse(args.events);
+      if (before.success && after.success && events.success) {
+        const moved = reanchorDialogueEvents(before.data, after.data, events.data);
+        if (moved.some((event, index) => event.id !== events.data[index]!.id))
+          changes.push({ field: 'events', op: 'set', value: moved });
+        else for (const [index, event] of moved.entries()) if (event.offset !== events.data[index]!.offset)
+          changes.push({ field: `events.${index}.offset`, op: 'set', value: event.offset });
+      }
+    }
+    for (const original of changes) {
       const change = { ...original, value: presentationValue(node.command, original.field, original.value) };
       const parts = change.field.split('.');
       let object = node.object;
@@ -136,8 +151,18 @@ export function toDocumentPatch(documentId: Id, edits: TextEdit[]): Patch {
 export function locate(parsed: ParseResult, source: Source, fieldPath: string | null = null): LocateResult | null {
   if (parsed.documentId !== source.documentId && !source.statementId) return null;
   const statement = source.statementId ? parsed.cst.find(node => node.id === source.statementId) : null;
-  const range = statement ? (fieldPath && statement.object ? fieldAt(statement.object, fieldPath.split('.'))?.valueNode : undefined) ?? statement :
-    parsed.documentId === source.documentId ? source.statementId ? { start: 0, end: 0 } : source.revision === parsed.revision && source.range ? source.range : { start: 0, end: 0 } : null;
+  let eventRange: Source['range'];
+  if (source.eventId) {
+    const index = statement?.fields.find(field => field.key === 'events')?.valueNode.items?.findIndex(item =>
+      item.fields?.some(field => field.key === 'id' && field.valueNode.value === source.eventId)) ?? -1;
+    if (!statement || index < 0) return null;
+    const field = /^events\.\d+\.(.+)$/.exec(fieldPath ?? source.field ?? '')?.[1];
+    const located = dialogueEventSource(parsed, statement, index, field);
+    eventRange = located.range;
+    fieldPath = located.field ?? null;
+  }
+  const range = eventRange ?? (statement ? (fieldPath && statement.object ? fieldAt(statement.object, fieldPath.split('.'))?.valueNode : undefined) ?? statement :
+    parsed.documentId === source.documentId ? source.statementId ? { start: 0, end: 0 } : source.revision === parsed.revision && source.range ? source.range : { start: 0, end: 0 } : null);
   if (!range) return null;
   const start = range.start; const end = range.end;
   const prefix = parsed.text.slice(0, start).split('\n');
@@ -194,6 +219,13 @@ export function duplicateStatements(parsed: ParseResult, statementIds: Id[], map
   const slices: string[] = [];
   for (const node of nodes as StatementNode[]) {
     if (!mapping[node.id!]) return fail('COPY_ID', `Missing new ID for ${node.id}`);
+    if (node.command === 'say') {
+      const events = node.fields.find(field => field.key === 'events')?.valueNode.items ?? [];
+      for (const event of events) {
+        const id = event.fields?.find(field => field.key === 'id')?.valueNode.value;
+        if (typeof id !== 'string' || !mapping[id] || mapping[id] === id) return fail('COPY_ID', 'A new ID is required for each copied dialogue event');
+      }
+    }
     const changes: TextEdit[] = [];
     const idStart = node.idStart!;
     changes.push({ start: idStart - node.start, end: idStart - node.start + node.id!.length, text: mapping[node.id!]!, oldText: node.id! });
@@ -201,7 +233,8 @@ export function duplicateStatements(parsed: ParseResult, statementIds: Id[], map
       for (const field of value.fields ?? []) {
         const childPath = [...path, field.key];
         const oldId = field.valueNode.value;
-        const allowed = ['labelId', 'statementId', 'sceneId', 'variableId', 'objectId', 'effectId', 'soundId'].includes(field.key) || field.key === 'id' && path.includes('options');
+        const allowed = ['labelId', 'statementId', 'sceneId', 'variableId', 'objectId', 'effectId', 'soundId'].includes(field.key) ||
+          field.key === 'id' && (path.includes('options') || node.command === 'say' && path[0] === 'events');
         if (typeof oldId === 'string' && mapping[oldId]) {
           if (!allowed || node.command.includes('/')) throw new Error('PLUGIN_REWRITE_REQUIRED');
           changes.push({ start: field.valueNode.start - node.start, end: field.valueNode.end - node.start, text: JSON.stringify(mapping[oldId]), oldText: parsed.text.slice(field.valueNode.start, field.valueNode.end) });

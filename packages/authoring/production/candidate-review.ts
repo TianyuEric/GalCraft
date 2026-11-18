@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { createId, VoicePresetSchema } from '@galcraft/contracts';
 import type { AssetTypeData, EditInput, Json, Patch, Ref, Result, VersionRef } from '@galcraft/contracts';
-import { parse, patchFields, type CompileInput } from '@galcraft/dsl';
+import { CoreCommandSpecs, createCommandArgs, parse, patchFields, type CompileInput } from '@galcraft/dsl';
 import { suggestedAssetName, validAssetFileName } from '@galcraft/assets/naming';
 import type { ImportInput, PreparedIndexEdit } from '@galcraft/assets';
 import type { Candidate, TaskItem } from './types.js';
@@ -150,7 +150,8 @@ export async function reviewProductionCandidates(candidates: Candidate[], expect
               continue;
             }
             if (!choice || choice.mode !== "bind") continue;
-            const document = ports.bindingSource().documents.find(
+            const source = ports.bindingSource();
+            const document = source.documents.find(
               (d) => d.sceneId === item.target.sceneId,
             );
             if (!document) throw new Error("Select a valid target scene");
@@ -193,20 +194,6 @@ export async function reviewProductionCandidates(candidates: Candidate[], expect
               if (visualTarget && (!targetValue || typeof targetValue !== 'object' || !('objectId' in targetValue) || typeof targetValue.objectId !== 'string'))
                 throw new Error('The selected display command lacks an explicit object identity');
             }
-            const fields: Record<string, Json> =
-              usage === "voice"
-                ? { voice: assetId }
-                : command === "changeBg"
-                  ? {
-                      assetId,
-                      ...(choice.frame ?? (explicitReplacement ? {} :
-                        item.backgroundPreview?.frame ?? {
-                          fit: "cover",
-                          positionX: 0.5,
-                          positionY: 0.5,
-                        })),
-                    }
-                  : { assetId };
             const bindingOperation = command === "bgm" ? "play" : "show";
             const replaces =
               choice.placement !== 'new' && target?.command === command &&
@@ -216,13 +203,19 @@ export async function reviewProductionCandidates(candidates: Candidate[], expect
             if (explicitReplacement && !replaces) throw new Error('The selected command is not a replaceable display or playback position');
             if (explicitReplacement && visualTarget && !['changeFigure', 'changeIllustration', 'changeIllustrationDiff'].includes(command))
               throw new Error('An image difference requires an exact figure or illustration command');
+            const fields: Record<string, Json> = usage === 'voice' ? { voice: assetId } : { assetId };
+            if (command === 'changeBg') {
+              const previousBindingFrame = replaces && !explicitReplacement ? { fit: 'cover', positionX: .5, positionY: .5 } : {};
+              const frame = choice.frame ?? (explicitReplacement ? {} : item.backgroundPreview?.frame ?? previousBindingFrame);
+              Object.assign(fields, frame);
+            }
             if (command === 'changeIllustrationDiff' && replaces) {
               fields.stateName = null;
             }
             if (
               command === "changeFigure" &&
               !replaces &&
-              !ports.bindingSource().characters.some(
+              !source.characters.some(
                 (c) => c.id === item.target.characterId,
               )
             )
@@ -256,17 +249,13 @@ export async function reviewProductionCandidates(candidates: Candidate[], expect
                 target?.start ??
                 parsed.cst.find((n) => n.command === "end")?.start ??
                 document.text.length;
-              const args =
-                command === "changeFigure" || command === 'changeIllustration'
-                  ? {
-                      op: "show",
-                      objectId: createId(),
-                      ...(item.target.characterId
-                        ? { characterId: item.target.characterId }
-                        : {}),
-                      ...fields,
-                    }
-                  : { op: bindingOperation, ...fields };
+              const spec = CoreCommandSpecs.find(entry => entry.key === command);
+              if (!spec) throw new Error(`Unknown command ${command}`);
+              const allocate = () => createId([source, patches]);
+              const args = createCommandArgs(spec, {
+                ...fields,
+                ...(visualTarget && item.target.characterId ? { characterId: item.target.characterId } : {}),
+              }, { textLocale: source.project.languages.textDefault }, allocate);
               patches.push({
                 kind: "text",
                 documentId: document.documentId,
@@ -275,7 +264,7 @@ export async function reviewProductionCandidates(candidates: Candidate[], expect
                     start: at,
                     end: at,
                     before: "",
-                    after: `${command} ${JSON.stringify(args)} @${createId()};\n`,
+                    after: `${at && document.text[at - 1] !== '\n' ? '\n' : ''}${command} ${JSON.stringify(args)} @${allocate()};\n`,
                   },
                 ],
               });

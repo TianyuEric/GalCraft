@@ -38,6 +38,8 @@ export function StudioNumberField({ label, value, min, max, step, unit, disabled
     committing.current = true; setPending(true);
     try {
       if (next !== null) await onCommit(next); else if (allowEmpty) await onCommit(null);
+      current.current = next;
+      setDraft(next);
       start.current = next; edited.current = false; retainedRaw.current=undefined;onInputDraftChange?.(null);onDraftChange?.(false);
       // Accepting typed text ends Base UI's manual-input authority, even if the host moved the DOM without a blur.
       restoreAfterGeneration.current = restoreFocus;

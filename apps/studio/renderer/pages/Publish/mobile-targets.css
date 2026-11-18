@@ -13,3 +13,7 @@
 .publish-mobile a { text-decoration: underline; text-underline-offset: 3px; }
 .publish-mobile-progress { display: grid; gap: 8px; min-width: 0; font-size: 12px; }
 .publish-mobile-progress strong { font-size: 13px; font-weight: 500; max-height: 100px; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
+.publish-mobile-path { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; }
+.publish-mobile-path > .gc-field { flex: 1 1 220px; min-width: 0; }
+.publish-mobile-identity { display: grid; grid-template-columns: minmax(0, 1fr) minmax(84px, 116px); gap: 12px; }
+.publish-mobile-identity > .gc-field { min-width: 0; }

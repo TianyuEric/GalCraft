@@ -1,4 +1,5 @@
 import type { Id, Interlude, PlayerHost, Result, RuntimeState, Snapshot, Transition } from '@galcraft/contracts';
+import { sceneEntryPresentations } from '@galcraft/contracts';
 import type { AudioMixer, StageController } from '@galcraft/stage';
 import { ease, paintGridTransition, type ExecutableAnimation } from '@galcraft/stage';
 import { fail, ok } from './common.js';
@@ -70,9 +71,7 @@ export class SceneEntryPresentation {
     const entry=state.entryPresentation;if(!entry||entry.completed||entry.instanceId===this.instance)return;
     this.stop();this.instance=entry.instanceId;this.sessionId=sessionId;this.skipped=false;
     const scene=this.snapshot.scenes.find(item=>item.scene.id===entry.sceneId)?.scene;
-    const chapter=this.snapshot.project.chapters.find(item=>item.id===scene?.chapterId);
-    const first=chapter?.sceneIds[0]===entry.sceneId;
-    const configs=[...(first&&chapter?.presentation?[{presentation:chapter.presentation,name:chapter.name}]:[]),...(scene?.presentation?[{presentation:scene.presentation,name:scene.name}]:[])];
+    const configs=scene ? sceneEntryPresentations(this.snapshot.project, scene) : [];
     const titles=configs.flatMap(({presentation,name})=>presentation.title?.enabled?[presentation.title.text||name]:[]).filter(Boolean);
     const titleConfig=configs.map(({presentation})=>presentation.title).find(config=>config?.enabled);
     this.title=titles.length?{lines:titles,holdMs:titleConfig!.holdMs,enter:titleConfig!.enter,exit:titleConfig!.exit}:null;

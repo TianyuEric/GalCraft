@@ -2,6 +2,7 @@ import { PluginManifestSchema, emptyContributions } from '@galcraft/plugins/cont
 import type { Contributions, GalCraftPlugin, PluginContext, PluginManifest, PluginDefinition } from '@galcraft/plugins/contracts';
 import { ContributionRegistry, createRuntimeDependencyAccess } from '@galcraft/plugins/registry';
 import type { DocumentView, Domain, Json, Lock, ResolvedAsset, Result, StudioBridge } from '@galcraft/contracts';
+import { DiagnosticError } from '@galcraft/contracts';
 import { installStudioPluginRuntimes, readPluginDefinition } from '../pages/Plugins/plugin-runtimes.js';
 
 const collections = {
@@ -26,7 +27,7 @@ export async function prepareProjectPlugins(bridge: Pick<StudioBridge, 'plugins'
   ports?: { runtimeDependencies?: PluginContext['runtimeDependencies']; readText?: NonNullable<PluginContext['assets']['readText']>; readBytes?: NonNullable<PluginContext['assets']['readBytes']> }) {
   installStudioPluginRuntimes();
   const resolved = await bridge.plugins.resolve(lock);
-  if (!resolved.ok) throw new Error(resolved.error.message);
+  if (!resolved.ok) throw new DiagnosticError(resolved.error);
   const { handleId } = resolved.value;
   const active: { plugin: GalCraftPlugin; controller: AbortController; releases: (() => void | Promise<void>)[] }[] = [];
   let disposed = false;

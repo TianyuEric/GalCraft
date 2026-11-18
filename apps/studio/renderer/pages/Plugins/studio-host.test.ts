@@ -11,13 +11,13 @@ const pluginId = 'org.example.author';
 const lock: Lock = { engine: { kind: 'engine', id: 'core', version: '0.1.0', targets: ['web', 'windows'], required: true }, template: { kind: 'template', id: 'default', version: '0.1.0', targets: ['web', 'windows'], required: true }, plugins: [{ kind: 'plugin', id: pluginId, version: '0.1.0', targets: ['web', 'windows'], required: true }], selectedProviders: {} };
 const manifest: PluginManifest = { schemaVersion: 2, id: pluginId, name: 'Author tool', version: '0.1.0', description: '', author: 'Example', license: 'MIT', homepage: null, engineRange: '*', sdkMajor: 0, targets: ['web', 'windows'], dependencies: [], entry: { runtime: null, editor: 'editor.js', definition: 'definition.js' }, files: [{ path: 'editor.js', size: 1 }, { path: 'definition.js', size: 1 }], contributions: [{ kind: 'tool', key: `${pluginId}/inspect`, targets: ['web', 'windows'], required: true }], stateVersions: { document: 1, progress: 1, longTerm: 1 }, native: [] };
 const source = `export function createPlugin() { return { deactivate: async () => {}, activate: async () => ({ commands:[],conditions:[],documents:[],resources:[],stages:[],pages:[],components:[],systems:[],platform:[],tools:[{key:'${pluginId}/inspect',titleKey:'${pluginId}/inspectTitle',inputFields:[],locations:['tools.list','commands.palette'],scope:{pages:['creation'],selection:'statements'},run:async(input,context)=>({ok:true,value:{kind:'report',issues:[],message:context.scope.statementIds.join(',')},warnings:[]})}] }) }; }`;
-function fixture(pluginSource = source, pluginManifest = manifest) {
+function fixture(pluginSource = source, pluginManifest = manifest, workspace?: import('../../components/workbench/document-workspace.js').DocumentWorkspace) {
   let sceneRevision = 1, failReload = false, handle = 0;
   const release = vi.fn(async () => ok(undefined));
   const documents = (): DocumentView[] => [{ documentId: 'LockAA', revision: 1, savedRevision: 1, dirty: false, format: 'json', savedFiles: {}, files: { 'dependencies.lock.json': JSON.stringify({ data: lock }) } }, { documentId: 'SceneA', revision: sceneRevision, savedRevision: 1, dirty: sceneRevision > 1, format: 'dsl', savedFiles: {}, files: { 'scenes/SceneA/script.gal': 'say {} @LineAA;' } }];
   const bridge = { documents: { list: async () => ok(documents()) }, plugins: { release, resolve: async () => ok({ handleId: `Handle${++handle}`, packages: [{ manifest: pluginManifest, runtimeUrl: null, editorUrl: pluginManifest.entry.editor ? uri(failReload ? 'export function createPlugin(){throw new Error("Build failed")}' : pluginSource) : null, definitionUrl: uri(`export const definition={messages:{'zh-CN':{'${pluginId}/inspectTitle':'检查所选台词'}}}`) }] }) } } as unknown as Pick<StudioBridge, 'documents' | 'plugins'>;
   const scope: StudioScope = { page: 'creation', sceneId: 'SceneA', documentId: 'SceneA', statementIds: ['LineAA'], textRange: null, assetIds: [], insertion: null, versions: [{ ref: { kind: 'document', id: 'SceneA' }, revision: 1 }] };
-  const host = new StudioPluginHost(bridge, 'ProjAA', () => 'zh-CN', async () => {}, async () => {}, { scope: () => scope, navigate: async () => ok(undefined), locate: async () => ok(undefined) });
+  const host = new StudioPluginHost(bridge, 'ProjAA', () => 'zh-CN', async () => {}, async () => {}, { workspace, scope: () => scope, navigate: async () => ok(undefined), locate: async () => ok(undefined) });
   return { host, release, scope, change: () => sceneRevision++, failReload: () => { failReload = true; } };
 }
 describe('Studio author contribution consumer', () => {
@@ -43,13 +43,20 @@ describe('Studio author contribution consumer', () => {
       { kind: 'plugin', id: affection.id, version: affection.version, targets: ['web', 'windows'], required: true },
     ] };
     let handle = 0;
-    const bridge = { documents: { list: async () => ok([{ documentId: 'LockAA', revision: 1, savedRevision: 1, dirty: false, format: 'json', savedFiles: {}, files: { 'dependencies.lock.json': JSON.stringify({ data: selected }) } }]) },
+    const pluginDocument = { documentId: 'AffDoc', revision: 1, savedRevision: 1, dirty: false, format: 'json', savedFiles: {}, files: {
+      'plugins/org.galcraft.affection/config/AffDoc.json': JSON.stringify({ data: { characters: [] }, pluginDocument: { pluginId: affection.id, contributionKey: `${affection.id}/config`, name: '角色关系', stateVersion: 1 } }),
+    } };
+    const bridge = { documents: { list: async () => ok([{ documentId: 'LockAA', revision: 1, savedRevision: 1, dirty: false, format: 'json', savedFiles: {}, files: { 'dependencies.lock.json': JSON.stringify({ data: selected }) } }, pluginDocument]) },
       plugins: { release, resolve: async () => ok({ handleId: `Official${++handle}`, packages: selected.plugins.some(item => item.id === affection.id && item.version === affection.version) ? [{
         manifest: JSON.parse(readFileSync(new URL('../../../../../plugins/official-affection/package/manifest.json', import.meta.url), 'utf8')),
         runtimeUrl: null, editorUrl: null, definitionUrl: uri(readFileSync(new URL('../../../../../plugins/official-affection/package/definition/index.js', import.meta.url), 'utf8')),
       }] : [] }) } } as unknown as Pick<StudioBridge, 'documents' | 'plugins'>;
     let displayLocale = 'zh-CN';
-    const host = new StudioPluginHost(bridge, 'ProjAA', () => displayLocale, async () => {}, async () => {});
+    const open = vi.fn(() => () => {});
+    const host = new StudioPluginHost(bridge, 'ProjAA', () => displayLocale, async () => {}, async () => {}, {
+      workspace: { open }, scope: () => ({ page: 'plugins', sceneId: null, documentId: null, statementIds: [], textRange: null, assetIds: [], insertion: null, versions: [] }),
+      navigate: async () => ok(undefined), locate: async () => ok(undefined),
+    });
     expect((await host.load()).ok).toBe(true);
     const definition = createDefinition();
     expect(host.inspect(affection.id).definedKeys).toEqual(expect.arrayContaining([
@@ -68,6 +75,8 @@ describe('Studio author contribution consumer', () => {
     expect(host.componentDefinitions()).toEqual(definition.components);
     expect(host.inspect(affection.id).manifest?.version).toBe(affection.version);
     expect(host.documentTypes().every(item => item.pluginId === affection.id)).toBe(true);
+    expect(await host.reopenDocument('AffDoc')).toMatchObject({ ok: true });
+    expect(open).toHaveBeenCalledWith('plugin-document:AffDoc', '角色关系', expect.any(Function));
     selected = { ...selected, plugins: [{ ...selected.plugins[0]!, version: '9.0.0' }] };
     expect((await host.load()).ok).toBe(false);
     expect(host.loadError).toContain('org.galcraft.affection@9.0.0');
@@ -77,9 +86,34 @@ describe('Studio author contribution consumer', () => {
     selected = { ...selected, plugins: [] };
     expect((await host.load()).ok).toBe(true);
     expect(host.documentTypes()).toHaveLength(0);
+    expect(await host.reopenDocument('AffDoc')).toMatchObject({ ok: false, error: { message: expect.stringContaining(`${affection.id}/config`) } });
+    expect(open).toHaveBeenCalledTimes(1);
     expect(release).toHaveBeenCalledWith('Official1');
     await host.dispose();
     expect(release).toHaveBeenCalledWith('Official3');
+  });
+  it('keeps a dirty plugin document and its package lease until edits are settled', async () => {
+    let dirty = true;
+    const dispose = vi.fn();
+    const { host, release } = fixture(source, manifest, {
+      open: (_id, _title, mount) => {
+        const editor = mount(() => {}, () => {});
+        return () => editor.dispose();
+      },
+    });
+    try {
+      expect(await host.load()).toMatchObject({ ok: true });
+      host.authorServices.workspace!.open('plugin-document:DocAA', 'Author document', () => ({
+        node: {} as HTMLElement, dirty: () => dirty, dispose,
+      }));
+      expect(await host.load()).toMatchObject({ ok: false });
+      expect(dispose).not.toHaveBeenCalled();
+      expect(release).not.toHaveBeenCalled();
+      dirty = false;
+      expect(await host.load()).toMatchObject({ ok: true });
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(release).toHaveBeenCalledWith('Handle1');
+    } finally { await host.dispose(); }
   });
   it('loads public tools, language names and selection requirements from the editor entry', async () => {
     const { host, scope } = fixture(); expect((await host.load()).ok).toBe(true);

@@ -8,14 +8,14 @@ import { parseAnimationResource } from '@galcraft/stage';
 import { AnimationAssetPreview } from './professional/AnimationAssetPreview.js';
 import { chooseAnimationPreviewTarget } from './animation-preview-target.js';
 
-export function createAssetPickerPreview(root: HTMLElement, services: AuthoringServices, locale = 'zh-CN') {
+export function createAssetPickerPreview(root: HTMLElement, services: AuthoringServices, locale = 'zh-CN', { showHeading = true } = {}) {
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
   let generation = 0, cleanup: (() => void) | null = null;
-  const clear = () => { generation++; cleanup?.(); cleanup = null; root.replaceChildren(); };
+  const clear = () => { generation++; cleanup?.(); cleanup = null; root.replaceChildren(); root.setAttribute('aria-busy', 'false'); };
   const preview = async (asset: Asset, variantId: Id | null) => {
     clear(); const request = generation;
     const current = () => request === generation;
-    const heading = document.createElement('strong'); heading.textContent = asset.name; root.append(heading);
+    if (showHeading) { const heading = document.createElement('strong'); heading.textContent = asset.name; root.append(heading); }
     root.dataset.assetId=asset.id;root.dataset.variantId=variantId??asset.activeVariantId;
     const status = document.createElement('p'); status.setAttribute('role','status'); status.textContent = t('正在加载预览…','Loading preview…','プレビューを読み込み中…'); root.append(status);
     root.setAttribute('aria-busy','true');
@@ -66,7 +66,10 @@ export function createAssetPickerPreview(root: HTMLElement, services: AuthoringS
         if(!current()){void services.runtimeAssets.releaseRuntime(result.value.leaseId);return;}
         let released=false;
         const media=document.createElement(asset.kind==='audio'?'audio':asset.kind==='video'?'video':'img');
-        cleanup=()=>{if(released)return;released=true;if(media instanceof HTMLMediaElement){media.pause();media.removeAttribute('src');media.load();}media.remove();void services.runtimeAssets!.releaseRuntime(result.value.leaseId);};
+        const loop = variant.metadata.loop;
+        const stopLoop = asset.kind === 'audio' && loop
+          ? configureAudioPreview(media as HTMLAudioElement, { loopStartSec: loop.startSec, loopEndSec: loop.endSec }) : undefined;
+        cleanup=()=>{if(released)return;released=true;stopLoop?.();if(media instanceof HTMLMediaElement){media.pause();media.removeAttribute('src');media.load();}media.remove();void services.runtimeAssets!.releaseRuntime(result.value.leaseId);};
         media.addEventListener('error',()=>failed(t('版本文件无法读取，请检查文件后重试。','Version file is unavailable. Check the file and retry.','バージョンのファイルを確認して再試行してください。')));
         const ready=()=>{if(current()){status.remove();root.setAttribute('aria-busy','false');}};
         media.addEventListener(media instanceof HTMLImageElement?'load':'loadedmetadata',ready,{once:true});
