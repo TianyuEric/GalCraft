@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
+import { randomInt } from 'node:crypto';
 import { listenLocalService, servicePort, endpointPort, requireServicePort } from './local-service-ports.mjs';
 import { startStudioService } from '../service/server.mjs';
 import { ensureStudioService } from '../service/launcher.mjs';
@@ -11,20 +12,30 @@ import { studioCli } from '../service/cli.mjs';
 import { CollaborationMcp } from './collaboration-mcp.mjs';
 import { StudioCollaboration } from './collaboration-providers.mjs';
 
-const bind = async (server, port=0) => { await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});return server.address().port; };
+const bind = (server, port) => new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});
 const close = server => new Promise(resolve=>{server.closeIdleConnections?.();server.close(resolve);});
 const emptyHost = async () => ({host:{handlers:{}}});
 async function occupiedRange(count) {
+  let failure;
   for(let attempt=0;attempt<20;attempt++) {
+    // An OS-assigned ephemeral port gives no guarantee that the next port is available.
+    const port = randomInt(20_000, 40_000 - count);
     const servers=[];
     try {
-      const first=createServer();servers.push(first);const port=await bind(first);
-      if(port+count-1>65535)throw new Error('retry test fixture');
-      for(let index=1;index<count;index++){const server=createServer();servers.push(server);await bind(server,port+index);}
+      for (let index = 0; index <= count; index++) {
+        const server = createServer();
+        servers.push(server);
+        await bind(server, port + index);
+      }
+      // Leave the verified successor free for the service's real listener.
+      await close(servers.pop());
       return {port,close:()=>Promise.all(servers.map(close))};
-    }catch{await Promise.all(servers.map(close));}
+    } catch (error) {
+      failure = error;
+      await Promise.all(servers.map(close));
+    }
   }
-  throw new Error('Could not allocate the consecutive TCP fixture');
+  throw new Error('Could not allocate the consecutive TCP fixture', { cause: failure });
 }
 async function rememberWeb(userData,port){const directory=join(userData,'studio-service');await mkdir(directory,{recursive:true});await writeFile(join(directory,'successful.json'),JSON.stringify({port,origin:`http://127.0.0.1:${port}`}));}
 
@@ -107,7 +118,8 @@ it('repairs the existing client configuration with the actual fallback address a
     await mkdir(join(userData,'collaboration'),{recursive:true});await writeFile(join(userData,'collaboration/service.json'),JSON.stringify({enabled:true,port:occupied.port}));
     const path=join(userData,'.mcp.json');await writeFile(path,JSON.stringify({mcpServers:{other:{url:'https://example.test/mcp'},galcraft:{type:'http',url:`http://127.0.0.1:${occupied.port}/mcp`,custom:'preserved'}},option:'preserved'}));
     owner=new StudioCollaboration({userData,projects:{currentSession:null,currentRoot:userData},production:{},assets:{},plugins:{externalTools:async()=>[]}});await owner.ready;
-    expect(owner.serviceStatus()).toMatchObject({state:'running',addressChange:{previous:`http://127.0.0.1:${occupied.port}/mcp`,current:`http://127.0.0.1:${occupied.port+1}/mcp`}});
+    const status = owner.serviceStatus();
+    expect(status, JSON.stringify(status)).toMatchObject({state:'running',addressChange:{previous:`http://127.0.0.1:${occupied.port}/mcp`,current:`http://127.0.0.1:${occupied.port+1}/mcp`}});
     const preview=await owner.call('configuration',{harness:'claude',destination:'project'});expect(preview.ok).toBe(true);expect(preview.value.mergedContent).toContain(owner.mcp.endpoint);
     expect((await owner.call('writeConfiguration',{...preview.value,mode:'merge'})).ok).toBe(true);
     const saved=JSON.parse(await readFile(path,'utf8'));expect(saved).toMatchObject({option:'preserved',mcpServers:{other:{url:'https://example.test/mcp'},galcraft:{url:owner.mcp.endpoint,custom:'preserved'}}});
