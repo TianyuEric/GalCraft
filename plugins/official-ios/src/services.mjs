@@ -23,7 +23,7 @@ function xcode(args, signal, progress) { return new Promise((resolve, reject) =>
   child.on('error', reject); child.on('close', code => { signal.removeEventListener('abort', abort); code || signal.aborted ? reject(new Error(signal.aborted ? 'BUILD_CANCELLED' : output)) : resolve(); }); }); }
 async function size(path) { const info = await stat(path); if (info.isFile()) return info.size; let total = 0; for (const item of await readdir(path)) total += await size(join(path, item)); return total; }
 export const builder = {
-  key: 'org.galcraft.ios/build', version: '0.1.0', target: 'ios',
+  key: 'org.galcraft.ios/build', version: '0.1.1', target: 'ios',
   async describe() { return { key: this.key, version: this.version, target: this.target, name: 'iOS', architectures: ['arm64'],
     environments: [{ os: 'win32', arch: 'x64', outputs: ['xcodeProject'] }, { os: 'darwin', arch: 'arm64', outputs: ['xcodeProject', 'archive'] }, { os: 'darwin', arch: 'x64', outputs: ['xcodeProject', 'archive'] }, { os: 'linux', arch: 'x64', outputs: ['xcodeProject'] }],
     tools: [{ id: 'xcode', version: '16 or later / iOS 15 deployment target', purpose: 'macOS archive and signing; project export requires no Xcode', licenseUrl: 'https://developer.apple.com/support/terms/', external: true }],

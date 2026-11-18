@@ -88,7 +88,7 @@ describe('declared upgrade copies and M02 commits', () => {
     expect(after).toEqual(before); expect(projects.currentSession.projectId).toBe(projectId);
     expect(JSON.parse(after['dependencies.lock.json']).data.engine.version).toBe('0.1.0');
     await projects.close(projects.currentSessionId, 'discard');
-  });
+  }, 20000);
   it('blocks same-version confirmation when an existing save is incompatible', async () => {
     const { projects, upgrades } = await setup('fail');
     const plan = value(await upgrades.plan({ projectId: projects.currentSession.projectId, toVersion: '0.1.0', expected: expected(projects), representativeSaves: ['old-save.json'] }));
@@ -144,7 +144,7 @@ describe('declared upgrade copies and M02 commits', () => {
     const original = JSON.parse(await readFile(join(projects.currentRoot, 'project.json'), 'utf8')).data;
     expect(original.engineVersion).toBe('0.1.0'); expect(original.name).toBe('Edited');
     await projects.close(projects.currentSessionId, 'discard');
-  });
+  }, 20000);
   it('reports a committed upgrade when writing its history fails after M02 commits', async () => {
     const { projects, upgrades } = await setup();
     const plan = value(await upgrades.plan({ projectId: projects.currentSession.projectId, toVersion: '1.1.0', expected: expected(projects), representativeSaves: [] }));

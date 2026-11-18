@@ -5,7 +5,7 @@ import { prepareProjectPlugins } from './plugins.js';
 import { readFileSync } from 'node:fs';
 
 const ok = <T>(value: T): Result<T> => ({ ok: true, value, warnings: [] });
-const lock: Lock = { engine: { kind: 'engine', id: 'core', version: '0.1.0', targets: ['web', 'windows'], required: true },
+const lock: Lock = { engine: { kind: 'engine', id: 'core', version: '0.2.0', targets: ['web', 'windows'], required: true },
   template: { kind: 'template', id: 'default', version: '0.1.0', targets: ['web', 'windows'], required: true },
   plugins: [{ kind: 'plugin', id: affection.id, version: affection.version, targets: ['web', 'windows'], required: true }], selectedProviders: {} };
 const domain = { projectId: 'ProjAA', kind: 'sample' as const, instance: 'official-definition' };

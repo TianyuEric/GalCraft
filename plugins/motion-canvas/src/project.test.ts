@@ -8,7 +8,8 @@ import { pluginMetadata } from './metadata.js';
 describe('Motion Canvas source document and operation', () => {
   it('publishes a valid ordinary exact plugin and one local video operation', () => {
     const manifest = JSON.parse(readFileSync(new URL('../package/manifest.json', import.meta.url), 'utf8'));
-    expect(PluginManifestSchema.parse(manifest).version).toBe('0.1.0');
+    const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    expect(PluginManifestSchema.parse(manifest).version).toBe(packageJson.version);
     expect(() => validateProductionOperationDefinition(motionRenderOperation, pluginMetadata, pluginMetadata.contributions)).not.toThrow();
     expect(parseMotionProject(createMotionProject()).ok).toBe(true);
   });

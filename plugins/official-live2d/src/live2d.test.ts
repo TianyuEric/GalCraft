@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ResolvedAsset, Result } from '@galcraft/contracts';
 import { createLive2DResourceProvider, createLive2DStageProvider, type CubismModelPort, type CubismOptions } from './model.js';
 import { modelType } from './definition.js';
+import { pluginMetadata } from './metadata.js';
 
 const id = (suffix: number) => `00000000-0000-4000-8000-${suffix.toString(16).padStart(12, '0')}`;
 const unwrap = <T>(result: Result<T>): T => { if (!result.ok) throw result.error; return result.value; };
@@ -31,7 +32,7 @@ describe('Live2D resource and instance', () => {
     expect(unsupported).toMatchObject({ ok: false, error: { code: 'MOTIONSYNC_UNSUPPORTED' } });
   });
   it('validates persisted model capabilities against the exact resource implementation', () => {
-    const value = { capabilities: { resolver: 'org.galcraft.live2d/resource', resolverVersion: '0.1.0', format: 'live2d-model3', formatVersion: '3',
+    const value = { capabilities: { resolver: 'org.galcraft.live2d/resource', resolverVersion: pluginMetadata.version, format: 'live2d-model3', formatVersion: '3',
       capabilities: [], parameters: [], motions: [], expressions: [], missingFiles: [] }, model: { mocVersion: 5 } };
     expect(modelType.validate!(value).ok).toBe(true);
     expect(modelType.validate!({ ...value, capabilities: { ...value.capabilities, parameters: 'lost' } }).ok).toBe(false);

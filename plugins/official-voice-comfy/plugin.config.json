@@ -3,7 +3,7 @@
     "schemaVersion": 2,
     "id": "org.galcraft.voice-comfy",
     "name": "Breeze / Irodori 配音",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "通过 ComfyUI 使用 Breeze TTS 2（中英）和 Irodori v4.1 Small（日语）制作声音设计、参考克隆和表演指导配音；需另备服务、节点及模型。",
     "localizations": {
       "en": {
@@ -18,7 +18,7 @@
     "author": "GalCraft",
     "license": "MPL-2.0",
     "homepage": null,
-    "engineRange": "^0.1.0",
+    "engineRange": "^0.2.0",
     "sdkMajor": 0,
     "targets": [
       "web",

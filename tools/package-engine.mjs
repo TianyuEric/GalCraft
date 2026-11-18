@@ -6,6 +6,7 @@ import { readWindowsExecutableArchitecture } from '../packages/publishing/dist/e
 import { copyDistributionLicenses } from './studio-runtime-files.mjs';
 import { bundledEngineVersion } from '../apps/studio/main/bundled-engine-version.mjs';
 const repo = resolve(import.meta.dirname, '..');
+const { version: dslVersion } = JSON.parse(await readFile(join(repo, 'packages/dsl/package.json'), 'utf8'));
 const version = process.argv[3] ?? bundledEngineVersion;
 if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Engine version must be an exact release version');
 const destination = resolve(process.argv[2] ?? join(repo, 'out/engines', version));
@@ -66,7 +67,7 @@ async function walk(directory, prefix = '') {
 }
 await walk(destination);
 const manifest = { schemaVersion: 1, id: 'galcraft', version, targets: ['web', 'windows', 'android', 'ios'], projectSchemaVersions: [1], saveSchemaVersions: [1],
-  sdkMajor: 0, dslVersion: '0.1.0', templateSchemaVersions: [1], entries: { compiler: 'compiler.mjs', playerWeb: 'web/index.html', playerWindows: 'windows/electron.exe', preview: 'preview/preview.mjs', live2d: live2dEntry, upgrade: null },
+  sdkMajor: 0, dslVersion, templateSchemaVersions: [1], entries: { compiler: 'compiler.mjs', playerWeb: 'web/index.html', playerWindows: 'windows/electron.exe', preview: 'preview/preview.mjs', live2d: live2dEntry, upgrade: null },
   host: { electron: electronVersion, supportedWindows: [`Windows 11 ${playerArch}`], supportedBrowsers: [] },
   conversions: [], files, releaseNotes: 'release-notes.md' };
 await writeFile(join(destination, 'manifest.json'), JSON.stringify(manifest, null, 2));

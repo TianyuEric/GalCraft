@@ -95,7 +95,7 @@ export const Assets: Story = { args: { page: 'assets' } };
 export const AssetsDark: Story = { args: { page: 'assets', theme: 'dark' } };
 export const PropertyTools: Story = {
   args: { page: 'editor' },
-  parameters: { docs: { description: { story: 'UXF-01 candidate. Real Studio renderer with in-memory services. Object properties and asset properties retain separate follow/pin sources. Hover or keyboard-focus the rail icons for tool names. Disk saving and service recovery require the real host.' } } },
+  parameters: { docs: { description: { story: 'Studio renderer with in-memory services. Object properties and asset properties retain separate follow/pin sources. Hover or keyboard-focus the rail icons for tool names. Disk saving and service recovery use the real host.' } } },
   play: async ({ canvas, canvasElement }) => {
     const body = within(canvasElement.ownerDocument.body);
     await waitFor(() => expect(canvasElement.querySelector('.authoring-scene-views')).toBeVisible());

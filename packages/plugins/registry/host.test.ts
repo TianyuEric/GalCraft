@@ -63,7 +63,8 @@ it('installs the built official affection archive and loads its command and rela
   if (!packed.ok) throw packed.error;
   expect((await host.install({ kind: 'archive', path: packed.value.path })).ok).toBe(true);
   for (const target of ['web', 'windows'] as const) {
-    const lock = { ...FixtureLock, plugins: [{ ...FixtureLock.plugins[0]!, version: packed.value.manifest.version }] };
+    const lock = { ...FixtureLock, engine: { ...FixtureLock.engine, version: '0.2.0' },
+      plugins: [{ ...FixtureLock.plugins[0]!, version: packed.value.manifest.version }] };
     const prepared = await host.prepareContributions(lock, target); if (!prepared.ok) throw prepared.error;
     const system = prepared.value.systems[0]!;
     const result = await prepared.value.commands[0]!.execute({ args: { characterId, amount: 15 }, state: system.initialProgress(config),

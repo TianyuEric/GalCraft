@@ -1,5 +1,6 @@
 import type { Id, Json, ResolvedAsset, ResourceCapabilities, Result } from '@galcraft/contracts';
 import type { ResourceProvider, StageInstance, StageProvider, VoicePCM } from '@galcraft/plugins/contracts';
+import { legacyResolver, pluginMetadata } from './metadata.js';
 
 const ok = <T>(value: T): Result<T> => ({ ok: true, value, warnings: [] });
 function fail<T>(code: string, message: string): Result<T> {
@@ -18,7 +19,7 @@ type FileReader = (path: string) => Promise<string>;
 type MocInspector = (path: string) => Promise<Result<{ version: number; parameters: ResourceCapabilities['parameters']; partIds: string[] }>>;
 
 export function createLive2DResourceProvider(readText: FileReader, inspectMoc: MocInspector,
-  identity = { key: 'galcraft.live2d', version: '0.1.0' }): ResourceProvider {
+  identity = { key: legacyResolver, version: pluginMetadata.version }): ResourceProvider {
   return { key: identity.key, kind: 'live2d', extensions: ['.model3.json'], async inspect(rootFile, files) {
     let model: Record<string, unknown>;
     try { model = record(JSON.parse(await readText(rootFile))); }

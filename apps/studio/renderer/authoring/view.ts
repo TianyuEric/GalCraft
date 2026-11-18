@@ -3771,7 +3771,7 @@ export class AuthoringWorkspace {
       guiDraft: this.resourceProcessorGuiDraft, onGuiDraftChange: this.captureResourceProcessorGui,
       onUnappliedChange: this.setResourceProcessorUnapplied, bridge,
       selectedIds: [...this.selectedAssets], locale: this.controller.preferences.locale, inspectorContainer: this.resourceProcessorInspector,
-      workspace: this.documentWorkspace, indexRevision: this.assetPage?.indexRevision,
+      workspace: this.documentWorkspace, indexRevision: this.assetPage?.indexRevision, contributionsRevision: this.studioPlugins?.contributionsRevision,
       changed: async receipt => { await this.controller.acceptExternalEdit(receipt); await this.showAssets(); },
     }));
   }
@@ -3805,7 +3805,7 @@ export class AuthoringWorkspace {
     for (const [page, node] of this.supportNodes) if (this.page !== page) {
       for (const media of node.querySelectorAll<HTMLMediaElement>('audio,video')) media.pause();
     }
-    if (routeChanged || this.pluginRenderLocale !== this.controller.preferences.locale) this.studioPlugins?.unmountViews();
+    if (routeChanged || this.pluginRenderLocale !== this.controller.preferences.locale) this.studioPlugins?.unmountRouteViews();
     this.pluginRenderLocale = this.controller.preferences.locale;
     if (this.designer) this.designerResume = this.designer.capture();
     this.scriptEditor = null;

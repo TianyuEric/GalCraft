@@ -6,7 +6,7 @@ import { PluginDocuments } from './plugin-documents.mjs';
 const unwrap = result => { if (!result.ok) throw new Error(result.error.message); return result.value; };
 const envelope = (documentId, data) => JSON.stringify({ schemaVersion: 1, documentId, revision: 1, data }, null, 2) + '\n';
 const pluginId = 'org.galcraft.music-composition', contributionKey = `${pluginId}/score`;
-export const PracticeSourceDependency = { kind: 'plugin', id: pluginId, version: '0.1.0', required: true, targets: ['web', 'windows'] };
+export const PracticeSourceDependency = { kind: 'plugin', id: pluginId, version: '0.1.1', required: true, targets: ['web', 'windows'] };
 export const PracticeSourceDependencies = [PracticeSourceDependency,
   { ...PracticeSourceDependency, id: 'org.galcraft.motion-canvas' }];
 
