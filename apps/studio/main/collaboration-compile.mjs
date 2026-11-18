@@ -1,6 +1,7 @@
 import { acquirePluginDefinition, loadPluginModule } from '@galcraft/plugins';
 import { readPluginDocumentInstances, assetFieldReferences, assetReferenceTarget } from '@galcraft/contracts';
 import { CollaborationError } from '@galcraft/collaboration';
+import { conditionSignatures } from '@galcraft/dsl';
 
 const unwrap=result=>{if(!result.ok)throw new CollaborationError(result.error.code,result.error.message,result.error);return result.value;};
 
@@ -16,7 +17,7 @@ export async function compileCollaborationProject(owner,project,{publish=false,t
       if(exact.manifest.entry.definition){const lease=await acquirePluginDefinition(exact.directory,exact.manifest);releases.push(lease.release);definition=lease.definition;}
       else {const instance=await loadPluginModule(exact.directory,exact.manifest);releases.push(()=>instance.deactivate());const offered=await instance.activate(owner.plugins.context(dependency.id,'windows',project));definition={...offered,commands:offered.commands.map(command=>command.spec)};}
       input.pluginCommands.push(...definition.commands??[]);
-      Object.assign(input.pluginConditions,Object.fromEntries((definition.conditions??[]).map(condition=>[condition.key,{args:condition.fields.map(field=>['number','integer'].includes(field.type)?'number':field.type==='boolean'?'boolean':'string'),returns:'boolean'}])));
+      Object.assign(input.pluginConditions, conditionSignatures(definition.conditions ?? []));
       if(definition.messages)input.pluginMessages.push({pluginId:dependency.id,messages:definition.messages});
       const reference=(ref,source,usage)=>{const target=assetReferenceTarget(ref,input.assets);if(target)(input.assetReferences??=[]).push({...target,owner:{kind:'document',id:source.documentId},source,usage,required:true});};
       for(const provider of definition.documents??[]){

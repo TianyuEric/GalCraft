@@ -1,8 +1,9 @@
 import { z } from 'zod';
+import { reserveIds } from '@galcraft/contracts';
 import { AuthoringOutlineSchema, DialogueContentSchema, DialogueEventSchema, EffectPatchSchema, CharacterDifferenceSchema, CharacterSchema, IdSchema, JsonSchema, LockSchema, ProjectSchema, RevisionSchema, SceneSchema, VariableSchema, createId, dialogueAnchorOffsets, dialoguePlainText, dialogueSegments, hasSceneParameterDefault, normalizeCharacterAuthoringData, normalizeProjectAuthoringData, round5AssetBindings, sliceDialogueContent, stageCommandAssetBindings } from '@galcraft/contracts';
 import type { Asset, CommandSpec, DialogueContent, DialogueEvent, GalleryEntry, Character, DocumentView, EditInput, Id, Issue, Json, Project, Ref, Result, Scene, Variable } from '@galcraft/contracts';
-import { applyTextEdits, validateAuthoringCommands, presentationArgs, dialogueInterpolations, parseExpression, variableReads, commandOwnedIds, parse, patchFields, resolveStaticStageImage, rewriteScriptReferences, toDocumentPatch } from '@galcraft/dsl';
-import type { FieldPatchInput, ParseResult, TextEdit } from '@galcraft/dsl';
+import { applyTextEdits, validateAuthoringCommands, createCommandArgs, createCommandRegistry, dialogueInterpolations, parseExpression, variableReads, commandOwnedIds, parse, patchFields, resolveStaticStageImage, rewriteScriptReferences, toDocumentPatch } from '@galcraft/dsl';
+import type { CompileInput, FieldPatchInput, ParseResult, TextEdit } from '@galcraft/dsl';
 import { characterDifferenceDependencies, characterEdit, neutralCharacter } from './characters.js';
 import { createWorkbenchChapter, moveWorkbenchObjects, renameWorkbenchObject } from './structure.js';
 import { invalidSceneEdit } from './scene-sources.js';
@@ -143,7 +144,7 @@ export function rebaseAuthoringOperation(baseline: DocumentView[], current: Docu
 }
 
 /** All operations produce an ordinary M02 transaction. No state is applied here. */
-export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOperation, pluginCommands: CommandSpec[] = []): Result<EditInput> {
+export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOperation, pluginCommands: CommandSpec[] = [], pluginConditions?: CompileInput['pluginConditions']): Result<EditInput> {
   const checked = AuthorOperationSchema.safeParse(raw);
   if (!checked.success) return fail('AUTHOR_INPUT', checked.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; '));
   const operation = checked.data, dataFiles = files(documents), projectFile = dataFiles.find(file => file.path === 'project.json');
@@ -172,8 +173,8 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
     const chapter = (id: Id) => required(project.chapters.find(chapter => chapter.id === id), `Chapter ${id}`);
     const script = (file: DataFile) => required(Object.entries(file.document.files).find(([path]) => path.endsWith('/script.gal'))?.[1], 'Scene script');
     const parsed = (file: DataFile) => requireValidSceneSource(parse({ documentId: file.document.documentId, revision: file.document.revision, text: script(file) }));
-    const validateCommands = (file: DataFile, before: ParseResult, after: string, ids: Id[], inserting = false, movedFrom?: { documentId: Id; text: string }) => {
-      const context = { engineVersion: project.engineVersion, project, lock: LockSchema.safeParse(lockFile?.data).data, pluginCommands,
+    const validateCommands = (file: DataFile, before: ParseResult, after: string, ids: Id[], inserting = false, movedFrom?: { documentId: Id; text: string }, creating = false) => {
+      const context = { engineVersion: project.engineVersion, project, lock: LockSchema.safeParse(lockFile?.data).data, pluginCommands, pluginConditions,
         scenes: dataFiles.filter(file => /\/scene.json$/.test(file.path)).map(file => SceneSchema.parse(file.data)),
         characters: dataFiles.filter(file => /^characters\//.test(file.path)).map(file => CharacterSchema.parse(normalizeCharacterAuthoringData(file.data))),
         variables: dataFiles.filter(file => /^variables\//.test(file.path)).map(file => VariableSchema.parse(file.data)),
@@ -184,7 +185,7 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
       const signature = (issue: Issue) => `${issue.code}:${issue.source?.statementId ?? ''}:${issue.source?.eventId ?? ''}:${issue.source?.field ?? ''}:${issue.message}`;
       const existing = new Set(inserting ? [] : validateAuthoringCommands(before, ids, readScene(String(file.data.id)), context).map(signature));
       const next = parse({ documentId: before.documentId, revision: before.revision, text: after });
-      const issues = validateAuthoringCommands(next, ids, readScene(String(file.data.id)), context)
+      const issues = validateAuthoringCommands(next, ids, readScene(String(file.data.id)), context, creating)
         .filter(issue => (issue.severity === 'error' || issue.code === 'FIELD_UNKNOWN') && issue.code !== 'TEXT_EMPTY' && !existing.has(signature(issue)));
       if (issues.length) throw new InvalidAuthoringCommand(issues);
       const changed = next.statements.filter(node => node.id && ids.includes(node.id));
@@ -503,20 +504,17 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
         if (operation.op === 'commands.fields') { const patched = patchFields(source, { documentId: file.document.documentId, revision: file.document.revision, statementIds: operation.ids, changes: operation.changes }); if (!patched.ok) return patched; validateCommands(file,source,applyTextEdits(source.text,patched.value),operation.ids); edit.patches.push(toDocumentPatch(file.document.documentId, patched.value)); break; }
         if (operation.op === 'commands.insert') {
           const at = beforeId ? required(source.cst.find(node => node.id === beforeId), 'Insertion command').start : source.text.length;
+          const registry = createCommandRegistry(project.engineVersion, pluginCommands);
+          const context = { textLocale: project.languages.textDefault };
           const ids: Id[] = [],owned=new Set(documents.flatMap(document=>Object.entries(document.files).filter(([path])=>path.endsWith('.gal')).flatMap(([,text])=>parse({documentId:document.documentId,revision:document.revision,text}).cst.filter(node=>node.valid).flatMap(node=>[node.id!,...commandOwnedIds(node.command,node.object?.value as Record<string,unknown>)]))));
+          reserveIds(operation.commands);
           const text = operation.commands.map(command => {
-            const args = presentationArgs(command.command,structuredClone(command.args)), assign = (key: string) => { if (!args[key]) args[key] = allocate(); };
-            if (command.command === 'label') assign('labelId');
-            if (['changeBg','changeFigure','changeIllustration'].includes(command.command) && (!args.op || args.op === 'show')) assign('objectId');
-            if (['setAnimation','setComplexAnimation'].includes(command.command)) assign('animationId');
-            if (command.command === 'pixi') assign('effectId');
-            if (command.command === 'playEffect' && (!args.op || args.op === 'play')) assign('soundId');
-            if (command.command === 'choose' && Array.isArray(args.options)) args.options = args.options.map(option => record(option) ? { ...option, id: option.id || allocate() } : option) as Json[];
-            if (command.command === 'say' && Array.isArray(args.events)) args.events = args.events.map(event => record(event) ? { ...event, id: event.id || allocate() } : event) as Json[];
+            const spec = registry.get(command.command);
+            const args = spec ? createCommandArgs(spec, command.args, context, allocate) : command.args;
             for(const ownedId of commandOwnedIds(command.command,args)){if(owned.has(ownedId))throw new Error(`IDENTITY_IN_USE: ${ownedId}`);owned.add(ownedId);}
             const id = allocate(); ids.push(id); return `${command.command} ${JSON.stringify(args)} @${id};`;
           }).join('\n') + '\n';
-          validateCommands(file,source,source.text.slice(0,at)+text+source.text.slice(at),ids,true);
+          validateCommands(file,source,source.text.slice(0,at)+text+source.text.slice(at),ids,true,undefined,true);
           edit.patches.push({ kind: 'text', documentId: source.documentId, edits: [{ start: at, end: at, before: '', after: `${at && source.text[at - 1] !== '\n' ? '\n' : ''}${text}` }] }); break;
         }
         const nodes = source.cst.filter(node=>node.id&&operation.ids.includes(node.id));

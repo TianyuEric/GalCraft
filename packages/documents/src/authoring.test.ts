@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { FixtureAsset, FixtureCharacters, FixtureDsl, FixtureIds, FixtureProject, FixtureScenes, FixtureVariables } from '@galcraft/contracts/fixtures';
+import { FixtureAsset, FixtureCharacters, FixtureDsl, FixtureIds, FixtureProject, FixtureScenes, FixtureVariables, FixtureVoiceAssets } from '@galcraft/contracts/fixtures';
 import { SceneDecorLayerSchema, type DocumentView, type Result } from '@galcraft/contracts';
 import { parse } from '@galcraft/dsl';
 import { ProjectSession, type SessionOptions } from './index.js';
@@ -19,6 +19,50 @@ async function session(input=documents(), options?: SessionOptions) { const root
 function execute(session: ProjectSession, operation: AuthorOperation) { const edit=unwrap(prepareAuthoringEdit([...session.documents.values()],operation)), plan=unwrap(session.planEdit(edit));return unwrap(session.applyEdit(plan.planId,edit.expected)); }
 const data=(documents:DocumentView[],path:string)=>JSON.parse(documents.find(document=>path in document.files)!.files[path]!).data;
 describe('shared semantic author operations',()=>{
+  it('writes creation defaults once while preserving explicit values, inheritance and existing source', async () => {
+    const audio = FixtureVoiceAssets[0]!;
+    const project = await session([...documents(), json('IndexA', 'assets/index.json', { assets: [FixtureAsset, audio] })],
+      { resolveRequiredRef: ref => [FixtureAsset.id, audio.id].includes(ref.id) });
+    const path = `scenes/${FixtureIds.bookshop}/script.gal`;
+    const previous = project.readDocument('SceneB')!.files[path]!;
+    const current = () => [...project.documents.values()];
+    const input: Extract<AuthorOperation, { op: 'commands.insert' }> = { op: 'commands.insert', sceneId: FixtureIds.bookshop, beforeId: null, commands: [
+      { command: 'changeBg', args: { assetId: FixtureAsset.id, positionX: 0, ruleImage: { assetId: FixtureAsset.id, durationMs: 300 } } },
+      { command: 'changeFigure', args: { assetId: FixtureAsset.id, characterId: FixtureIds.an, station: 'leftThird', reset: false } },
+      { command: 'changeIllustrationDiff', args: { objectId: 'Illus1', assetId: FixtureAsset.id } },
+      { command: 'bgm', args: { assetId: audio.id, volume: 0, loop: false } },
+      { command: 'playEffect', args: { assetId: audio.id } },
+      { command: 'wait', args: {} },
+      { command: 'comment', args: { text: '' } },
+      { command: 'setTempAnimation', args: { target: { kind: 'stage' }, segments: [{ effects: { opacity: 0 } }] } },
+    ] };
+    const invalid = prepareAuthoringEdit(current(), { ...input, commands: [...input.commands, { command: 'changeBg', args: {} }] });
+    expect(invalid).toMatchObject({ ok: false, error: { code: 'FIELD_REQUIRED', source: { field: 'assetId' } } });
+    const badRule = prepareAuthoringEdit(current(), { ...input, commands: [{ command: 'changeBg', args: {
+      assetId: FixtureAsset.id, ruleImage: { assetId: FixtureAsset.id, durationMs: 0 },
+    } }] });
+    expect(badRule).toMatchObject({ ok: false, error: { code: 'FIELD_RANGE', source: { field: 'ruleImage.durationMs' } } });
+    expect(project.readDocument('SceneB')!.files[path]).toBe(previous);
+    const result = execute(project, input);
+    const inserted = project.readDocument('SceneB')!.files[path]!;
+    expect(inserted.startsWith(previous)).toBe(true);
+    const commands = parse({ documentId: 'SceneB', revision: 2, text: inserted.slice(previous.length) }).statements;
+    expect(new Set(commands.map(command => command.id)).size).toBe(8);
+    expect(commands[0]!.args).toMatchObject({ fit: 'cover', positionX: 0, positionY: .5, transition: { enter: { durationMs: 400 }, exit: { durationMs: 400 } } });
+    expect(commands[0]!.args.ruleImage).toEqual({ assetId: FixtureAsset.id, variantId: null, durationMs: 300,
+      softness: .12, reverse: false, easing: { family: 'linear', direction: 'in' } });
+    expect(commands[1]!.args).toMatchObject({ station: 'leftThird', reset: false, transition: { enter: { durationMs: 300 }, exit: { durationMs: 250 } } });
+    for (const inherited of ['effects', 'model', 'framing', 'z']) expect(commands[1]!.args).not.toHaveProperty(inherited);
+    expect(commands[2]!.args).toMatchObject({ transition: { preset: 'fade', durationMs: 180 } });
+    expect(commands[3]!.args).toMatchObject({ volume: 0, loop: false });
+    expect(commands[4]!.args).toMatchObject({ volume: 100, loop: false });
+    expect(commands[5]!.args).toEqual({ durationMs: 1000 });
+    expect(commands[6]!.args).toEqual({ text: '' });
+    expect(commands[7]!.args.segments).toEqual([{ effects: { opacity: 0 }, durationMs: 300, easing: { family: 'linear', direction: 'in' } }]);
+    const undo = unwrap(project.planUndo('SceneB', result.operationId));
+    unwrap(project.undo(undo.planId));
+    expect(project.readDocument('SceneB')!.files[path]).toBe(previous);
+  });
   it('edits ordered decor atomically, freezes its asset revision, and allocates copied layer identities', async () => {
     const input = [...documents(), json('IndexA', 'assets/index.json', { assets: [FixtureAsset] })];
     const project = await session(input, { resolveRequiredRef: ref => [FixtureAsset.id, FixtureAsset.activeVariantId].includes(ref.id) });

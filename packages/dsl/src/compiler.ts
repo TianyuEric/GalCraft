@@ -527,7 +527,7 @@ function validateCommand(node: StatementNode, document: CompileDocument, spec: C
 }
 
 /** Validate this structured result without requiring unrelated unfinished source to compile. */
-export function validateAuthoringCommands(parsed: ParseResult, ids: Id[], scene: Scene, input: CommandValidationContext): Issue[] {
+export function validateAuthoringCommands(parsed: ParseResult, ids: Id[], scene: Scene, input: CommandValidationContext, creating = false): Issue[] {
   const registry = createCommandRegistry(input.engineVersion, input.pluginCommands), labels = new Map<Id, Set<Id>>();
   const issues = parsed.issues.filter(issue => issue.source?.statementId && ids.includes(issue.source.statementId));
   const sources = [parsed];
@@ -544,7 +544,12 @@ export function validateAuthoringCommands(parsed: ParseResult, ids: Id[], scene:
     const node = parsed.cst.find(node => node.id === id), spec = node && registry.get(node.command);
     if (!node?.valid || !node.object) { issues.push(problem('STATEMENT_INVALID', `Statement ${id} needs valid command syntax`)); continue; }
     if (!spec) { issues.push(problem('COMMAND_MISSING', `Command ${node.command} has no installed contract`)); continue; }
-    validateCommand(node, { documentId: parsed.documentId, revision: parsed.revision, kind: 'scene', text: parsed.text, sceneId: scene.id }, spec, input, scene, labels, figures, [], issues);
+    const document = { documentId: parsed.documentId, revision: parsed.revision, kind: 'scene' as const, text: parsed.text, sceneId: scene.id };
+    const args = validateCommand(node, document, spec, input, scene, labels, figures, [], issues);
+    if (creating && node.command === 'changeFigure' && (args.op === 'replace' || args.op === 'show' && args.difference === true) && args.assetId == null &&
+      !input.characters.some(character => character.id === args.characterId && character.differences?.length)) {
+      issues.push(problem('FIELD_REQUIRED', 'Choose a figure asset or a character with a shared difference', { ...sourceAt(document, node), field: 'assetId' }));
+    }
   }
   return issues;
 }

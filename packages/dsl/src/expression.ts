@@ -1,4 +1,4 @@
-import type { Expr, Id, Scalar, Variable } from '@galcraft/contracts';
+import type { Expr, FieldSpec, Id, Scalar, Variable } from '@galcraft/contracts';
 import { isId } from '@galcraft/contracts';
 
 type ExpressionResult = { ok: true; expr: Expr } | { ok: false; message: string };
@@ -94,6 +94,13 @@ export function printExpression(expr: Expr): string {
 
 export type ExprType = 'number' | 'boolean' | 'string';
 export type ExpressionEnvironment = { variables: readonly Variable[]; locals?: readonly Variable[]; input?: boolean; conditions?: Record<string, { args: ExprType[]; returns: ExprType }> };
+
+export function conditionSignatures(conditions: readonly { key: string; fields: readonly FieldSpec[] }[]): NonNullable<ExpressionEnvironment['conditions']> {
+  return Object.fromEntries(conditions.map(({ key, fields }) => [key, {
+    args: fields.map(({ type }): ExprType => type === 'integer' || type === 'number' ? 'number' : type === 'boolean' ? 'boolean' : 'string'),
+    returns: 'boolean',
+  }]));
+}
 export function expressionType(expr: Expr, environment: ExpressionEnvironment): ExprType {
   switch (expr.kind) {
     case 'literal': return typeof expr.value as ExprType;

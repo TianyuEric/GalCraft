@@ -2,7 +2,7 @@ import { PerformanceGuidance } from '@galcraft/contracts';
 import { z } from 'zod';
 import {ComponentEditInputSchema} from './collaboration-contracts.mjs';
 import { ComponentConfigSchema, PageConfigSchema, ExprSchema, SceneSchema, VersionRefSchema, fieldSpecsInputSchema } from '@galcraft/contracts';
-import { CoreCommandSpecsEnglish as CoreCommandSpecs, commandInputSchema } from '@galcraft/dsl';
+import { CoreCommandSpecsEnglish as CoreCommandSpecs, commandCreationDefaults, commandInputSchema } from '@galcraft/dsl';
 import { presetCatalog, PresetDomainOperations } from './collaboration-presets.mjs';
 import { ComponentCatalog, readTemplateDocuments } from '@galcraft/templates';
 import { acquirePluginDefinition, loadPluginModule } from '@galcraft/plugins';
@@ -95,18 +95,28 @@ export async function domainCatalog(studio, input, context) {
   const push = (category, key, title, provider, definition, inputSchema, current = null) => rows.push({ category, key, title, provider:provider?{id:provider.id,version:provider.version}:null, version: provider?.version ?? '0.1.0', definition, inputSchema, current });
   if(!input.category||input.category==='documents')push('documents','core.scene','Scene document',null,{description:'Core scene metadata. Script source is read from context by documentId.'},z.toJSONSchema(SceneSchema,{io:'input',reused:'ref'}));
   if (!input.category || input.category === 'commands') {
-    for (const command of CoreCommandSpecs) push('commands', command.key, command.name, null, command, commandInputSchema(command));
+    const projectFile = input.key && [...project.documents.values()].find(document => document.files['project.json'])?.files['project.json'];
+    const textLocale = (projectFile ? JSON.parse(projectFile).data.languages?.textDefault : undefined) ?? 'en';
+    const add = (command, provider, schema) => {
+      const creation = input.key === command.key ? {
+        operation: 'commands.insert',
+        initialArgs: commandCreationDefaults(command, {}, { textLocale }),
+        description: 'Supply required content and targets for the selected mode. The provider assigns omitted identities for new objects, labels, animation and effect instances, and new choice entries and dialogue events. Explicit values take precedence. Omitted inherited values follow the existing object or resource.',
+      } : undefined;
+      push('commands', command.key, command.name, provider, creation ? { ...command, creation } : command, schema);
+    };
+    for (const command of CoreCommandSpecs) add(command, null, commandInputSchema(command));
     for (const dependency of studio.plugins.dependencies?.(project) ?? []) {
       const exact = await studio.plugins.exactDirectory(dependency.id, dependency.version);
       if (!exact.ok) { diagnostics.push(exact.error); continue; }
       if (!exact.value.manifest.entry.definition) {
         const instance=await loadPluginModule(exact.value.directory,exact.value.manifest);
-        try{const offered=await instance.activate(studio.plugins.context(dependency.id,'web',project));for(const contribution of offered.commands??[])push('commands',contribution.spec.key,contribution.spec.name,dependency,contribution.spec,fieldsSchema(contribution.spec.fields));}
+        try{const offered=await instance.activate(studio.plugins.context(dependency.id,'web',project));for(const contribution of offered.commands??[])add(contribution.spec,dependency,fieldsSchema(contribution.spec.fields));}
         finally{await instance.deactivate();}
         continue;
       }
       const lease = await acquirePluginDefinition(exact.value.directory, exact.value.manifest);
-      try { for (const command of lease.definition.commands ?? []) push('commands', command.key, command.name, dependency, command, fieldsSchema(command.fields)); }
+      try { for (const command of lease.definition.commands ?? []) add(command,dependency,fieldsSchema(command.fields)); }
       finally { await lease.release(); }
     }
   }

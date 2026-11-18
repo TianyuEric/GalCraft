@@ -2,6 +2,7 @@ export * from './parser.js';
 export * from './expression.js';
 export * from './interpolation.js';
 export * from './catalog.js';
+export * from './command-creation.js';
 export * from './compiler.js';
 export * from './editing.js';
 export * from './semantic.js';
