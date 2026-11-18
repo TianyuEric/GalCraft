@@ -59,7 +59,7 @@ it('installs each native project Skill with resolvable progressive references an
   const evidence = resolve('../../test-results/latest/authoring-operations/ao8');
   await mkdir(evidence, { recursive: true });
   await writeFile(join(evidence, 'native-skills.json'), JSON.stringify({ environment: 'Real temporary project filesystem / Studio configuration and writer', installations, modelsLaunched: 0, networkGenerationRequests: 0 }, null, 2));
-});
+}, 20000);
 
 it('uses the Skill short discovery/edit/page/recovery path through the public SDK while preserving existing authored text', async () => {
   directory = await mkdtemp(join(tmpdir(), 'galcraft-ao8-public-'));

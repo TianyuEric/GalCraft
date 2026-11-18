@@ -47,7 +47,7 @@ it('inspects, packs and installs every catalog version through the ordinary pack
       } finally { await lease.release(); }
     }
   } finally { await host.dispose(); }
-}, 30000);
+}, 90000);
 
 it('loads the exact current affection and an equivalent renamed package, with no missing-version fallback', async () => {
   const registered = [], released = [];

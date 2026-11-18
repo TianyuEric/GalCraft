@@ -126,9 +126,13 @@ it('holds the explicitly handed-off stable object and original revision until a 
 });
 
 it('measures the two actual exact plugin tools separately from the 25 core tools',async()=>{
-  const plugins=new StudioPluginPackages(join(profile,'installed'),{}),ids=['org.galcraft.motion-canvas','org.galcraft.music-composition'];
-  for(const folder of ['motion-canvas','music-composition']){const installed=await plugins.install({kind:'directory',path:resolve('../../plugins',folder,'package')});expect(installed.ok,JSON.stringify(installed)).toBe(true);}
-  const {call}=await setup(plugins,[{documentId:'Lock01',revision:1,format:'json',files:{'dependencies.lock.json':JSON.stringify({schemaVersion:1,documentId:'Lock01',revision:1,data:{plugins:ids.map(id=>({id,version:'0.1.0',required:true}))}})}}]);
+  const plugins=new StudioPluginPackages(join(profile,'installed'),{}),dependencies=[];
+  for(const folder of ['motion-canvas','music-composition']){
+    const installed=await plugins.install({kind:'directory',path:resolve('../../plugins',folder,'package')});
+    expect(installed.ok,JSON.stringify(installed)).toBe(true);
+    dependencies.push({id:installed.value.id,version:installed.value.version,required:true});
+  }
+  const {call}=await setup(plugins,[{documentId:'Lock01',revision:1,format:'json',files:{'dependencies.lock.json':JSON.stringify({schemaVersion:1,documentId:'Lock01',revision:1,data:{plugins:dependencies}})}}]);
   service.production.generationProviders.operations=async()=>{
     const acquired=await plugins.acquireDefinitions(project);expect(acquired.ok,JSON.stringify(acquired)).toBe(true);
     try{return acquired.value.productionOperations.map(({definition,provider})=>({id:definition.id,version:definition.version,provider,definition}));}finally{await acquired.value.release();}

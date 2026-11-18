@@ -7,9 +7,11 @@ import { FixtureLock, fixtureId } from '@galcraft/contracts/fixtures';
 import { ProjectSession } from '@galcraft/documents';
 import { createPlugin } from '../../../plugins/official-live2d/src/services.ts';
 import { modelType } from '../../../plugins/official-live2d/src/definition.ts';
+import { pluginMetadata } from '../../../plugins/official-live2d/src/metadata.ts';
 import { StudioAssets } from './asset-providers.mjs';
 
-const pluginId = 'org.galcraft.live2d', projectId = fixtureId(0xf01), indexId = fixtureId(0xf02), lockId = fixtureId(0xf03);
+const pluginId = pluginMetadata.id, projectId = fixtureId(0xf01), indexId = fixtureId(0xf02), lockId = fixtureId(0xf03);
+const provider = { id: pluginId, version: pluginMetadata.version };
 const lock = { sdkRelease: '5-r.4', coreVersion: '5.1.00', motionSyncCoreVersion: null, sourceUrl: 'https://www.live2d.com/sdk/download/web/', instructions: 'Import R4' };
 const envelope = (id, data) => JSON.stringify({ schemaVersion: 1, documentId: id, revision: 1, data });
 let root, session;
@@ -29,7 +31,7 @@ async function assets(expected = lock) {
     { documentId: lockId, revision: 1, format: 'json', files: { 'dependencies.lock.json': envelope(lockId, { ...FixtureLock, live2dRuntime: expected }) } },
   ]);
   const service = new StudioAssets({ currentSession: session, currentRoot: join(root, 'project') }, '', null, null, null, '');
-  service.assetTypes = { acquire: async () => ({ types: new AssetTypeRegistry([{ definition: modelType, provider: { id: pluginId, version: '0.1.0' } }]), release: async () => {} }) };
+  service.assetTypes = { acquire: async () => ({ types: new AssetTypeRegistry([{ definition: modelType, provider }]), release: async () => {} }) };
   service.resourceProviders = { resolve: async () => { const plugin = createPlugin(); const contributions = await plugin.activate({ pluginId, runtimeDependencies: { resolve: async () => expected ? { ok: true, value: { url: pathToFileURL(join(root, 'runtime/adapter.mjs')).href, expected }, warnings: [] } : { ok: false, error: { message: '缺少锁定 Core' } } }, assets: {}, documents: {}, pages: {}, log() {} });
     return { provider: contributions.resources[0], release: () => plugin.deactivate() }; } };
   return service;
@@ -40,7 +42,7 @@ it('routes grouped imports and parameter refresh through the ordinary resource s
   const service = await assets(), imported = await service.import(sources);
   expect(imported.ok).toBe(true); expect(imported.value.failed).toEqual([]);
   expect(imported.value.succeeded.map(asset => asset.variants[0].groupCapabilities.parameters)).toEqual([[a], [b]]);
-  const asset = imported.value.succeeded[0]; expect(asset.variants[0].typeData.provider).toEqual({ id: pluginId, version: '0.1.0' });
+  const asset = imported.value.succeeded[0]; expect(asset.variants[0].typeData.provider).toEqual(provider);
   const refreshed = await service.inspectModel(asset.id); expect(refreshed.ok).toBe(true); expect(refreshed.value.id).toBe(asset.id); expect(refreshed.value.activeVariantId).toBe(asset.activeVariantId);
   expect(service.current().index.revision).toBe(2);
 });
