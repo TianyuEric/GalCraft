@@ -39,7 +39,7 @@ describe('Studio author contribution consumer', () => {
   });
   it('loads the locked official definition into the same document, command, condition and component catalogs', async () => {
     const release = vi.fn(async () => ok(undefined));
-    let selected: Lock = { ...lock, plugins: [
+    let selected: Lock = { ...lock, engine: { ...lock.engine, version: '0.2.0' }, plugins: [
       { kind: 'plugin', id: affection.id, version: affection.version, targets: ['web', 'windows'], required: true },
     ] };
     let handle = 0;

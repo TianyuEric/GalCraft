@@ -6,6 +6,7 @@ import { createId } from '@galcraft/contracts';
 import { startStudioService } from './server.mjs';
 import { createNodeStudioHost } from './host.mjs';
 import { compileCollaborationProject } from '../main/collaboration-compile.mjs';
+import { bundledEngineVersion } from '../main/bundled-engine-version.mjs';
 const root = resolve(import.meta.dirname, '../../..'), evidence = await mkdtemp(join(await mkdir(join(root, 'test-results/sh6-mobile-http'), { recursive: true }).then(() => join(root, 'test-results/sh6-mobile-http')), 'run-'));
 const value = result => { assert(result.ok, JSON.stringify(result)); return result.value; };
 let service;
@@ -13,7 +14,7 @@ try {
   service = await startStudioService({ userData: join(evidence, 'profile'), createHost: createNodeStudioHost, frontendDirectory: join(root, 'apps/studio/dist') });
   const call = async (group, method, ...args) => (await fetch(`${service.origin}/api/bridge`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ group, method, args, clientId: 'sh6-mobile' }) })).json();
   const parent = join(evidence, 'works'); await mkdir(parent);
-  value(await call('projects', 'create', { path: parent, name: 'Mobile PNG and Core Variable', template: 'rich', width: 960, height: 540, engineVersion: '0.1.0' }));
+  value(await call('projects', 'create', { path: parent, name: 'Mobile PNG and Core Variable', template: 'rich', width: 960, height: 540, engineVersion: bundledEngineVersion }));
   const host = service.host, session = host.projects.currentSession;
   const sharp = createRequire(join(root, 'packages/publishing/package.json'))('sharp');
   const image = join(evidence, 'title.png'); await sharp({ create: { width: 960, height: 540, channels: 4, background: '#496e91' } }).png().toFile(image);

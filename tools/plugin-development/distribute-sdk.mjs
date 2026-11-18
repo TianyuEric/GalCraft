@@ -21,7 +21,7 @@ for (const name of ['contracts', 'dsl', 'plugins']) {
 const contracts = JSON.parse(await readFile(join(root, 'packages/contracts/package.json'), 'utf8'));
 const plugins = JSON.parse(await readFile(join(root, 'packages/plugins/package.json'), 'utf8'));
 const dsl = JSON.parse(await readFile(join(root, 'packages/dsl/package.json'), 'utf8'));
-await writeFile(join(output, 'sdk-distribution.json'), JSON.stringify({ sdkMajor: 0, manifestVersions: [1, 2], engineRange: '^0.1.0',
+await writeFile(join(output, 'sdk-distribution.json'), JSON.stringify({ sdkMajor: 0, manifestVersions: [1, 2], engineRange: '^0.2.0',
   contracts: { name: contracts.name, version: contracts.version, artifact: `galcraft-contracts-${contracts.version}.tgz` },
   dsl: { name: dsl.name, version: dsl.version, artifact: `galcraft-dsl-${dsl.version}.tgz`, optional: true },
   plugins: { name: plugins.name, version: plugins.version, artifact: `galcraft-plugins-${plugins.version}.tgz` }, license: 'MPL-2.0', source: 'https://github.com/TianyuEric/GalCraft' }, null, 2));

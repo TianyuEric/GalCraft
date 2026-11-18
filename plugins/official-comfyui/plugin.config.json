@@ -3,7 +3,7 @@
     "schemaVersion": 2,
     "id": "org.galcraft.comfyui",
     "name": "ComfyUI 执行能力",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "连接运行中的 ComfyUI，执行配置好的 API 工作流并取回候选结果；所需节点和模型由用户准备。",
     "localizations": {
       "en": {
@@ -18,7 +18,7 @@
     "author": "GalCraft",
     "license": "MPL-2.0",
     "homepage": null,
-    "engineRange": "^0.1.0",
+    "engineRange": "^0.2.0",
     "sdkMajor": 0,
     "targets": [
       "web",

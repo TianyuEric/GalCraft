@@ -340,7 +340,7 @@ export function createOfficialTemplate(choice: TemplateChoice = { kind: DEFAULT_
   const dependency: Dependency = { kind: 'template', id, version: '0.1.0', targets: ['web', 'windows', 'android', 'ios'], required: true };
   const dependencies: Dependency[] = [dependency];
   if (kind === 'rich' && relation === 'plugin') dependencies.push({ kind: 'plugin', id: 'org.galcraft.affection',
-    version: '0.1.0', targets: ['web', 'windows'], required: true });
+    version: '0.1.1', targets: ['web', 'windows'], required: true });
   const resources = officialLocaleResources();
   const resourceErrors = validateLocaleResources(resources);
   if (resourceErrors.length) throw new Error(`Official locale resources invalid: ${resourceErrors.join('; ')}`);

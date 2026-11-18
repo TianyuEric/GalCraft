@@ -38,9 +38,9 @@ GalCraft 将创作工作台、制作工具和独立 Player 组织在同一作品
 
 ## 开始创作
 
-创作者从[0.1.0 Release](https://github.com/TianyuEric/GalCraft/releases/tag/v0.1.0)下载 Windows x64 安装器；这是推荐入口。Node 用户执行 `npx --yes --package=@galcraft/studio@0.1.0 galcraft-studio` 启动浏览器工作台。[示例页面](https://galcraft.dev/examples/)提供《今晚，让春天亮起来》试玩与教学包下载。
+创作者从[0.2.0 Release](https://github.com/TianyuEric/GalCraft/releases/tag/v0.2.0)下载 Windows x64 安装器；这是推荐入口。Node 用户执行 `npx --yes --package=@galcraft/studio@0.2.0 galcraft-studio` 启动浏览器工作台。[示例页面](https://galcraft.dev/examples/)提供《今晚，让春天亮起来》试玩与教学包下载。
 
-npm 入口首次执行时从本次 Release 自动安装完整应用到用户版本缓存，需要访问 GitHub 与 npm，下载约 326 MiB 及运行依赖；后续启动复用安装。[发行说明](docs/releasing.md)分别标明轻量入口与完整应用的源码标签。
+npm 入口首次执行时从本次 Release 自动安装完整应用到用户版本缓存，需要访问 GitHub 与 npm，下载完整应用及运行依赖；后续启动复用安装。[发行说明](docs/releasing.md)分别标明轻量入口与完整应用的源码标签。
 
 取得教学 `.galproject` 备份后，在 Studio 中恢复为独立副本，检查精确依赖，修改一句对白，保存并从此句试玩。持续维护的步骤见[第一个作品](https://galcraft.dev/docs/zh-CN/first-project/)。作者也可以从“标准”模板新建练习作品。
 
@@ -98,7 +98,7 @@ pnpm --filter @galcraft/studio desktop
 
 ## 当前阶段与支持范围
 
-0.1.0 定位为早期预览。Studio 提供创作、制作、外部协作与发行路径。AI 后日谈能力放在 Backlog。生成服务、外部模型、移动工具链和平台账号由使用者分别准备。维护者通过 GitHub Release 和 npm 分发，通过 PR 的 CI 检查维护公开主线。
+0.2.0 定位为早期预览。Studio 提供创作、制作、外部协作与发行路径。AI 后日谈能力放在 Backlog。生成服务、外部模型、移动工具链和平台账号由使用者分别准备。维护者通过 GitHub Release 和 npm 分发，通过 PR 的 CI 检查维护公开主线。
 
 ## 许可与致谢
 

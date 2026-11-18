@@ -3,7 +3,7 @@
     "schemaVersion": 2,
     "id": "org.galcraft.generation-services",
     "name": "常用生成服务",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "连接已配置的文字、图像、语音和音乐服务，执行制作并收集候选；需可用服务、模型及相应凭据。",
     "localizations": {
       "en": {
@@ -18,7 +18,7 @@
     "author": "GalCraft",
     "license": "MPL-2.0",
     "homepage": null,
-    "engineRange": "^0.1.0",
+    "engineRange": "^0.2.0",
     "sdkMajor": 0,
     "targets": [
       "web",

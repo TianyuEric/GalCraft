@@ -3,7 +3,7 @@ import { createContext, runInContext } from 'node:vm';
 import type { GalCraftPlugin, PluginContext, ResourceProvider } from '@galcraft/plugins/contracts';
 import { emptyContributions } from '@galcraft/plugins/contracts';
 import { createLive2DResourceProvider } from './model.js';
-import { resourceKey, runtimeKey } from './metadata.js';
+import { pluginMetadata, resourceKey, runtimeKey } from './metadata.js';
 
 const fail = <T>(code: string, message: string): import('@galcraft/contracts').Result<T> => {
   const error = { code, message, severity: 'error' as const, owner: 'M06' as const, related: [], actions: ['supplyDependency' as const] };
@@ -49,9 +49,9 @@ export function createPlugin(): GalCraftPlugin {
               min: model.parameters.minimumValues[index], max: model.parameters.maximumValues[index], default: model.parameters.defaultValues[index] })), partIds: [...model.parts.ids] } };
           } catch (error) { core = null; return fail('LIVE2D_MODEL_INSPECTION', `无法读取模型参数：${String(error)}`); }
           finally { model?.release(); moc?._release(); }
-        }, { key: resourceKey, version: '0.1.0' }).inspect(rootFile, files, source);
+        }, { key: resourceKey, version: pluginMetadata.version }).inspect(rootFile, files, source);
         return inspected.ok ? { ...inspected, value: { ...inspected.value, metadata: {}, typeData: {
-          typeVersion: 1, provider: { id: context.pluginId, version: '0.1.0' }, value: { capabilities: inspected.value.capabilities, model: inspected.value.metadata },
+          typeVersion: 1, provider: { id: context.pluginId, version: pluginMetadata.version }, value: { capabilities: inspected.value.capabilities, model: inspected.value.metadata },
         } } } : inspected;
       } };
       contributions.resources.push(provider); return contributions;

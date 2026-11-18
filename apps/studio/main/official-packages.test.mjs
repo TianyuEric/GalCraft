@@ -7,6 +7,7 @@ import { PluginHost, acquirePluginDefinition, preparePluginModuleGraph } from '@
 import { checkPluginImplementations } from '@galcraft/plugins/development';
 import { StudioPluginPackages } from './plugin-packages.mjs';
 import { readBundledPlugins, installBundledPlugins } from './bundled-plugins.mjs';
+import { bundledEngineVersion } from './bundled-engine-version.mjs';
 
 const root = resolve('../../tmp/testing/n1-packages');
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
@@ -23,10 +24,10 @@ it('inspects, packs and installs every catalog version through the ordinary pack
   await installBundledPlugins(packages, catalog);
   const listed = unwrap(await packages.list(null));
   expect(listed.entries.map(item => `${item.manifest.id}@${item.manifest.version}`).sort()).toEqual([
-    'org.galcraft.ai-epilogue@0.1.0', 'org.galcraft.android@0.1.0', 'org.galcraft.ios@0.1.0',
-    'org.galcraft.animation-generation@0.1.0','org.galcraft.comfyui@0.1.0','org.galcraft.generation-services@0.1.0','org.galcraft.novelai@0.1.0',
-    'org.galcraft.live2d@0.1.0', 'org.galcraft.motion-canvas@0.1.0', 'org.galcraft.music-composition@0.1.0',
-    'org.galcraft.steam@0.1.0', 'org.galcraft.voice-comfy@0.1.0', 'org.galcraft.voicestudio@0.1.0',
+    'org.galcraft.ai-epilogue@0.1.1', 'org.galcraft.android@0.1.1', 'org.galcraft.ios@0.1.1',
+    'org.galcraft.animation-generation@0.1.1','org.galcraft.comfyui@0.1.1','org.galcraft.generation-services@0.1.1','org.galcraft.novelai@0.1.1',
+    'org.galcraft.live2d@0.1.1', 'org.galcraft.motion-canvas@0.1.1', 'org.galcraft.music-composition@0.1.1',
+    'org.galcraft.steam@0.1.1', 'org.galcraft.voice-comfy@0.1.1', 'org.galcraft.voicestudio@0.1.1',
   ].sort());
   const host = new PluginHost(join(root, 'archives'), context);
   try {
@@ -66,14 +67,15 @@ it('loads the exact current affection and an equivalent renamed package, with no
     unwrap(await packages.install({ kind: 'directory', path: directory }));
   const host = new PluginHost(join(root, 'store'), context);
   try {
-    for (const [id, version] of [['org.galcraft.affection', '0.1.0'], [renamedId, '0.1.0']]) {
-      const lock = { ...FixtureLock, plugins: [{ kind: 'plugin', id, version, targets: ['web', 'windows'], required: true }] };
+    for (const id of ['org.galcraft.affection', renamedId]) {
+      const version = renamedManifest.version;
+      const lock = { ...FixtureLock, engine: { ...FixtureLock.engine, version: bundledEngineVersion }, plugins: [{ kind: 'plugin', id, version, targets: ['web', 'windows'], required: true }] };
       const exact = unwrap(await packages.exactDirectory(id, version));
       const graph = await preparePluginModuleGraph(exact.directory, exact.manifest);
       try {
         const runtime = await graph.importEntry(exact.manifest.entry.runtime);
         expect(runtime.pluginMetadata).toMatchObject({ id, version });
-        const compiled = compile({ projectId: FixtureProject.projectId, engineVersion: '0.1.0', project: FixtureProject, lock,
+        const compiled = compile({ projectId: FixtureProject.projectId, engineVersion: bundledEngineVersion, project: { ...FixtureProject, engineVersion: bundledEngineVersion }, lock,
           documents: [{ documentId: 'DocAAA', revision: 1, kind: 'scene', sceneId: FixtureIds.street,
             text: `${id}/add {characterId:"${FixtureCharacters[0].id}",amount:5} @StmtAA;` }],
           scenes: [FixtureScenes[0]], characters: FixtureCharacters, variables: FixtureVariables, assets: [FixtureAsset],
