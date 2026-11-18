@@ -1,4 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, relative, resolve, posix } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
@@ -19,6 +21,21 @@ async function files(directory) {
     const file = join(directory, entry.name);
     return entry.isDirectory() ? files(file) : /\.(?:[cm]?[jt]sx?|css)$/.test(entry.name) ? [file] : [];
   }))).flat();
+}
+
+function ignoredFiles(root, candidates) {
+  // Standalone source fixtures/archives have no Git metadata. Worktrees use a .git file.
+  if (!existsSync(join(root, '.git')) || !candidates.length) return new Set();
+  try {
+    const output = execFileSync('git', ['-C', root, 'check-ignore', '--stdin', '-z'], {
+      input: candidates.map(file => slash(relative(root, file))).join('\0') + '\0',
+      encoding: 'utf8', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024,
+    });
+    return new Set(output.split('\0').filter(Boolean));
+  } catch (error) {
+    if (error.status === 1) return new Set(); // No ignored paths; other Git failures remain errors.
+    throw error;
+  }
 }
 
 export function staticImports(source, file) {
@@ -65,20 +82,27 @@ export function importViolation(from, specifier, packages = new Map(), typeOnly 
 }
 
 export async function checkArchitecture(root) {
-  const packages = new Map();
+  const packageFiles = [];
   for (const family of ['apps', 'packages', 'plugins']) {
     for (const entry of await readdir(join(root, family), { withFileTypes: true })) if (entry.isDirectory()) {
-      try {
-        const metadata = JSON.parse(await readFile(join(root, family, entry.name, 'package.json'), 'utf8'));
-        if (metadata.name) packages.set(metadata.name, { path: `${family}/${entry.name}/` });
-      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      packageFiles.push(join(root, family, entry.name, 'package.json'));
     }
+  }
+  const sources = (await Promise.all(['apps', 'packages', 'plugins'].map(family => files(join(root, family))))).flat();
+  const ignored = ignoredFiles(root, [...sources, ...packageFiles]);
+  const packages = new Map();
+  for (const file of packageFiles) {
+    if (ignored.has(slash(relative(root, file)))) continue;
+    try {
+      const metadata = JSON.parse(await readFile(file, 'utf8'));
+      if (metadata.name) packages.set(metadata.name, { path: slash(relative(root, file)).replace(/package\.json$/, '') });
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   const violations = [];
   let checked = 0;
-  for (const family of ['apps', 'packages', 'plugins']) for (const file of await files(join(root, family))) {
+  for (const file of sources) {
     const from = slash(relative(root, file));
-    if (testFile.test(from) || hostFixtures.has(from) || from.includes('/development-examples/') && !from.includes('/src/')) continue;
+    if (ignored.has(from) || testFile.test(from) || hostFixtures.has(from) || from.includes('/development-examples/') && !from.includes('/src/')) continue;
     const source = await readFile(file, 'utf8'); checked++;
     for (const item of staticImports(source, from)) {
       const rule = importViolation(from, item.value, packages, item.typeOnly);
