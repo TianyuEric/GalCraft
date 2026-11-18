@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { IdSchema, IssueSchema, JsonSchema } from './common.js';
+import { IdSchema, IssueSchema, JsonSchema, RevisionSchema } from './common.js';
 
 export const OfficialPageKeys = ['title', 'story', 'choice', 'input', 'save', 'load', 'history', 'settings', 'cg', 'music', 'flow', 'characters', 'videoError'] as const;
 export type PageKey = (typeof OfficialPageKeys)[number] | string;
@@ -67,11 +67,33 @@ export const UIActionSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('plugin'), key: z.string().min(1), arguments: z.record(z.string(), UIValueBindingSchema) }),
 ]);
 export type UIAction = z.infer<typeof UIActionSchema>;
-export const UIInteractionSchema = z.strictObject({
-  event: z.enum(['click', 'change', 'input', 'submit', 'focus', 'blur', 'pointerEnter', 'pointerLeave']),
-  condition: UIConditionSchema.optional(), actions: z.array(UIActionSchema),
+export const UIEventSchema = z.enum(['click', 'change', 'input', 'submit', 'focus', 'blur', 'pointerEnter', 'pointerLeave']);
+export const BlueprintOutcomeSchema = z.enum(['success', 'unmet', 'failure']);
+export const BlueprintNodeSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ id: IdSchema, kind: z.literal('condition'), condition: UIConditionSchema }),
+  z.strictObject({ id: IdSchema, kind: z.literal('action'), action: UIActionSchema }),
+  z.strictObject({ id: IdSchema, kind: z.literal('wait'), milliseconds: z.number().int().min(0).max(30_000) }),
+  z.strictObject({ id: IdSchema, kind: z.literal('animation'), animationId: IdSchema }),
+]);
+export const BlueprintEdgeSchema = z.strictObject({ id: IdSchema, from: IdSchema, outcome: BlueprintOutcomeSchema, to: IdSchema });
+export const PageBlueprintSchema = z.strictObject({
+  revision: RevisionSchema, entry: IdSchema, nodes: z.array(BlueprintNodeSchema).max(100), edges: z.array(BlueprintEdgeSchema).max(300),
 });
+export type PageBlueprint = z.infer<typeof PageBlueprintSchema>;
+export type BlueprintNode = z.infer<typeof BlueprintNodeSchema>;
+export type BlueprintOutcome = z.infer<typeof BlueprintOutcomeSchema>;
+export const UIInteractionSchema = z.strictObject({
+  id: IdSchema.optional(), event: UIEventSchema,
+  condition: UIConditionSchema.optional(), actions: z.array(UIActionSchema), blueprint: PageBlueprintSchema.optional(),
+}).refine(value => !value.blueprint || (value.id && !value.actions.length && !value.condition && value.blueprint.revision > 0),
+  'An applied blueprint requires a binding identity and revision and owns the entire binding.');
 export type UIInteraction = z.infer<typeof UIInteractionSchema>;
+export const BlueprintAddressSchema = z.strictObject({ pageId: IdSchema, componentId: IdSchema, bindingId: IdSchema });
+export const BlueprintTriggerSchema = BlueprintAddressSchema.extend({
+  event: z.strictObject({ value: JsonSchema.optional(), checked: z.boolean().optional() }).optional(),
+  instance: z.string().min(1).optional(),
+});
+export type BlueprintTrigger = z.infer<typeof BlueprintTriggerSchema>;
 export const UIRepeatSchema = z.strictObject({ source: UIValueBindingSchema, key: z.string().min(1), emptyText: z.string().optional() });
 export type UIRepeat = z.infer<typeof UIRepeatSchema>;
 export const NavigationResultSchema = z.strictObject({

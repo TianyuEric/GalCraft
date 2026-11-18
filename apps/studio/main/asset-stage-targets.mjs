@@ -30,11 +30,12 @@ export async function prepareStageTarget(session, assets, target, services) {
     if (!definitions.ok) throw new Error(definitions.error.message);
     let configurations;
     try {
-      const instances = readPluginDocumentInstances(documents);
+      const mappings = Object.fromEntries(definitions.value.documents.filter(item => item.configMapping).map(item => [item.key, item.configMapping]));
+      const instances = readPluginDocumentInstances(documents).filter(item => Object.hasOwn(mappings, item.contributionKey));
       configurations = compilePluginConfigurations({ lock,
         pluginDocuments: Object.fromEntries(lock.plugins.flatMap(plugin => { const raw = file(`plugins/${plugin.id}/documents/config.json`) ?? file(`plugins/${plugin.id}/config.json`); return raw ? [[plugin.id, JSON.parse(raw).data]] : []; })),
         pluginConfigDocuments: instances.map(item => ({ contribution: item.contributionKey, documentId: item.documentId, revision: item.revision, data: item.data })),
-        pluginConfigMappings: Object.fromEntries(definitions.value.documents.filter(item => item.configMapping).map(item => [item.key, item.configMapping])),
+        pluginConfigMappings: mappings,
       });
     } finally { await definitions.value.release(); }
     if (configurations.issues.some(issue => issue.severity === 'error')) throw new Error(configurations.issues.map(issue => issue.message).join('；'));

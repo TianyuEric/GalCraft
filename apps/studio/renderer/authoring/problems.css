@@ -1,0 +1,96 @@
+.gc-workbench-problems {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  color: var(--foreground);
+  background: var(--workbench-editor);
+  font: 400 12px/16px var(--font-sans);
+}
+.gc-problems-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.gc-problems-toolbar .gc-problems-search { flex: 1; min-width: 0; max-width: 320px; }
+.gc-problems-toolbar .gc-problems-search-input { height: 28px; font-size: 12px; line-height: 16px; }
+.gc-problems-toolbar .gc-problems-severity { height: 28px; min-width: 128px; padding: 4px 8px; }
+.gc-problems-severity [data-slot=select-value] { font-size: 12px; line-height: 16px; }
+.gc-problems-toolbar-actions { display: flex; flex: none; align-items: center; gap: 4px; margin-left: auto; }
+.gc-problems-toolbar-actions > [data-slot=button], .gc-problem-row .gc-problem-ignore {
+  height: 28px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 16px;
+}
+.gc-problems-ignored-toggle { font-variant-numeric: tabular-nums; }
+.gc-problems-ignored-toggle[aria-pressed=true] { background: var(--selection); }
+.gc-problems-toolbar .gc-problems-recheck { min-width: 100px; gap: 4px; }
+.gc-problems-recheck[aria-disabled=true] { color: var(--foreground-secondary); cursor: wait; }
+.gc-problems-checking-icon { animation: gc-problems-checking 1s linear infinite; }
+@keyframes gc-problems-checking { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .gc-problems-checking-icon { animation: none; } }
+.gc-problems-list { min-height: 0; flex: 1; overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
+.gc-problems-group > h3 {
+  margin: 0;
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground-secondary);
+  font: 500 12px/16px var(--font-sans);
+}
+.gc-problem-row { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; padding-right: 4px; }
+.gc-problem-row[data-selected=true] { background: var(--selection); }
+.gc-problem-row .gc-problem-select {
+  flex: 1;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 40px;
+  height: auto;
+  padding: 4px 8px;
+  border-radius: 0;
+  color: var(--foreground);
+  text-align: left;
+  white-space: normal;
+  font: 400 12px/16px var(--font-sans);
+}
+.gc-problem-select:hover { background: var(--surface-hover); }
+.gc-problem-row[data-selected=true] .gc-problem-select:hover { background: var(--selection); }
+.gc-problem-row .gc-problem-select:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; box-shadow: none; }
+.gc-problem-icon { flex: none; }
+.gc-problem-row[data-severity=error] .gc-problem-icon { color: var(--danger-foreground); }
+.gc-problem-row[data-severity=warning] .gc-problem-icon { color: var(--warning-foreground); }
+.gc-problem-row[data-severity=info] .gc-problem-icon { color: var(--info-foreground); }
+.gc-problem-copy { display: flex; flex-direction: column; min-width: 0; gap: 0; }
+.gc-problem-reason { overflow-wrap: anywhere; }
+.gc-problem-cause { color:var(--foreground-secondary); overflow-wrap:anywhere; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+.gc-problem-identity { display: flex; flex-wrap: wrap; gap: 8px; color: var(--foreground-tertiary); font-size: 11px; line-height: 16px; }
+.gc-problem-identity > span { min-width: 0; overflow-wrap: anywhere; }
+.gc-problem-severity-label { color: var(--foreground-secondary); }
+.gc-problem-ignored-badge { color: var(--foreground-secondary); background: var(--input); border-radius: 4px; padding: 0 4px; }
+.gc-problem-row .gc-problem-action { min-height: 28px; height: auto; max-width: 192px; padding: 4px 8px; white-space: normal; font-size: 12px; line-height: 16px; }
+.gc-problem-row .gc-problem-disclosure { width: 28px; height: 28px; }
+.gc-problem-disclosure[aria-expanded=true] > svg { transform: rotate(90deg); }
+.gc-problem-details {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin: 0 4px 8px 8px;
+  padding: 8px;
+  overflow: auto;
+  color: var(--foreground-secondary);
+  background: var(--input);
+  font: 400 12px/16px var(--font-mono, monospace);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.gc-problem-details[hidden] { display: none; }
+.gc-problems-pending, .gc-problems-empty { margin: 0; padding: 8px; color: var(--foreground-secondary); }
+.gc-problems-pending { color: var(--warning-foreground); }

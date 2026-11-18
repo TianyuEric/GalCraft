@@ -38,9 +38,9 @@ GalCraft combines an authoring workbench, production tools and a standalone Play
 
 ## Start creating
 
-Download the recommended Windows x64 installer from the [0.1.0 release](https://github.com/TianyuEric/GalCraft/releases/tag/v0.1.0). Node users can run `npx --yes --package=@galcraft/studio@0.1.0 galcraft-studio` to open the browser workbench. The [Examples page](https://galcraft.dev/en/examples/) provides the playable story and tutorial downloads.
+Download the recommended Windows x64 installer from the [0.2.0 release](https://github.com/TianyuEric/GalCraft/releases/tag/v0.2.0). Node users can run `npx --yes --package=@galcraft/studio@0.2.0 galcraft-studio` to open the browser workbench. The [Examples page](https://galcraft.dev/en/examples/) provides the playable story and tutorial downloads.
 
-The npm entry installs the full application from this release into a user version cache on its first command. Preparation needs GitHub and npm access and downloads about 326 MiB plus runtime dependencies; later starts reuse the installation. The [release guide](docs/releasing.md) identifies separate source tags for the small entry and full application.
+The npm entry installs the full application from this release into a user version cache on its first command. Preparation needs GitHub and npm access and downloads the full application and its runtime dependencies; later starts reuse the installation. The [release guide](docs/releasing.md) identifies separate source tags for the small entry and full application.
 
 Once you have the tutorial `.galproject` backup, restore it as an independent copy in Studio, check its exact dependencies, change one line, save and play from that line. Follow [Your first project](https://galcraft.dev/docs/en/first-project/) for the maintained walkthrough. You can also create a new project from the Standard template.
 
@@ -98,7 +98,7 @@ The [online manual](https://galcraft.dev/docs/en/studio-guide/) is the single ma
 
 ## Current scope
 
-0.1.0 is an early preview. Studio provides authoring, production, collaboration and release workflows. AI-driven afterstory remains backlog. Generation services, external models, mobile toolchains and platform accounts need their own setup. The maintainer distributes through GitHub Releases and npm and uses PR checks to maintain the public development line.
+0.2.0 is an early preview. Studio provides authoring, production, collaboration and release workflows. AI-driven afterstory remains backlog. Generation services, external models, mobile toolchains and platform accounts need their own setup. The maintainer distributes through GitHub Releases and npm and uses PR checks to maintain the public development line.
 
 ## License and acknowledgements
 

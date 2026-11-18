@@ -35,7 +35,7 @@ try {
   assert(compiled.snapshot, JSON.stringify(compiled.issues));
   record('SH1-node-domain-compile', 'ordinary Node service / worker_threads', { projectId, documentId: scene.documentId, source }, 'HTTP creates a real project; M02 commits source; installed engine compiler creates the current Snapshot on a Node worker.', { snapshotId: compiled.snapshot.snapshotId, issueCodes: compiled.issues.map(issue => issue.code) });
   const template = readTemplateDocuments([...session.documents.values()]);
-  const style = { id: createId(), name: 'Node SCSS', scope: { pageId: template.pages[0].id, componentId: null }, language: 'scss', sourcePath: 'ui/styles/node.scss', sourceRevision: 1, assetIds: [], issues: [] };
+  const style = { id: createId(), name: 'Node SCSS', scope: { pageId: template.pages[0].id, componentId: null }, language: 'scss', sourcePath: 'ui/styles/node.scss', sourceRevision: 1, compiledPath: null, compiledSourceRevision: null, assets: [], issues: [] };
   const styled = value(await call('templates', 'compileStyle', { style, source: '$accent:#123456; [data-gc-part="title.workTitle"] { color:$accent; }', instanceId: template.instanceId }));
   assert(styled.css?.includes('#123456'), JSON.stringify(styled));
   const operationId = createId(), waiting = host.operations.start({ operationId, script: join(root, 'apps/studio/main/utility-smoke-worker.mjs'), input: { delayMs: 30000, value: 'cancelled' }, outputDirectory: null });

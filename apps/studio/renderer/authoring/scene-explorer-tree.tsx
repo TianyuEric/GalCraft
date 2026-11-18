@@ -13,7 +13,7 @@ export function SceneExplorerTree(props: Props) {
   const t = (text: string) => translate(text, props.locale);
   const [height, setHeight] = useState(() => Math.min(420, window.innerHeight * .42));
   useEffect(() => { const resize = () => setHeight(Math.min(420, window.innerHeight * .42)); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize); }, []);
-  const data: SceneNode[] = props.nodes.map(chapter => ({ id: chapter.id, name: chapter.name, kind: 'chapter', children: chapter.children?.map(scene => ({ id: scene.id, name: scene.name, detail: typeof scene.detail === 'string' ? scene.detail : undefined, kind: 'scene' })) ?? [] }));
+  const data: SceneNode[] = props.nodes.map(chapter => ({ id: chapter.id, name: chapter.name, kind: 'chapter', children: chapter.children?.map(scene => ({ id: scene.id, name: scene.name, detail: scene.detail, kind: 'scene' })) ?? [] }));
   const all = props.nodes.flatMap(n => [n, ...n.children ?? []]);
   const query = props.query.trim().toLocaleLowerCase();
   const matched = new Set(data.flatMap(chapter => {

@@ -1,4 +1,4 @@
-import { createId, isId, NativeAnimationSchema } from '@galcraft/contracts';
+import { CompiledRuleImageTransitionSchema, createId, isId, NativeAnimationSchema, SceneDecorLayerSchema } from '@galcraft/contracts';
 import type { AnimatedImageMetadata, AssetKind, AudioState, Character, EffectInstance, EffectValues, ExecutionToken, Id, Json, NativeAnimation, PresentationDelta, Result, RuntimeState, Segment, StageObject, StageStation, Transition, TransitionPair } from '@galcraft/contracts';
 import type { StageService } from '@galcraft/runtime';
 import { copy, fail, ok, record } from './common.js';
@@ -61,6 +61,62 @@ export class StageCommandService implements StageService {
   async prepare(input: { state: RuntimeState; token: ExecutionToken; opcode: string; args: Json }): Promise<Result<{ state: RuntimeState; delta: PresentationDelta | null }>> {
     const state = copy(input.state), presentation = state.presentation, args = record(input.args), change = delta();
     switch (input.opcode) {
+      case '$sceneDecor': {
+        const layers = SceneDecorLayerSchema.array().parse(input.args);
+        presentation.objects = presentation.objects.filter(object => object.decorFollow === undefined);
+        for (const [entranceOrder, layer] of layers.entries()) {
+          if (!layer.variantId || presentation.objects.some(object => object.id === layer.id))
+            return fail('SCENE_DECOR_ID', '布景需要精确素材版本及独立的实例身份', ['locate']);
+          const asset = this.assets.asset(layer.assetId, layer.variantId);
+          if (!asset.ok) return asset;
+          if (asset.value.kind !== 'image' || asset.value.imageAnimation)
+            return fail('SCENE_DECOR_ASSET', '布景需要静态图片', ['locate']);
+          const current = effectValues({ x: layer.x, y: layer.y, scaleX: layer.scale, scaleY: layer.scale, z: layer.z });
+          presentation.objects.push({ id: layer.id, assetId: layer.assetId, variantId: layer.variantId, visible: layer.visible,
+            characterId: null, layer: 'figure', entranceOrder, decorFollow: layer.cameraFollow, backgroundFrame: null,
+            station: 'center', current, defaults: { ...copy(current), station: 'center' },
+            framing: { mode: 'full', scale: 1, offsetX: 0, offsetY: 0, crop: null },
+            transition: pair(null), processes: [], providerState: null, imageFace: null });
+        }
+        break;
+      }
+      case '$dialogueExpression': {
+        const object = presentation.objects.find(item => item.id === args.objectId && item.characterId === args.characterId &&
+          item.layer === 'figure' && item.purpose !== 'illustration' && !item.providerState && item.visible !== false);
+        if (!object) return fail('DIALOGUE_EXPRESSION_TARGET', '句内表情需要明确在场的图片立绘实例', ['locate']);
+        if (!id(args.assetId) || !id(args.variantId)) return fail('ASSET_ID', '句内表情缺少精确素材引用', ['locate']);
+        const asset = this.assets.asset(args.assetId, args.variantId); if (!asset.ok) return asset;
+        if (asset.value.kind !== 'image') return fail('ASSET_KIND', '句内表情需要图片素材', ['locate']);
+        if (object.assetId === args.assetId && object.variantId === asset.value.variantId) break;
+        const appearance = { assetId: args.assetId, variantId: asset.value.variantId, imageFace: null,
+          imagePlayback: asset.value.imageAnimation ? { mode: 'loop' as const, elapsedMs: 0, completed: false,
+            frameDurationsMs: copy(asset.value.imageAnimation.frameDurationsMs), owner: null } : undefined };
+        Object.assign(object, appearance);
+        for (const transition of presentation.transitions) if (transition.objectId === object.id && transition.to)
+          Object.assign(transition.to, appearance);
+        change.objects.push({ op: 'replace', id: object.id, value: copy(object) });
+        break;
+      }
+      case '$dialogueLive2DExpression': {
+        const object = presentation.objects.find(item => item.id === args.objectId && item.visible !== false &&
+          item.layer === 'figure' && item.purpose !== 'illustration' && item.assetId === args.assetId && item.variantId === args.variantId);
+        if (!object?.providerState || !['org.galcraft.live2d/resource', 'galcraft.live2d'].includes(object.providerState.provider))
+          return fail('DIALOGUE_EXPRESSION_TARGET', '句内表情需要匹配精确模型版本的在场 Live2D 实例', ['locate']);
+        const asset = this.assets.asset(object.assetId, object.variantId);
+        if (!asset.ok) return asset;
+        if (asset.value.kind !== 'live2d' || asset.value.provider !== object.providerState.provider ||
+          asset.value.providerVersion !== object.providerState.version || typeof args.expressionName !== 'string')
+          return fail('DIALOGUE_EXPRESSION_MODEL', '句内表情的官方 Live2D 模型或精确插件不可用', ['locate']);
+        change.providerCommands = [{ objectId: object.id, command: { expression: args.expressionName } }];
+        break;
+      }
+      case '$dialogueSound': {
+        if (!id(args.id) || !id(args.assetId) || !id(args.variantId)) return fail('ASSET_ID', '句内音效缺少精确素材引用', ['locate']);
+        const asset = this.assets.asset(args.assetId, args.variantId); if (!asset.ok) return asset;
+        if (asset.value.kind !== 'audio') return fail('ASSET_KIND', '句内音效需要音频素材', ['locate']);
+        change.audio.push({ bus: 'sfx', id: args.id, dialogueEventId: args.id, state: audioState(args, args.assetId, asset.value.variantId) });
+        break;
+      }
       case 'characterDifference': {
         const characterId = String(args.characterId), character = this.assets.character?.(characterId);
         if (!character) return fail('CHARACTER_MISSING', '共同差分所属角色不可用', ['locate']);
@@ -112,6 +168,7 @@ export class StageCommandService implements StageService {
         const objectId = background ? args.objectId ?? previousBackground?.id ?? createId() : args.objectId;
         if (!id(objectId)) return fail('OBJECT_ID', '舞台对象缺少有效身份');
         const previous = presentation.objects.find(object => object.id === objectId);
+        if (previous?.decorFollow !== undefined) return fail('SCENE_DECOR_ID', '布景身份已占用，不能替换为指令对象', ['locate']);
         if (background && previous && previous.layer !== 'background') return fail('OBJECT_PURPOSE', '背景身份已用于其他舞台对象', ['chooseTarget']);
         if (background && previousBackground && previousBackground.id !== objectId && args.op !== 'clear') {
           presentation.objects = presentation.objects.filter(object => object.id !== previousBackground.id);
@@ -202,18 +259,23 @@ export class StageCommandService implements StageService {
               ? previous.providerState.state : args.model ?? {}) as Json } : null };
         if (previous) presentation.objects = presentation.objects.map(item => item.id === objectId ? object : item);
         else presentation.objects.push(object);
+        const ruleImage = background && args.ruleImage ? CompiledRuleImageTransitionSchema.parse(args.ruleImage) : null;
         const entering = diffTransition ? { ...cut, ...record(args.transition) } as Transition : object.transition.enter;
-        const enter: Result<{ spec: Transition; custom?: ExecutableAnimation }> = !difference || diffTransition ? await this.prepareTransition(entering) : ok({ spec: entering });
+        const enter: Result<{ spec: Transition; custom?: ExecutableAnimation }> = ruleImage
+          ? ok({ spec: { ...cut, preset: 'fade', durationMs: ruleImage.durationMs, easing: ruleImage.easing } })
+          : !difference || diffTransition ? await this.prepareTransition(entering) : ok({ spec: entering });
         if (!enter.ok) return enter;
         if (enter.value.custom) {
           const fields = animationFields(enter.value.custom);
           for (const process of object.processes) if (process.status !== 'queued') process.fields = process.fields.filter(path => !fields.includes(path));
           if (enter.value.spec.durationMs === 0) Object.assign(object, sampleObjectAnimation(object, enter.value.custom, 0));
         }
-        if ((!difference || diffTransition) && enter.value.spec.preset !== 'cut' && enter.value.spec.durationMs > 0)
+        const from = ruleImage ? previousBackground : previous;
+        if (ruleImage) presentation.transitions = presentation.transitions.filter(process => process.objectId !== objectId);
+        if ((!ruleImage || from) && (!difference || diffTransition) && enter.value.spec.preset !== 'cut' && enter.value.spec.durationMs > 0)
           presentation.transitions.push({ id: createId(), owner: input.token, objectId,
-            kind: previous ? 'replace' : 'enter', ...enter.value, elapsedMs: 0,
-            seed: Math.floor(Math.random() * 0x100000000), from: previous ? copy(previous) : null, to: copy(object) });
+            kind: from ? 'replace' : 'enter', ...enter.value, elapsedMs: 0, ...(ruleImage ? { ruleImage } : {}),
+            seed: Math.floor(Math.random() * 0x100000000), from: from ? copy(from) : null, to: copy(object) });
         if (difference && !diffTransition) for (const process of presentation.transitions)
           if (process.objectId === objectId && process.to) process.to = copy(object);
         change.objects.push({ op: previous ? 'replace' : 'show', id: objectId, value: copy(object) });
@@ -269,7 +331,7 @@ export class StageCommandService implements StageService {
       case 'stopAnimation': {
         if (!id(args.animationId)) return fail('ANIMATION_ID', 'Stopping an animation requires its authored instance ID', ['locate']);
         const target = record(args.target);
-        const matches = presentation.objects.filter(item => target.kind === 'station' ? item.station === target.station : item.id === target.id);
+        const matches = presentation.objects.filter(item => target.kind === 'station' ? item.decorFollow === undefined && item.station === target.station : item.id === target.id);
         if (matches.length > 1) return fail('OBJECT_AMBIGUOUS', '站位匹配多个对象，请指定对象身份', ['chooseTarget']);
         const object: AnimationTarget | undefined = target.kind === 'stage' && presentation.camera ? { id: StageCameraId, ...presentation.camera } : matches[0];
         if (!object) return fail('OBJECT_MISSING', '动画目标对象不存在', ['locate']);
@@ -280,7 +342,7 @@ export class StageCommandService implements StageService {
       }
       case 'setTransform': case 'setComplexAnimation': case 'setTempAnimation': case 'setAnimation': {
         const target = record(args.target);
-        const matches = presentation.objects.filter(item => target.kind === 'station' ? item.station === target.station : item.id === target.id);
+        const matches = presentation.objects.filter(item => target.kind === 'station' ? item.decorFollow === undefined && item.station === target.station : item.id === target.id);
         if (matches.length > 1) return fail('OBJECT_AMBIGUOUS', '站位匹配多个对象，请指定对象身份', ['chooseTarget']);
         if (target.kind === 'stage') presentation.camera ??= { current: copy(defaults), defaults: copy(defaults), processes: [] };
         const object: AnimationTarget | undefined = target.kind === 'stage' ? { id: StageCameraId, ...presentation.camera! } : matches[0];

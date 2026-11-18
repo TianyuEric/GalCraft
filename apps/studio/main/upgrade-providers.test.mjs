@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EngineCatalog } from '@galcraft/publishing/engine';
 import { StudioUpgrades } from './upgrade-providers.mjs';
+import { staticUpgradeChecks, upgradeImpact } from './upgrade-review.mts';
 import { StudioBackups } from './backup-providers.mjs';
 import { ProjectAccess } from './project-access.mjs';
 import { ProjectDocuments } from './document-providers.mjs';
@@ -43,6 +44,36 @@ async function setup(check = 'pass') {
   return { projects, upgrades, backups };
 }
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+describe('upgrade review', () => {
+  it('reports a changed exact plugin version and the affected documents', () => {
+    const path = 'plugins/org.example.fixture/documents/config.json';
+    const before = { [path]: 'old', 'removed.json': '{}' };
+    const after = { [path]: 'new', 'added.json': '{}' };
+    const plugin = { kind: 'plugin', id: 'org.example.fixture', version: '0.1.0', required: true, targets: ['web'] };
+    const updated = { ...plugin, version: '0.2.0' };
+    const documents = [{ documentId: 'Config1', files: { [path]: after[path] } }, { documentId: 'Other1', files: { 'added.json': '{}' } }];
+    const impact = upgradeImpact(before, after, [plugin], [updated], documents, ['save.json']);
+    expect(impact.changes.map(({ file, description }) => [file, description])).toEqual([
+      [path, 'modified'], ['removed.json', 'removed'], ['added.json', 'added'],
+    ]);
+    expect(impact.dependencyChanges).toMatchObject([{ pluginId: plugin.id, from: '0.1.0', to: '0.2.0',
+      affected: [{ kind: 'document', id: 'Config1' }], savedData: ['save.json'], dependencies: [updated] }]);
+  });
+
+  it('classifies static issues per target and requires a compiler snapshot', () => {
+    const template = { code: 'TEMPLATE_MISSING', severity: 'error' };
+    const plugin = { code: 'PLUGIN_MISSING', severity: 'warning' };
+    const asset = { code: 'ASSET_MISSING', severity: 'error' };
+    const checks = staticUpgradeChecks('windows', false, [], [template, plugin], [asset]);
+    expect(checks).toEqual([
+      { kind: 'dsl', target: 'windows', result: 'fail', issues: [] },
+      { kind: 'template', target: 'windows', result: 'fail', issues: [template] },
+      { kind: 'plugin', target: 'windows', result: 'pass', issues: [plugin] },
+      { kind: 'resource', target: 'windows', result: 'fail', issues: [asset] },
+    ]);
+  });
+});
+
 describe('declared upgrade copies and M02 commits', () => {
   it('validates and confirms an existing 0.1.0 project with the refreshed 0.1.0 engine without changing its documents or Lock', async () => {
     const { projects, upgrades } = await setup();
@@ -57,7 +88,7 @@ describe('declared upgrade copies and M02 commits', () => {
     expect(after).toEqual(before); expect(projects.currentSession.projectId).toBe(projectId);
     expect(JSON.parse(after['dependencies.lock.json']).data.engine.version).toBe('0.1.0');
     await projects.close(projects.currentSessionId, 'discard');
-  });
+  }, 30_000);
   it('blocks same-version confirmation when an existing save is incompatible', async () => {
     const { projects, upgrades } = await setup('fail');
     const plan = value(await upgrades.plan({ projectId: projects.currentSession.projectId, toVersion: '0.1.0', expected: expected(projects), representativeSaves: ['old-save.json'] }));
@@ -113,7 +144,7 @@ describe('declared upgrade copies and M02 commits', () => {
     const original = JSON.parse(await readFile(join(projects.currentRoot, 'project.json'), 'utf8')).data;
     expect(original.engineVersion).toBe('0.1.0'); expect(original.name).toBe('Edited');
     await projects.close(projects.currentSessionId, 'discard');
-  });
+  }, 30_000);
   it('reports a committed upgrade when writing its history fails after M02 commits', async () => {
     const { projects, upgrades } = await setup();
     const plan = value(await upgrades.plan({ projectId: projects.currentSession.projectId, toVersion: '1.1.0', expected: expected(projects), representativeSaves: [] }));

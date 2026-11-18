@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ExprSchema, NativeAnimationSchema, EffectPatchSchema, type CommandSpec, type EntityKind, type FieldSpec, type Json, type Version } from '@galcraft/contracts';
+import { DialogueContentSchema, DialogueEventSchema, ExprSchema, NativeAnimationSchema, EffectPatchSchema, type CommandSpec, type EntityKind, type FieldSpec, type Json, type Version } from '@galcraft/contracts';
 
 type FieldOptions = Partial<Omit<FieldSpec, 'path' | 'label' | 'description' | 'type' | 'required' | 'nullable' | 'default' | 'unit' | 'group' | 'summary' | 'keywords'>> & {
   required?: boolean; nullable?: boolean; default?: Json; unit?: FieldSpec['unit']; group?: FieldSpec['group']; summary?: boolean; description?: string;
@@ -43,14 +43,15 @@ const transition = (path: string) => o(path, [
   o('grid', [i('columns', { default: 12, min: 1, max: 64 }), i('rows', { default: 8, min: 1, max: 36 })]),
   o('animation', []),
 ], { group: 'animation', default: { preset: 'cut', resourceId: null, durationMs: 0, easing: { family: 'linear', direction: 'in' }, direction: 'left' } });
+const ruleImage = () => o('ruleImage', [
+  r('assetId', 'asset', { ...req, assetKinds: ['image'] }), r('variantId', 'variant', { nullable: true }),
+  n('durationMs', { ...req, exclusiveMin: 0, unit: 'ms' }), n('softness', { default: .12, min: 0, max: 1 }),
+  b('reverse', { default: false }), easing(),
+], { group: 'animation', description: 'Reveal the replacement with a static rule image. Dark pixels switch first unless reversed.' });
 const target = (path = 'target', required = true, allowStage = false) => o(path, [e('kind', allowStage ? ['object', 'station', 'stage'] : ['object', 'station'], req), r('id', 'object'), e('station', ['left', 'leftQuarter', 'leftThird', 'center', 'rightThird', 'rightQuarter', 'right'])], { required });
 const targetRef = (path: string, options?: FieldOptions) => o(path, [r('sceneId', 'scene', req), r('labelId', 'label', { nullable: true, default: null })], options);
 const segment = () => o('segment', [effect('effects', req), n('durationMs', { default: 300, min: 0, unit: 'ms' }), easing()], { group: 'animation' });
 const model = () => o('model', [
-  o('imageMouth', [b('enabled', { default: false }), r('closed', 'asset', { assetKinds: ['image'] }), r('half', 'asset', { nullable: true, default: null, assetKinds: ['image'] }), r('open', 'asset', { assetKinds: ['image'] })]),
-  o('imageBlink', [b('enabled', { default: false }), r('open', 'asset', { assetKinds: ['image'] }), r('closed', 'asset', { assetKinds: ['image'] }), n('intervalMs', { default: 4000, min: 0 }), n('randomMs', { default: 1000, min: 0 }), n('closeMs', { default: 100, min: 0 }), n('holdMs', { default: 100, min: 0 }), n('openMs', { default: 100, min: 0 })]),
-  o('imageFaceCombinations', [r('closedOpen', 'asset', { assetKinds: ['image'] }), r('halfOpen', 'asset', { assetKinds: ['image'] }), r('openOpen', 'asset', { assetKinds: ['image'] }),
-    r('closedClosed', 'asset', { assetKinds: ['image'] }), r('halfClosed', 'asset', { assetKinds: ['image'] }), r('openClosed', 'asset', { assetKinds: ['image'] })]),
   o('motion', [e('op', ['play', 'stop'], { default: 'play' }), s('group', req), i('index', { min: 0, ...req }), b('loop', { default: false }), n('fadeInMs', { nullable: true, default: null, min: 0 }), n('fadeOutMs', { nullable: true, default: null, min: 0 })]),
   o('expression', [e('op', ['set', 'reset'], { default: 'set' }), s('name', { nullable: true, default: null })]),
   b('blink'), b('breath'), b('physics'), b('autoMotion'),
@@ -112,7 +113,16 @@ for (const row of rows) if (['changeBg', 'changeFigure', 'changeIllustration', '
   row[5].push(o('playback', [e('mode', ['loop', 'once'], { default: 'loop' }), b('wait', { default: false })]));
 rows.find(row => row[0] === 'pixi')![5].push(e('layer', ['back', 'front'], { default: 'front' }));
 rows.find(row => row[0] === 'changeFigure')![5].push(b('difference', { description: '绑定角色共同差分；立绘与阅读头像共用角色当前差分。' }), r('variantId','variant'));
+rows.find(row => row[0] === 'changeBg')![5].push(ruleImage());
+rows.find(row => row[0] === 'changeScene')![5].push(ruleImage());
 rows.find(row => row[0] === 'characterDifference')![5].find(field=>field.path==='transition')!.default=null;
+rows.find(row => row[0] === 'say')![5].push(a('events', o('event', [
+  field('id', 'ref', req), i('offset', { ...req, min: 0 }), e('kind', ['wait', 'sound', 'expression', 'live2dExpression'], req),
+  i('durationMs', { nullable: true, min: 1, unit: 'ms' }),
+  i('autoWaitMs', { min: 0, unit: 'ms', description: 'Click-wait auto release. Omit to use the player setting.' }),
+  r('assetId', 'asset', { assetKinds: ['audio', 'live2d'] }), r('variantId', 'variant', { nullable: true }), volume(),
+  r('objectId', 'object'), r('characterId', 'character'), field('differenceId', 'ref'), s('expressionName'),
+]), { summary: false, description: 'Events anchored to decoded UTF-16 dialogue boundaries. Equal offsets run in array order.' }));
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -166,6 +176,8 @@ export function commandInputSchema(spec: CommandSpec): Json {
     }, additionalProperties: true, description: 'Weather atlas columns, particle size and motion. Filter-specific parameters remain owned by the selected effect.' };
     if (field.path === 'effects') schema = z.toJSONSchema(EffectPatchSchema, { io: 'input' });
     if (field.path === 'voiceByLocale') schema = { type: 'object', additionalProperties: {type:'string'}, description:'Audio asset IDs keyed by dialogue language.' };
+    if (spec.key === 'say' && field.path === 'text') schema = z.toJSONSchema(DialogueContentSchema, { io: 'input' });
+    if (spec.key === 'say' && field.path === 'events') schema = z.toJSONSchema(z.array(DialogueEventSchema), { io: 'input' });
     for (const [from,to] of [['min','minimum'],['max','maximum'],['exclusiveMin','exclusiveMinimum']] as const) if(field[from]!==undefined)schema[to]=field[from];
     if (field.nullable) schema = {anyOf:[schema,{type:'null'}]};
     return {...schema, description:schema.description??field.description,...(field.default!==null||field.nullable?{default:field.default}:{})};

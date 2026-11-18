@@ -56,7 +56,7 @@ describe('ComfyUI real event semantics', () => {
 describe('ComfyUI instance resource release', () => {
   it('waits beyond HTTP200 for worker resource changes, without a generation POST', async () => {
     const ctx = await context(); let frees = 0, stats = 0, prompts = 0;
-    const adapter = new HttpGenerationAdapter({ credential: async () => null, probe: async () => ({ metadata: {} }), resourcePollMs: 1, resourceWaitMs: 20, fetch: async (url, init) => {
+    const adapter = new HttpGenerationAdapter({ credential: async () => null, probe: async () => ({ metadata: {} }), resourcePollMs: 1, resourceWaitMs: 1000, fetch: async (url, init) => {
       const path = new URL(String(url)).pathname;
       if (path === '/prompt') prompts++;
       if (path === '/free') { frees++; expect(JSON.parse(String(init?.body))).toEqual({ unload_models: true, free_memory: true }); return new Response(); }

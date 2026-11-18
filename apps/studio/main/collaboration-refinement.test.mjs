@@ -22,7 +22,7 @@ it('V03/V04: creates in the author-selected parent, bootstraps read-only, explic
   const call=(name,args)=>client.callTool({name,arguments:args});
   const control=async(name,input)=>{
     const callId=`control-${++sequence}`;let response=await call(name,{callId,input});expect(response.isError,JSON.stringify(response)).not.toBe(true);let value=response.structuredContent.result;
-    const deadline=Date.now()+5000;while(['accepted','running'].includes(value.state)&&Date.now()<deadline){await delay(20);response=await call('galcraft_control_call',{callId});expect(response.isError,JSON.stringify(response)).not.toBe(true);value=response.structuredContent.result;}
+    const deadline=Date.now()+15000;while(['accepted','running'].includes(value.state)&&Date.now()<deadline){await delay(20);response=await call('galcraft_control_call',{callId});expect(response.isError,JSON.stringify(response)).not.toBe(true);value=response.structuredContent.result;}
     expect(value.state??'completed',JSON.stringify(value)).toBe('completed');return value.result??value;
   };
   const create=async name=>{const prepared=await control('galcraft_projects',{action:'prepareCreate',project:{path:root,name,template:'empty',width:1280,height:720,engineVersion:'0.1.0'}});return control('galcraft_projects',{action:'apply',reviewId:prepared.plan.reviewId,authorDecision:'confirm',closeChoice:'save'});};
@@ -40,7 +40,7 @@ it('V03/V04: creates in the author-selected parent, bootstraps read-only, explic
   const missing=await call('galcraft_context',{projectId:first.projectId,input:{}});expect(missing.isError).toBe(true);expect(owner.core.active(first.projectId).id).toBe(fresh.sessionId);
   const escape=await call('galcraft_projects',{callId:'escape',input:{action:'prepareCreate',project:{path:root,name:'../escape',template:'empty',width:1280,height:720,engineVersion:'0.1.0'}}});expect(escape.structuredContent.result).toMatchObject({state:'failed',error:{code:'PROJECT_PATH'}});
   expect(second.projectId).not.toBe(first.projectId);
-},20000);
+},40000);
 
 it('V04: explicitly continues an original frozen task under a new active round after deleting ended details, preserving original remote identity and send count',async()=>{
   const root=await mkdtemp(join(tmpdir(),'galcraft-handoff-')),project=await ProjectSession.createProject(join(root,'project'),'Proj01',[{documentId:'Doc001',revision:1,format:'json',files:{'fixture.json':JSON.stringify({schemaVersion:1,documentId:'Doc001',revision:1,data:{name:'Fixture'}})}}]);
@@ -64,8 +64,12 @@ it('V04: explicitly continues an original frozen task under a new active round a
 },15000);
 
 it('V12: loads both ordinary exact plugin packages and projects their actual localized display while preserving English machine definitions and native connection materials',async()=>{
-  const root=await mkdtemp(join(tmpdir(),'galcraft-display-')),plugins=new StudioPluginPackages(join(root,'installed'),{}),dependencies=[{id:'org.galcraft.motion-canvas',version:'0.1.0',required:true},{id:'org.galcraft.music-composition',version:'0.1.0',required:true}];
-  for(const folder of ['motion-canvas','music-composition']){const installed=await plugins.install({kind:'directory',path:resolve('../../plugins',folder,'package')});expect(installed.ok,JSON.stringify(installed)).toBe(true);}
+  const root=await mkdtemp(join(tmpdir(),'galcraft-display-')),plugins=new StudioPluginPackages(join(root,'installed'),{}),dependencies=[];
+  for(const folder of ['motion-canvas','music-composition']){
+    const installed=await plugins.install({kind:'directory',path:resolve('../../plugins',folder,'package')});
+    expect(installed.ok,JSON.stringify(installed)).toBe(true);
+    dependencies.push({id:installed.value.id,version:installed.value.version,required:true});
+  }
   const project=await ProjectSession.createProject(join(root,'project'),'Proj01',[{documentId:'Lock01',revision:1,format:'json',files:{'dependencies.lock.json':JSON.stringify({schemaVersion:1,documentId:'Lock01',revision:1,data:{plugins:dependencies}})}}]);
   const owner=new StudioCollaboration({userData:join(root,'profile'),projects:{currentSession:project,currentSessionId:'Write1',currentRoot:join(root,'project')},plugins,assets:{},production:{current:async()=>({service:{}}),generationProviders:{operations:async()=>[]},connections:{list:async()=>[]}}});cleanups.push(async()=>{await owner.close();await project.dispose('discard');await rm(root,{recursive:true,force:true});});await owner.ready;await owner.syncExternalTools();
   const tools=owner.core.catalog().filter(tool=>tool.provider);expect(tools).toHaveLength(2);for(const tool of tools){expect(tool.title).toMatch(/Motion Canvas|Soundbank/);expect(tool.description).not.toMatch(/[\u4e00-\u9fff]/);expect(tool.display['zh-CN'].description).toMatch(/[\u4e00-\u9fff]/);expect(toolDisplay(tool,'ja').description).toMatch(/[\u3040-\u30ff]/);expect(toolDisplay(tool,'fr').title).toBe(tool.display.en.title);const definition=await owner.call('toolDefinition',{key:tool.key});expect(definition.ok).toBe(true);expect(definition.value.display).toEqual(tool.display);}

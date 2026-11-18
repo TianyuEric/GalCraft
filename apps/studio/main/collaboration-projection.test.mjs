@@ -83,6 +83,14 @@ it('measures the actual SDK discovery and preserves complex, scalar and array pa
   expect(z.fromJSONSchema(frame).safeParse({mode:'frame',source:{kind:'asset',assetId:'Asset1'},timeSec:1}).success).toBe(true);
   expect(z.fromJSONSchema(frame).safeParse({mode:'frame',source:{kind:'asset',assetId:'Asset1'},frame:2}).success).toBe(true);
   const preview=definitions.find(tool=>tool.key==='galcraft_preview');expect(z.fromJSONSchema(preview.inputSchema).safeParse({}).success).toBe(true);
+  const previewState = z.fromJSONSchema(exactContract(preview.inputSchema, { action: 'state' }));
+  const target = { sceneId: 'Scene1', statementId: 'Stmt01' };
+  const expected = [{ ref: { kind: 'document', id: 'Doc001' }, revision: 1 }];
+  expect(previewState.safeParse({ target: { ...target, statementId: null } }).success).toBe(true);
+  expect(previewState.safeParse({ target, eventId: 'Event1', expected }).success).toBe(true);
+  expect(previewState.safeParse({ target, eventId: 'Event1' }).success).toBe(false);
+  expect(previewState.safeParse({ target: { ...target, statementId: null }, eventId: 'Event1', expected }).success).toBe(false);
+  expect(previewState.safeParse({ target, eventId: 'Event1', expected: [...expected, ...expected] }).success).toBe(false);
   const raw=definitions.find(tool=>tool.key==='galcraft_edit_prepare');expect(exactContract(raw.inputSchema,{action:'edit'}).properties.edit).toBeTruthy();
   const recursive={anyOf:[{type:'object',properties:{action:{const:'group'},children:{type:'array',items:{$ref:'#'}}},required:['action','children'],additionalProperties:false},{type:'object',properties:{action:{const:'text'},text:{type:'string'}},required:['action','text'],additionalProperties:false}]};
   expect(z.fromJSONSchema(exactContract(recursive,{action:'group'})).safeParse({action:'group',children:[{action:'text',text:'nested content'}]}).success).toBe(true);
@@ -118,9 +126,13 @@ it('holds the explicitly handed-off stable object and original revision until a 
 });
 
 it('measures the two actual exact plugin tools separately from the 25 core tools',async()=>{
-  const plugins=new StudioPluginPackages(join(profile,'installed'),{}),ids=['org.galcraft.motion-canvas','org.galcraft.music-composition'];
-  for(const folder of ['motion-canvas','music-composition']){const installed=await plugins.install({kind:'directory',path:resolve('../../plugins',folder,'package')});expect(installed.ok,JSON.stringify(installed)).toBe(true);}
-  const {call}=await setup(plugins,[{documentId:'Lock01',revision:1,format:'json',files:{'dependencies.lock.json':JSON.stringify({schemaVersion:1,documentId:'Lock01',revision:1,data:{plugins:ids.map(id=>({id,version:'0.1.0',required:true}))}})}}]);
+  const plugins=new StudioPluginPackages(join(profile,'installed'),{}),dependencies=[];
+  for(const folder of ['motion-canvas','music-composition']){
+    const installed=await plugins.install({kind:'directory',path:resolve('../../plugins',folder,'package')});
+    expect(installed.ok,JSON.stringify(installed)).toBe(true);
+    dependencies.push({id:installed.value.id,version:installed.value.version,required:true});
+  }
+  const {call}=await setup(plugins,[{documentId:'Lock01',revision:1,format:'json',files:{'dependencies.lock.json':JSON.stringify({schemaVersion:1,documentId:'Lock01',revision:1,data:{plugins:dependencies}})}}]);
   service.production.generationProviders.operations=async()=>{
     const acquired=await plugins.acquireDefinitions(project);expect(acquired.ok,JSON.stringify(acquired)).toBe(true);
     try{return acquired.value.productionOperations.map(({definition,provider})=>({id:definition.id,version:definition.version,provider,definition}));}finally{await acquired.value.release();}

@@ -22,12 +22,17 @@ export function createUIAnimationPreset(key:string,id:Id=createId(),locale='zh-C
 export function uiAnimationUses(template:RuntimeTemplate,id:Id) {
   return template.pages.flatMap(page=>components(page.root).flatMap(component=>Object.entries(component.animations).filter(([,value])=>value===id).map(([event])=>({pageId:page.id,page:page.key,componentId:component.id,part:component.part,event:event as UIAnimationBinding}))));
 }
+export function uiBlueprintAnimationUses(template: RuntimeTemplate, id: Id) {
+  return template.pages.flatMap(page => components(page.root).flatMap(component => (component.interactions ?? []).flatMap(binding =>
+    (binding.blueprint?.nodes ?? []).filter(node => node.kind === 'animation' && node.animationId === id)
+      .map(node => ({ pageId: page.id, page: page.key, componentId: component.id, event: 'blueprint' as const, bindingId: binding.id!, nodeId: node.id })))));
+}
 /** One template edit owns definition and binding changes, so M02 can undo them together. */
 export function putUIAnimation(template:RuntimeTemplate,value:UIAnimation,target?:{componentId:Id;event:UIAnimationBinding;shared:boolean}) {
   const next=structuredClone(template),component=target&&findComponent(next,target.componentId);
   let edited=structuredClone(value);
   if(target&&!component)throw new Error('Animation component is unavailable');
-  if(target&&!target.shared&&uiAnimationUses(template,value.id).length>1){edited.id=createId(next);edited.name=`${edited.name} · ${component!.part}`;}
+  if(target&&!target.shared&&uiAnimationUses(template,value.id).length+uiBlueprintAnimationUses(template,value.id).length>1){edited.id=createId(next);edited.name=`${edited.name} · ${component!.part}`;}
   const index=next.animations.findIndex(item=>item.id===edited.id);
   if(index<0)next.animations.push(edited);else next.animations[index]=edited;
   if(component&&target)component.animations[target.event]=edited.id;
@@ -35,6 +40,8 @@ export function putUIAnimation(template:RuntimeTemplate,value:UIAnimation,target
 }
 export function removeUIAnimation(template:RuntimeTemplate,id:Id,unbind=false) {
   const next=structuredClone(template),uses=uiAnimationUses(next,id);
+  const [graphUse] = uiBlueprintAnimationUses(next, id);
+  if (graphUse) throw new Error(`BLUEPRINT_ANIMATION_IN_USE: ${graphUse.componentId}/${graphUse.bindingId}/${graphUse.nodeId}`);
   if(uses.length&&!unbind)throw new Error('Animation is still referenced');
   for(const use of uses)delete findComponent(next,use.componentId)!.animations[use.event];
   next.animations=next.animations.filter(item=>item.id!==id);return next;

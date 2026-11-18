@@ -12,6 +12,19 @@
 .project-inspector-actions { display:flex; gap:8px; flex-wrap:wrap; }
 .project-inspector-actions .gc-button { max-width:100%; }
 .project-library-hint { margin:12px; color:var(--muted-foreground); line-height:1.6; }
+.project-recovery-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--secondary);
+}
+.project-recovery-notice p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 13px; }
 .project-library-item.inspected { outline:2px solid var(--primary); outline-offset:-2px; }
 .gc-workbench .project-workbench { padding:16px; }
 .gc-workbench .project-welcome h1 { font-size:20px; letter-spacing:0; }
@@ -253,27 +266,31 @@
 .project-create {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 20px;
 }
+.project-create .gc-field { min-width: 0; margin: 0; }
+.project-create > [data-field="project-name"] { max-width: 440px; }
 .project-create fieldset {
+  min-width: 0;
   border: 0;
   padding: 0;
   margin: 0;
 }
 .project-create legend {
-  font-size: 12px;
-  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 550;
+  margin-bottom: 8px;
 }
 .project-template-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 .project-template {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 9px;
-  padding: 18px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 9px;
   cursor: pointer;
@@ -304,21 +321,27 @@
 }
 .project-create-settings {
   display: grid;
-  grid-template-columns: 1fr 1fr 1.5fr;
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 140px)) minmax(0, 192px);
+  gap: 12px;
 }
+.project-create-engine-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.project-create-engine-status p { margin: 0; overflow-wrap: anywhere; }
 .project-create footer {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  gap: 20px;
+  gap: 8px 16px;
   border-top: 1px solid var(--line);
   padding-top: 20px;
 }
 .project-create footer p {
   font-size: 12px;
+  margin: 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
+.project-create footer p[data-error="true"] { color: var(--danger-foreground); }
 @media (max-width: 1100px) {
   .project-workbench {
     padding: 16px;
@@ -366,19 +389,6 @@
   .project-section-heading span {
     display: none;
   }
-  .project-template-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-  .project-create-settings {
-    grid-template-columns: 1fr 1fr;
-  }
-  .project-create-settings > :last-child {
-    grid-column: 1/-1;
-  }
-  .project-create footer {
-    align-items: flex-start;
-    flex-direction: column;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .project-entry,
@@ -388,8 +398,17 @@
   }
 }
 
-.project-create-document { max-width: 920px; padding: 16px 0; }
+.project-create-document { container-type: inline-size; max-width: 760px; padding: 8px 0 16px; }
 .project-section-navigation { display:flex; flex-wrap:wrap; gap:8px; padding-block:8px 16px; }
 .project-library-explorer > .project-library-hint { margin:12px; font:400 13px/20px var(--font-sans); overflow-wrap:anywhere; }
-.project-create-document > header { display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px; }
+.project-create-document > header { display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px; }
+.project-create-document > header h1 { margin:0; font-size:20px; line-height:28px; font-weight:600; }
+.project-create-document > header p { margin:4px 0 0; color:var(--muted-foreground); font-size:12px; }
 .project-create-document .project-create > footer { position:sticky;bottom:0;background:var(--workbench-editor);padding:12px 0; }
+@container (min-width: 660px) {
+  .project-template-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@container (max-width: 360px) {
+  .project-create-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .project-create-settings > :last-child { grid-column: 1 / -1; }
+}

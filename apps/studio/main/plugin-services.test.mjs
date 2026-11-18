@@ -10,7 +10,7 @@ import { ProjectAccess } from './project-access.mjs';
 import { ProjectDocuments } from './document-providers.mjs';
 import { StudioPluginPackages } from './plugin-packages.mjs';
 import { pluginServicePorts } from './plugin-service-ports.mjs';
-import { StudioProduction } from './production-providers.mjs';
+import { StudioProduction } from './production-providers.mts';
 import { CapabilityReportSchema, DefaultTimeoutSecByPurpose } from '@galcraft/contracts';
 
 const testing = resolve(import.meta.dirname,'../../../tmp/testing/plugin-development');

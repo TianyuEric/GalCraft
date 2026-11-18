@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { FixtureAsset, FixtureCharacters, FixtureIds, FixtureLock, FixtureProject, FixtureScenes, FixtureTemplate, FixtureVariables, FixtureVoiceAssets } from '@galcraft/contracts/fixtures';
-import { CommandSpecSchema, PatchSchema, SnapshotSchema } from '@galcraft/contracts';
+import { CommandSpecSchema, PatchSchema, SceneDecorLayerSchema, SnapshotSchema, dialogueAnchorOffsets, type DialogueContent, type Transition } from '@galcraft/contracts';
 import { CoreCommandSpecs, createCommandRegistry } from './catalog.js';
 import { compile } from './compiler.js';
 import type { CompileInput } from './compiler.js';
-import { applyTextEdits, duplicateStatements, explainField, outerQuotePatch, patchFields, toDocumentPatch } from './editing.js';
+import { applyTextEdits, duplicateStatements, explainField, locate, outerQuotePatch, patchFields, toDocumentPatch } from './editing.js';
 import { evaluateExpression, expressionType, parseExpression } from './expression.js';
 import { completions, hover, languageId, markers, semanticTokens, type ConditionMetadata } from './monaco.js';
 import { parse } from './parser.js';
@@ -25,6 +25,140 @@ const input = (text: string): CompileInput => ({
 });
 
 describe('M03 language', () => {
+  it('compiles ordered same-position dialogue events with precise source and fixed image and sound variants', () => {
+    const figure = `changeFigure { objectId:"Fig001", characterId:"${FixtureIds.an}", assetId:"${FixtureAsset.id}" } @${secondId};`;
+    const audio = structuredClone(FixtureVoiceAssets[0]!);
+    audio.variants.push({ ...audio.variants[0]!, id: 'AudAct' });
+    audio.activeVariantId = 'AudAct';
+    const interpolation = '{{""}}';
+    const text: DialogueContent = { segments: [{ text: `甲👩‍🚀${interpolation}` }, { text: '漢字', ruby: 'かんじ' }, { text: '\\{{乙' }] };
+    const before = '甲👩‍🚀'.length, after = before + interpolation.length;
+    const anchorOffsets = dialogueAnchorOffsets(text);
+    expect([...anchorOffsets]).toEqual([0, 1, before, after, after + 2, after + 5, after + 6]);
+    const events = [
+      { id: 'EvtEnd', offset: after, kind: 'wait', durationMs: null, autoWaitMs: 0 },
+      { id: 'EvtSfx', offset: before, kind: 'sound', assetId: audio.id, variantId: audio.originalVariantId },
+      { id: 'EvtExp', offset: before, kind: 'expression', objectId: 'Fig001', characterId: FixtureIds.an, differenceId: 'Diff01' },
+    ];
+    const source = () => `${figure}\nsay ${JSON.stringify({ speaker: { kind: 'narrator' }, text, events })} @${firstId};`;
+    const candidate = input(source());
+    candidate.assets = [FixtureAsset, audio];
+    candidate.characters = [{ ...FixtureCharacters[0]!, differences: [{ id: 'Diff01', name: 'Smile', figure: { assetId: FixtureAsset.id, variantId: FixtureAsset.activeVariantId }, avatar: null }] }];
+    const result = compile(candidate);
+    expect(result.issues).toEqual([]);
+    expect(result.snapshot?.scenes[0]?.instructions[1]?.args).toMatchObject({ events: [
+      events[1], { ...events[2], assetId: FixtureAsset.id, variantId: FixtureAsset.activeVariantId }, events[0],
+    ] });
+    expect(result.snapshot?.assets.some(asset => asset.assetId === audio.id && asset.variantId === audio.originalVariantId)).toBe(true);
+    const anchor = result.snapshot!.sourceMap.find(entry => entry.field === 'events.1.offset')!.source;
+    expect(anchor).toMatchObject({ documentId, revision: 1, statementId: firstId, eventId: 'EvtSfx' });
+    expect(source().slice(anchor.range!.start, anchor.range!.end)).toBe(String(before));
+    events.reverse();
+    const reordered = parse({ documentId, revision: 2, text: source() });
+    expect(locate(reordered, { ...anchor, eventId: 'EvtExp' })?.field).toBe('events.0.offset');
+    events[0]!.offset = before + 1;
+    candidate.documents[0]!.text = source();
+    const invalid = compile(candidate);
+    expect(invalid.snapshot).toBeNull();
+    expect(invalid.issues).toContainEqual(expect.objectContaining({ code: 'DIALOGUE_EVENT_ANCHOR', source: expect.objectContaining({ eventId: 'EvtExp', field: 'events.0.offset' }) }));
+  });
+
+  it('validates click-only auto waits and exact model-declared expressions with event source paths', () => {
+    const model = structuredClone(FixtureAsset);
+    model.id = 'ModelA'; model.kind = 'live2d';
+    const original = model.variants[0]!;
+    original.groupCapabilities = { resolver: 'org.galcraft.live2d/resource', resolverVersion: '0.1.0', format: 'live2d-model3',
+      formatVersion: '3', capabilities: ['expression'], expressions: ['Smile'], parameters: [], motions: [], missingFiles: [] };
+    model.activeVariantId = 'ModelV';
+    model.variants.push({ ...structuredClone(original), id: model.activeVariantId,
+      groupCapabilities: { ...original.groupCapabilities, expressions: ['Neutral'] } });
+    const figure = `changeFigure {objectId:"Fig001",characterId:"${FixtureIds.an}",assetId:"${model.id}",variantId:"${original.id}"} @${secondId};`;
+    const event = { id: 'EvtL2D', offset: 1, kind: 'live2dExpression', objectId: 'Fig001', assetId: model.id,
+      variantId: original.id, expressionName: 'Smile' };
+    const source = (events: unknown[]) => `${figure}\nsay ${JSON.stringify({ speaker: { kind: 'narrator' }, text: '甲乙', events })} @${firstId};`;
+    const candidate = input(source([event]));
+    candidate.assets.push(model);
+    candidate.lock = { ...candidate.lock, plugins: [...candidate.lock.plugins,
+      { kind: 'plugin', id: 'org.galcraft.live2d', version: '0.1.0', targets: ['web', 'windows'], required: true }] };
+    const compiled = compile(candidate);
+    expect(compiled.issues).toEqual([]);
+    expect(compiled.snapshot?.scenes[0]?.instructions[1]?.args).toMatchObject({ events: [event] });
+    expect(compiled.snapshot?.assets).toContainEqual(expect.objectContaining({ assetId: model.id, variantId: original.id }));
+    candidate.documents[0]!.text = source([{ ...event, variantId: null }, { id: 'EvtBad', offset: 1, kind: 'wait', durationMs: 50, autoWaitMs: 0 }]);
+    expect(compile(candidate).issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'DIALOGUE_EVENT_LIVE2D_EXPRESSION', source: expect.objectContaining({ eventId: event.id, field: 'events.0.expressionName' }) }),
+      expect.objectContaining({ code: 'DIALOGUE_EVENT', source: expect.objectContaining({ eventId: 'EvtBad', field: 'events.1.autoWaitMs' }) }),
+    ]));
+    candidate.documents[0]!.text = source([event]);
+    candidate.lock = FixtureLock;
+    expect(compile(candidate).issues).toContainEqual(expect.objectContaining({ code: 'DIALOGUE_EVENT_LIVE2D_PROVIDER' }));
+  });
+
+  it('resolves ordered decor and both rule images while scoping interlude conflicts to applicable target entries', () => {
+    const ruleAsset = structuredClone(FixtureAsset);
+    ruleAsset.id = 'RuleAA';
+    ruleAsset.activeVariantId = 'RuleV2';
+    ruleAsset.originalVariantId = 'RuleV1';
+    ruleAsset.variants[0]!.id = 'RuleV1';
+    ruleAsset.variants.push({ ...ruleAsset.variants[0]!, id: 'RuleV2' });
+    const layer = SceneDecorLayerSchema.parse({ id: 'Deco01', assetId: ruleAsset.id, cameraFollow: .5 });
+    const rule = { assetId: ruleAsset.id, variantId: 'RuleV1', durationMs: 600 };
+    const background = `changeBg ${JSON.stringify({ assetId: FixtureAsset.id, ruleImage: rule })} @${firstId};`;
+    const sceneChange = (sceneId: string, labelId: string | null) =>
+      `changeScene ${JSON.stringify({ sceneId, labelId, ruleImage: { ...rule, reverse: true } })} @${secondId};`;
+    const candidate = input(`${background}\n${sceneChange(FixtureIds.bookshop, 'Mark01')}`);
+    const cut: Transition = { preset: 'cut', resourceId: null, durationMs: 0, easing: { family: 'linear', direction: 'in' }, direction: 'left' };
+    const interlude = { image: { assetId: FixtureAsset.id, variantId: null }, fit: 'contain' as const, voice: null, holdMs: 0,
+      oldStageExit: cut, enter: cut, exit: cut, newStageEnter: cut, allowSkip: true };
+    candidate.project = structuredClone(FixtureProject);
+    candidate.project.chapters[0]!.presentation = { title: null, interlude };
+    candidate.scenes = [{ ...FixtureScenes[0]!, decorLayers: [layer, { ...layer, id: 'Deco02', z: 2, visible: false }] }, FixtureScenes[1]!];
+    candidate.documents.push({ documentId: 'SceneB', revision: 1, kind: 'scene', sceneId: FixtureIds.bookshop,
+      text: 'label {labelId:"Mark01",name:"Entry"} @Label1;\nwait {durationMs:200} @Wait01;' });
+    candidate.assets.push(ruleAsset);
+    const compiled = compile(candidate);
+    expect(compiled.issues).toEqual([]);
+    expect(compiled.snapshot?.scenes[0]?.scene.decorLayers).toEqual(candidate.scenes[0]!.decorLayers!.map(item => ({ ...item, variantId: 'RuleV2' })));
+    expect(compiled.snapshot?.scenes[0]?.instructions.map(item => item.args)).toMatchObject([
+      { ruleImage: { ...rule, softness: .12, reverse: false, easing: { family: 'linear', direction: 'in' } } },
+      { labelId: 'Mark01', ruleImage: { ...rule, softness: .12, reverse: true } },
+    ]);
+    expect(compiled.snapshot?.assets).toContainEqual(expect.objectContaining({ assetId: ruleAsset.id, variantId: 'RuleV1' }));
+    candidate.documents[0]!.text = `${background}\n${sceneChange(FixtureIds.street, null)}`;
+    expect(compile(candidate).issues).toContainEqual(expect.objectContaining({ code: 'RULE_IMAGE_SCENE_INTERLUDE',
+      source: expect.objectContaining({ statementId: secondId, field: 'ruleImage' }), related: [{ kind: 'chapter', id: FixtureIds.chapter }] }));
+    candidate.project.chapters[0]!.presentation = { title: { enabled: true, text: 'Title', holdMs: 300, enter: cut, exit: cut }, interlude: null };
+    expect(compile(candidate).snapshot).not.toBeNull();
+    ruleAsset.variants[0]!.metadata.imageAnimation = { format: 'webp', frameDurationsMs: [100, 100], sourceLoopCount: null };
+    expect(compile(candidate).issues).toContainEqual(expect.objectContaining({ code: 'RULE_IMAGE_RESOURCE', source: expect.objectContaining({ field: 'ruleImage.variantId' }) }));
+  });
+
+  it('preserves both interpolation edges when a variable rewrite changes token length', () => {
+    const first = '{{local["LocalA"]}}', second = '{{local["LocalB"]}}';
+    const text = `甲${first}乙${second}丙`;
+    const offsets = [1, 1 + first.length, 2 + first.length, 2 + first.length + second.length];
+    const events = offsets.map((offset, index) => ({ id: `Event${index}`, offset, kind: 'wait', durationMs: 100 }));
+    const source = { documentId, revision: 1, text: `say ${JSON.stringify({ speaker: { kind: 'narrator' }, text, events })} @${firstId};` };
+    const rewritten = rewriteScriptReferences(source, { LocalA: id(0xf11), LocalB: id(0xf12) }, '0.1.0', [], { LocalA: 'progress', LocalB: 'longTerm' });
+    const parsed = parse({ ...source, text: rewritten });
+    expect(parsed.issues).toEqual([]);
+    const args = parsed.statements[0]!.args;
+    const body = args.text as string;
+    expect((args.events as typeof events).map(event => body.slice(0, event.offset).at(-1))).toEqual(['甲', '}', '乙', '}']);
+    expect((args.events as typeof events).map(event => event.id)).toEqual(events.map(event => event.id));
+  });
+
+  it('keeps the prior execution order when a body edit brings two events to one boundary', () => {
+    const events = [{ id: 'LaterA', offset: 3, kind: 'wait', durationMs: null }, { id: 'EarlyA', offset: 1, kind: 'wait', durationMs: 150 }];
+    const text = `say ${JSON.stringify({ speaker: { kind: 'narrator' }, text: '甲乙丙丁', events })} @${firstId};`;
+    const parsed = parse({ documentId, revision: 1, text });
+    const patched = patchFields(parsed, { documentId, revision: 1, statementIds: [firstId], changes: [{ field: 'text', op: 'set', value: '甲丁' }] });
+    expect(patched.ok).toBe(true);
+    if (!patched.ok) return;
+    const compiled = compile(input(applyTextEdits(text, patched.value)));
+    expect(compiled.snapshot?.scenes[0]?.instructions[0]?.args).toMatchObject({ events: [events[1], { ...events[0], offset: 1 }] });
+  });
+
   it('freezes inline composite lifecycle data and rejects ambiguous animation sources', () => {
     const animation = { type: 'galcraft.animation', version: 1, durationMs: 500, tracks: [
       { path: '/x', mode: 'add', keyframes: [{ timeMs: 0, value: -50, easing: { family: 'quad', direction: 'inOut' } }, { timeMs: 500, value: 0, easing: { family: 'quad', direction: 'inOut' } }] },
@@ -481,13 +615,23 @@ describe('M03 language', () => {
     candidate.documents.push({ documentId: external, revision: 2, kind: 'page', text: '' });
     candidate.assetReferences = [{ assetId: FixtureAsset.id, owner: { kind: 'document', id: external }, source: { documentId: external, revision: 1 }, usage: 'old', required: true, variantId: null }];
     const service = new LanguageService();
-    await service.compile(candidate);
+    const retired = await service.compile(candidate);
+    const diagnostic = retired.issues.find(issue => issue.code === 'IMAGE_FACE_RETIRED');
+    expect(retired.snapshot).toBeNull();
+    expect(diagnostic?.source).toMatchObject({ statementId: firstId, field: 'model.imageMouth' });
+    const range = diagnostic!.source!.range!;
+    expect(candidate.documents[0]!.text.slice(range.start, range.end)).toContain('closed:');
     const found = service.querySemantic({ projectId: candidate.projectId, requestId: id(0xd23), expected: candidate.documents.map(item => ({ ref: { kind: 'document' as const, id: item.documentId }, revision: item.revision })), expectedLock: candidate.lock, sceneIds: [], offset: 0, filter: { kind: 'asset', id: FixtureAsset.id } });
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value.items.map(item => item.source.field)).toEqual(expect.arrayContaining(['model.imageMouth.closed', 'model.imageMouth.open']));
     expect(found.value.items.some(item => item.label === 'old')).toBe(false);
     expect(found.value.coverage.find(item => item.documentId === external)?.state).toBe('partial');
+    const parsed = parse(candidate.documents[0]!);
+    const repair = patchFields(parsed, { documentId, revision: 1, statementIds: [firstId],
+      changes: [{ field: 'model.imageMouth', op: 'inherit', value: null }] });
+    expect(repair.ok).toBe(true);
+    if (repair.ok) expect(compile(input(applyTextEdits(parsed.text, repair.value))).snapshot).not.toBeNull();
   });
   it('rejects lip modes absent from a declared Live2D model group', () => {
     const candidate = input('');

@@ -1,7 +1,9 @@
 import { z } from 'zod';
+import { BlueprintPreviewInputSchema, BlueprintPreviewOutputSchema } from './collaboration-blueprints.ts';
+import { DialoguePreviewTargetSchema } from './collaboration-preview-target.ts';
 import {AssetTypeDescriptorSchema} from '@galcraft/plugins/contracts';
 import {ProcessorCandidateSchema} from '@galcraft/assets/processing';
-import {AssetTypeDataSchema,FieldSpecSchema,VersionSchema} from '@galcraft/contracts';
+import {AssetTypeDataSchema,DebugScenarioSchema,FieldSpecSchema,IdSchema,PageKeySchema,VersionSchema} from '@galcraft/contracts';
 import { ProductionTargetSchema,FrozenProductionTaskSchema,EffectiveProductionDefaultsSchema,ProductionFormDraftSchema } from '@galcraft/authoring/production';
 import { AssetSchema, AssetVariantSchema, AssetReferenceSchema, AssetKindSchema, IssueSchema, VersionRefSchema, RefSchema, EditReceiptSchema, EditPlanSchema, UndoPlanSchema, PluginDocumentInstanceSchema, DocumentViewSchema, PositionSchema, RuntimeStateSchema, SourceSchema, RemoteRefSchema, CapabilityReportSchema, CollaborationScopeSchema, ProtocolSchema, JsonSchema, CommandSpecSchema,LayoutSchema,VisualSchema,DependencySchema,GenerationProgressSchema,ProviderExecutionErrorSchema,ResourceSnapshotSchema,ResourceReleaseReceiptSchema } from '@galcraft/contracts';
 
@@ -18,7 +20,7 @@ export function editChanges(input){return input.patches.flatMap(patch=>{
   if(patch.kind==='text')return patch.edits.map(edit=>({...base,path:`#source:${edit.start}:${edit.end}`,before:edit.before,after:edit.after}));
   return [{...base,path:patch.kind==='file'?patch.path:'*',before:patch.before,after:patch.after}];
 });}
-export const AssetQueryInputSchema=obj({search:s.optional(),kind:AssetKindSchema.nullable().optional(),folder:z.array(s).nullable().optional(),tags:z.array(s).optional(),usage:s.nullable().optional(),reference:z.enum(['any','used','unused']).optional(),review:z.enum(['any','needsReview']).optional(),sort:z.enum(['name','size','modified']).optional(),direction:z.enum(['asc','desc']).optional(),offset:count.optional(),limit:n.int().min(1).max(100).optional(),indexRevision:count.nullable().optional(),characterId:s.nullable().optional(),sceneId:s.nullable().optional(),locale:s.nullable().optional(),allowedKinds:z.array(AssetKindSchema).optional(),allowedCapabilities:z.array(s).optional(),typeFields:z.record(s,JsonSchema).optional()});
+export const AssetQueryInputSchema=obj({assetIds:z.array(IdSchema).optional(),search:s.optional(),kind:AssetKindSchema.nullable().optional(),folder:z.array(s).nullable().optional(),tags:z.array(s).optional(),usage:s.nullable().optional(),reference:z.enum(['any','used','unused']).optional(),review:z.enum(['any','needsReview']).optional(),sort:z.enum(['name','size','modified']).optional(),direction:z.enum(['asc','desc']).optional(),offset:count.optional(),limit:n.int().min(1).max(100).optional(),indexRevision:count.nullable().optional(),characterId:s.nullable().optional(),sceneId:s.nullable().optional(),locale:s.nullable().optional(),allowedKinds:z.array(AssetKindSchema).optional(),allowedCapabilities:z.array(s).optional(),typeFields:z.record(s,JsonSchema).optional()});
 export const assetQuery=input=>({search:'',kind:null,folder:null,tags:[],reference:'any',review:'any',sort:'name',direction:'asc',offset:0,limit:40,indexRevision:null,characterId:null,sceneId:null,locale:null,...input});
 const resourceCandidateSummary=obj({preparationId:s,assetId:s,sourceVariantId:s,assetRevision:count,processorKey:s,packageVersion:s,variantId:s});
 export const resourceCandidateSummaryView=candidate=>({preparationId:candidate.preparationId,assetId:candidate.assetId,sourceVariantId:candidate.sourceVariantId,assetRevision:candidate.assetRevision,processorKey:candidate.processorKey,packageVersion:candidate.packageVersion,variantId:candidate.variant.id});
@@ -67,10 +69,30 @@ const operation=obj({operationId:s,groupId:s,label:s,state:z.enum(['applied','un
 export const HistoryInputSchema=union([action('list',{documentId:s.optional(),offset:count.optional(),limit:n.int().min(1).max(100).optional()}),action('get',{operationId:s}),action('prepareUndo',{operationId:s,documentId:s}),...['undo','redo'].map(name=>action(name,{planId:s,expected:versions}))]);
 export const HistoryOutputSchema=union([action('list',{items:z.array(operation),total:count,offset:count,limit:count}),action('get',{operation,changes:z.array(ChangeSummarySchema)}),action('prepareUndo',{plan:UndoPlanSchema,changes:z.array(ChangeSummarySchema),relatedOperations:z.array(operation),issues}),...['undo','redo'].map(name=>action(name,{planId:s,receipt:EditReceiptSchema}))]);
 const observation=RuntimeStateSchema.pick({position:true,phase:true,presentation:true,wait:true,plugins:true});
-export const previewView=(result,actionName,input,file=null)=>({action:actionName,reached:result.reached,snapshotId:result.snapshotId??null,entry:result.entry?{entry:result.entry.entry??result.entry,key:result.entry.key??'main',title:result.entry.title??''}:null,target:result.target??input.target??null,blockedAt:result.blockedAt??null,routePreparation:result.routePreparation??null,observation:result.state?Object.fromEntries(Object.keys(observation.shape).map(key=>[key,result.state[key]])):null,issues:result.issues??[],...(actionName==='capture'?{page:result.page??input.page??null,engineVersion:result.engineVersion??null,pluginVersions:result.pluginVersions??[],renderedText:result.renderedText??'',file}:{})});
+export const previewView=(result,actionName,input,file=null)=>({action:actionName,reached:result.reached,snapshotId:result.snapshotId??null,entry:result.entry?{entry:result.entry.entry??result.entry,key:result.entry.key??'main',title:result.entry.title??''}:null,target:result.target??input.target??null,blockedAt:result.blockedAt??null,routePreparation:result.routePreparation??null,observation:result.state?Object.fromEntries(Object.keys(observation.shape).map(key=>[key,result.state[key]])):null,issues:result.issues??[],eventSource:result.eventSource,...(actionName==='capture'?{page:result.page??input.page??null,engineVersion:result.engineVersion??null,pluginVersions:result.pluginVersions??[],renderedText:result.renderedText??'',file}:{})});
 const previewBase={reached:z.boolean(),snapshotId:s.nullable(),entry:obj({entry:PositionSchema,key:s,title:s}).nullable(),target:PositionSchema.nullable(),blockedAt:PositionSchema.nullable(),routePreparation:obj({kind:z.enum(['automatic','selected','choice','input','unreachable','unknown','invalid']),candidateOptionIds:z.array(s),reason:s}).nullable(),observation:observation.nullable(),issues};
 const PlayerObservationSchema=obj({status:z.enum(['available','privateDomain','notReady']),variables:z.array(obj({id:s,scope:z.enum(['progress','local','longTerm']),declaringSceneId:s.nullable(),name:s.nullable(),type:z.enum(['number','boolean','string']).nullable(),status:z.enum(['missingDeclaration','unavailable','available']),value:z.union([s,n,z.boolean(),z.null()])})),properties:z.array(obj({pageId:s,componentId:s,property:s,status:z.enum(['unsupportedProperty','notMounted','available']),value:s.nullable(),source:z.union([obj({kind:z.literal('unknown')}),obj({kind:z.literal('component'),pageId:s,componentId:s,declaration:s})])}))});
-export const PreviewOutputSchema=union([action('observe',{reached:z.boolean(),snapshotId:s.nullable(),observed:PlayerObservationSchema,issues}),action('state',previewBase),action('capture',{...previewBase,page:s.nullable(),engineVersion:s.nullable(),pluginVersions:z.array(DependencySchema),renderedText:s,file:MediaFileSchema.nullable()})]);
+const previewFields = {
+  action: z.enum(['state', 'capture', 'observe']).optional(),
+  variables: z.array(PlayerObservationSchema.shape.variables.element.pick({ id: true, scope: true }).extend({ declaringSceneId: s.optional() })).optional(),
+  properties: z.array(PlayerObservationSchema.shape.properties.element.pick({ pageId: true, componentId: true, property: true })).optional(),
+  page: PageKeySchema.optional(), entryId: s.optional(),
+  route: DebugScenarioSchema.shape.route.optional(), playerInputs: DebugScenarioSchema.shape.playerInputs.optional(),
+  preview: PreviewInputSchema.optional(),
+};
+export const PreviewRequestSchema = z.union([
+  BlueprintPreviewInputSchema,
+  obj({ ...previewFields, target: PositionSchema.optional() }),
+  obj({
+    ...previewFields,
+      ...DialoguePreviewTargetSchema.shape,
+      eventId: DialoguePreviewTargetSchema.shape.eventId.describe('Stable dialogue event ID within the selected statement.'),
+      expected: DialoguePreviewTargetSchema.shape.expected
+      .describe('Current revision of the scene document containing the target statement.'),
+  }),
+]);
+const eventSource = SourceSchema.extend({ statementId: IdSchema, eventId: IdSchema }).optional();
+export const PreviewOutputSchema=union([BlueprintPreviewOutputSchema,action('observe',{reached:z.boolean(),snapshotId:s.nullable(),observed:PlayerObservationSchema,issues,eventSource}),action('state',{...previewBase,eventSource}),action('capture',{...previewBase,eventSource,page:s.nullable(),engineVersion:s.nullable(),pluginVersions:z.array(DependencySchema),renderedText:s,file:MediaFileSchema.nullable()})]);
 export const SessionSummarySchema=obj({sessionId:s,projectId:s,writeSessionId:s,projectName:s,goal:s,scopeRevision:count,scope:CollaborationScopeSchema,paused:z.boolean(),bindingValid:z.boolean(),generations:count,remainingGenerations:count.nullable()});
 export const sessionSummary=session=>({sessionId:session.id,projectId:session.projectId,writeSessionId:session.writeSessionId,projectName:session.projectName,goal:session.goal,scopeRevision:session.scopeRevision,scope:session.scope,paused:session.paused,bindingValid:session.bindingValid,generations:session.generations,remainingGenerations:session.scope.maxGenerations===null?null:Math.max(0,session.scope.maxGenerations-session.generations)});
 export const WorkflowSummarySchema=obj({id:s,name:s,revision:count,purpose:s,description:s,provider:provider.nullable(),operationIds:z.array(s),usages:z.array(s),allowed:z.boolean()});

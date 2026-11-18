@@ -6,7 +6,7 @@ import { mkdir } from 'node:fs/promises';
 import { ensureProjectFixture } from './project-fixture.mjs';
 import { ProjectDocuments } from '../../apps/studio/main/document-providers.mjs';
 import { ProjectAccess } from '../../apps/studio/main/project-access.mjs';
-import { StudioProduction } from '../../apps/studio/main/production-providers.mjs';
+import { StudioProduction } from '../../apps/studio/main/production-providers.mts';
 import { compile } from '../../packages/dsl/dist/index.js';
 
 test('rebuilds the host dataset without personal evidence, then opens and compiles its actual disk documents', async () => {

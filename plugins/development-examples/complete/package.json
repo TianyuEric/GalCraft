@@ -10,8 +10,8 @@
     "pack": "galcraft-plugin pack package dist"
   },
   "dependencies": {
-    "@galcraft/plugins": "0.1.0",
-    "@galcraft/contracts": "0.1.0"
+    "@galcraft/plugins": "0.2.0",
+    "@galcraft/contracts": "0.2.0"
   },
   "devDependencies": {
     "typescript": "7.0.2",

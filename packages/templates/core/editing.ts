@@ -52,6 +52,25 @@ export function templateEdit(documents: DocumentView[], next: RuntimeTemplate, l
     } else edit.patches.push({ kind: 'document', documentId: target.documentId, op: 'create', before: null,
       after: { documentId: target.documentId, format: target.format, files: target.files } });
   }
+  const previousRoot = byPath.get('ui/template.json');
+  if (previousRoot) {
+    const previous = JSON.parse(previousRoot.files['ui/template.json']!).data as { pageIds: Id[]; template: Pick<RuntimeTemplate, 'animations'> };
+    const pages = new Set(next.pages.map(page => page.id)), animations = new Set(next.animations.map(animation => animation.id));
+    const removesTarget = previous.pageIds.some(id => !pages.has(id)) || previous.template.animations.some(animation => !animations.has(animation.id));
+    const changed = new Set(edit.patches.map(patch => patch.documentId));
+    const writesBlueprintReference = next.pages.some(page => {
+      if (!changed.has(page.id)) return false;
+      const nodes = components(page.root).flatMap(component => (component.interactions ?? []).flatMap(binding => binding.blueprint?.nodes ?? []));
+      return nodes.some(node => node.kind === 'animation' || node.kind === 'action'
+        && (node.action.kind === 'open' || node.action.kind === 'official' && node.action.action.kind === 'open'));
+    });
+    const guard = (document: DocumentView | undefined) => {
+      if (document && !edit.expected.some(version => version.ref.id === document.documentId))
+        edit.expected.push({ ref: { kind: 'document', id: document.documentId }, revision: document.revision });
+    };
+    if (writesBlueprintReference) guard(previousRoot);
+    if (removesTarget) for (const id of previous.pageIds) guard(byPath.get(`ui/pages/${id}.json`));
+  }
   return edit;
 }
 export function instantiateTemplate(source: RuntimeTemplate, mapAsset: (id: Id) => Id = id => id,

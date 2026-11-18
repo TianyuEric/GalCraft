@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { createId } from '@galcraft/contracts';
 import { createBasicComponent, createOfficialTemplate, createTemplateDocuments } from '@galcraft/templates';
-import { prepareStudioPageEdit } from './page-editing.mjs';
+import { prepareStudioPageEdit } from './page-editing.ts';
 
 it('measures the installed Player before freezing a flow container and checks every measured input version',async()=>{
   const template=createOfficialTemplate(),page=template.pages[0],group=createBasicComponent('container'),text=createBasicComponent('text');

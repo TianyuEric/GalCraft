@@ -39,6 +39,8 @@ export function createStudioHandlers(host) {
       import: async input => host.soundbanks ? host.soundbanks.import(input) : fail('SOUNDBANK_HOST_UNAVAILABLE', '本机音色包服务尚未就绪', 'M09'),
     },
     engines: {
+      health: async () => host.engines?.health ? host.engines.health() : fail('ENGINE_PREVIEW_UNAVAILABLE', '预览引擎目录尚未就绪', 'M11'),
+      repair: async () => host.engines?.repair ? host.engines.repair() : fail('ENGINE_PREVIEW_UNAVAILABLE', '预览引擎目录尚未就绪', 'M11'),
       listCreationVersions: async (...args) => {
         return host.engines ? await host.engines.listCreationVersions(...args) : fail('ENGINE_PREVIEW_UNAVAILABLE', '预览引擎目录尚未就绪', 'M11');
       },
@@ -101,6 +103,9 @@ export function createStudioHandlers(host) {
       },
       overview: async (...args) => {
         return host.production ? await host.production.call('overview', ...args) : fail('PRODUCTION_PROVIDER_UNAVAILABLE', '制作服务尚未就绪', 'M10');
+      },
+      problemSnapshot: async () => {
+        return host.production ? await host.production.call('problemSnapshot') : fail('PRODUCTION_PROVIDER_UNAVAILABLE', '制作服务尚未就绪', 'M10');
       },
       context: async (...args) => {
         return host.production ? await host.production.call('context', ...args) : fail('PRODUCTION_PROVIDER_UNAVAILABLE', '制作服务尚未就绪', 'M10');
@@ -272,11 +277,11 @@ export function createStudioHandlers(host) {
       preparePageEdit: async (...args) => {
         const project=host.projects?.currentSession;if(!project)return fail('PROJECT_SESSION_MISSING','请先打开作品','M08');
         if(host.pageEditing)return ok(await host.pageEditing(args[0]));
-        const {preparePageEdit}=await import('@galcraft/templates/editor');return ok(preparePageEdit({documents:[...project.documents.values()],request:args[0]}));
+        const {prepareDirectPageEdit}=await import('./page-editing.ts');return ok(prepareDirectPageEdit([...project.documents.values()],args[0]));
       },
       preparePageStyleEdit: async (...args) => {
         const project=host.projects?.currentSession;if(!project)return fail('PROJECT_SESSION_MISSING','请先打开作品','M08');
-        const {preparePageStyleEdit}=await import('@galcraft/templates/style-editing');return ok(preparePageStyleEdit({documents:[...project.documents.values()],request:args[0]}));
+        const {prepareStudioPageStyleEdit}=await import('./page-editing.ts');return ok(prepareStudioPageStyleEdit([...project.documents.values()],args[0]));
       },
       compileStyle: async (...args) => {
         if (!host.operations) return fail('TEMPLATE_PROVIDER_UNAVAILABLE', '页面服务尚未就绪', 'M08');
@@ -511,6 +516,8 @@ export function createStudioHandlers(host) {
     },
     assets: {
       typeCatalog: async () => host.assets ? host.assets.typeCatalog() : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
+      prepareVariantSwitch: async input => host.assets ? host.assets.prepareVariantSwitch(input) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
+      applyVariantSwitch: async input => host.assets ? host.assets.applyVariantSwitch(input) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
       editTypeData: async input => host.assets ? host.assets.editTypeData(input) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
       saveAnimation: async input => host.assets ? host.assets.saveAnimation(input) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
       weatherTexture: async key => host.assets ? host.assets.weatherTexture(key) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04'),
@@ -583,7 +590,7 @@ export function createStudioHandlers(host) {
         return host.assets ? host.assets.applyBatchRename(args[0]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
       },
       remove: async (...args) => {
-        return host.assets ? host.assets.remove(args[0]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
+        return host.assets ? host.assets.remove(args[0], args[1]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
       },
       preview: async (...args) => {
         return host.assets ? host.assets.preview(args[0], args[1]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
@@ -613,7 +620,10 @@ export function createStudioHandlers(host) {
         return host.assets ? host.assets.discardBackground(args[0]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
       },
       import: async (...args) => {
-        return host.assets ? host.assets.import(args[0]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
+        return host.assets ? host.assets.importBatch(args[0], args[1]?.batchId, args[1]?.projectId) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
+      },
+      listImportBatches: async (...args) => {
+        return host.assets ? host.assets.listImportBatches(args[0]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
       },
     },
     operations: {
@@ -623,7 +633,7 @@ export function createStudioHandlers(host) {
     },
     language: {
       compile: async (...args) => {
-        return host.language ? host.language.compile(args[0]) : fail('LANGUAGE_PROVIDER_UNAVAILABLE', '编译服务尚未就绪', 'M03');
+        return host.language ? host.language.compile(args[0], { publish: args[1]?.publish !== false }) : fail('LANGUAGE_PROVIDER_UNAVAILABLE', '编译服务尚未就绪', 'M03');
       },
       lastValid: async (...args) => {
         return host.language ? host.language.lastValid(args[0]) : fail('LANGUAGE_PROVIDER_UNAVAILABLE', '编译服务尚未就绪', 'M03');
@@ -644,6 +654,13 @@ export function createStudioHandlers(host) {
       },
     },
     plugins: {
+      commandContracts: async () => {
+        const acquired = await host.plugins?.acquireDefinitions?.(host.projects?.currentSession ?? null, { allowMissing: true });
+        if (!acquired) return ok({ commands: [], conditions: [] });
+        if (!acquired.ok) return acquired;
+        try { return ok({ commands: acquired.value.commands, conditions: acquired.value.conditions ?? [] }); }
+        finally { await acquired.value.release(); }
+      },
       commandSpecs:async()=>{const acquired=await host.plugins?.acquireDefinitions?.(host.projects?.currentSession??null,{allowMissing:true});if(!acquired)return ok([]);if(!acquired.ok)return acquired;try{return ok(acquired.value.commands);}finally{await acquired.value.release();}},
       list: async (...args) => {
         return host.plugins ? host.plugins.list(host.projects?.currentSession ?? null) : fail('PLUGIN_PROVIDER_UNAVAILABLE', '插件服务尚未就绪', 'M09');
@@ -673,7 +690,7 @@ export function createStudioHandlers(host) {
       },
       save: async (...args) => {
         const config = ConnectionConfigSchema.parse(args[0]);
-        return ok(await host.connections.save(config, args[1]));
+        return ok(await host.connections.save(config, args[1] ?? undefined));
       },
       test: async (...args) => {
         const selection = ConnectionSelectionSchema.parse(args[0]);

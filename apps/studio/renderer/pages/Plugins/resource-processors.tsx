@@ -14,18 +14,19 @@ type ProcessingBridge = StudioBridge['assets'] & { processorCatalog?(): Promise<
   previewResource?(preparationId: string): Promise<Result<{ leaseId: string; uri: string; mime: string }>> };
 const unwrap = <T,>(result: Result<T>): T => { if (!result.ok) throw new Error(result.error.message); return result.value; };
 export type ResourceProcessorGuiDraft={processorKey:string;settings:Record<string,Json>;open:boolean;inputSelection:Asset[]};
-export function ResourceProcessors({ bridge, selectedIds, locale, changed, indexRevision, inspectorContainer, workspace, onUnappliedChange,guiDraft,onGuiDraftChange }: { guiDraft?:ResourceProcessorGuiDraft|null;onGuiDraftChange?(draft:ResourceProcessorGuiDraft):void;onUnappliedChange?(dirty: boolean): void; workspace?: DocumentWorkspace; inspectorContainer?: HTMLElement; bridge: StudioBridge['assets']; selectedIds: string[]; locale: string; indexRevision?: number; changed(receipt: EditReceipt): Promise<void> }) {
+export function ResourceProcessors({ bridge, selectedIds, locale, changed, indexRevision, contributionsRevision, inspectorContainer, workspace, onUnappliedChange,guiDraft,onGuiDraftChange }: { guiDraft?:ResourceProcessorGuiDraft|null;onGuiDraftChange?(draft:ResourceProcessorGuiDraft):void;onUnappliedChange?(dirty: boolean): void; workspace?: DocumentWorkspace; inspectorContainer?: HTMLElement; bridge: StudioBridge['assets']; selectedIds: string[]; locale: string; indexRevision?: number; contributionsRevision?: number; changed(receipt: EditReceipt): Promise<void> }) {
   const assets = bridge as ProcessingBridge, [processors, setProcessors] = useState<ProcessorSummary[]>([]), [selected, setSelected] = useState<Asset[]>([]), [candidates, setCandidates] = useState<ProcessorCandidate[]>([]);
   const [processorKey, setProcessorKey] = useState(guiDraft?.processorKey??''), [settings, setSettings] = useState<Record<string, Json>>(guiDraft?.settings??{}), [open, setOpen] = useState(guiDraft?.open??false), [review, setReview] = useState<ProcessorCandidate | null>(null), [inputSelection, setInputSelection] = useState<Asset[]>(guiDraft?.inputSelection??[]);
   useEffect(()=>{onGuiDraftChange?.({processorKey,settings,open,inputSelection});},[onGuiDraftChange,processorKey,settings,open,inputSelection]);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
+  const parameterScope = useRef<HTMLElement>(null);
   const batch = useRef<{ cancelled: boolean; operationId: string | null } | null>(null), actionVersion = useRef(0), processor = processors.find(item => item.key === processorKey);
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
   useEffect(() => { let alive = true; void (async () => {
     const values = assets.processorCatalog ? unwrap(await assets.processorCatalog()) as unknown as ProcessorSummary[] : []; if (!alive) return; setProcessors(values);
     if (!processorKey && values[0]) { setProcessorKey(values[0].key); setSettings(fieldDefaults(values[0].fields)); }
     const pending = assets.resourceCandidates ? unwrap(await assets.resourceCandidates()) as unknown as ProcessorCandidate[] : []; if (alive) setCandidates(pending);
-  })().catch(e => { if (alive) setError(String(e)); }); return () => { alive = false; }; }, [assets, refresh]);
+  })().catch(e => { if (alive) setError(String(e)); }); return () => { alive = false; }; }, [assets, refresh, contributionsRevision]);
   useEffect(() => { let alive = true; void Promise.all(selectedIds.map(id => assets.get(id))).then(values => { if (alive) setSelected(values.flatMap(result => { const asset = unwrap(result); return asset ? [asset] : []; })); }).catch(e => { if (alive) setError(String(e)); }); return () => { alive = false; }; }, [assets, selectedIds.join('/'), indexRevision]);
   useEffect(() => () => { ++actionVersion.current; if (batch.current) { batch.current.cancelled = true; if (batch.current.operationId) void assets.cancelResource?.(batch.current.operationId); } }, [assets]);
   const unapplied = open && (busy || JSON.stringify(settings) !== JSON.stringify(fieldDefaults(processor?.fields ?? [])));
@@ -42,7 +43,7 @@ export function ResourceProcessors({ bridge, selectedIds, locale, changed, index
       return { node, dirty: () => false, activate: active => { if (!active) pause(); }, dispose: () => { pause(); react.unmount(); } };
     });
   };
-  const parameters = open && <section className="plugin-resource-parameters"><h3>{t('处理所选素材', 'Process selected assets', '選択素材を処理')}</h3>
+  const parameters = open && <section ref={parameterScope} className="plugin-resource-parameters"><h3>{t('处理所选素材', 'Process selected assets', '選択素材を処理')}</h3>
       {error && <p role="alert" className="workbench-error">{error}</p>}
       <Field label={t('处理器', 'Processor', '処理プラグイン')}><Choice label={t('处理器', 'Processor', '処理プラグイン')} disabled={busy} value={processorKey} options={processors.map(item => ({ value: item.key, label: item.key.split('/').at(-1)! }))} onChange={key => { setProcessorKey(key); setSettings(fieldDefaults(processors.find(item => item.key === key)!.fields)); }}/></Field>
       <p>{t(`本次选择 ${inputSelection.length} 项，处理器支持 ${supported.length} 项。`, `${inputSelection.length} selected; ${supported.length} supported by this processor.`, `${inputSelection.length}件選択。処理プラグインは${supported.length}件に対応。`)}</p>
@@ -51,7 +52,7 @@ export function ResourceProcessors({ bridge, selectedIds, locale, changed, index
       <footer><Button disabled={busy} onClick={() => setOpen(false)}>{t('关闭', 'Close', '閉じる')}</Button>{busy ? <Button onClick={() => { ++actionVersion.current; if (batch.current) { batch.current.cancelled = true; if (batch.current.operationId) void assets.cancelResource?.(batch.current.operationId); } setBusy(false); setRefresh(value => value + 1); setError(t('已停止本地接收和后续批次，已完成候选保留。', 'Stopped receiving results locally and skipped remaining items. Completed candidates are kept.', 'ローカルでの結果受信と残りの項目を停止しました。完了した候補は保持されています。')); }}>{t('取消处理', 'Cancel processing', '処理をキャンセル')}</Button> : <Button tone="primary" disabled={!supported.length || supported.length !== inputSelection.length} onClick={() => void action(async () => {
         if (!processor || !assets.processResource) throw new Error(t('资源处理服务不可用', 'Resource processing is unavailable', '素材処理を利用できません'));
         const invalid = validateFields(processor.fields, settings, field => field.label, locale); if (invalid.length) throw new Error(invalid.map(item => item.message).join(' · '));
-        if (!pluginInputsValid()) return;
+        if (!pluginInputsValid(parameterScope.current)) return;
         const failures: string[] = [], currentBatch = { cancelled: false, operationId: null as string | null }; batch.current = currentBatch;
         for (const asset of supported) { if (currentBatch.cancelled) break; const operationId = createId(); currentBatch.operationId = operationId; const result = await assets.processResource({ processorKey, assetId: asset.id, sourceVariantId: asset.activeVariantId, settings, operationId }); if (!result.ok) failures.push(`${asset.name}: ${result.error.message}`); currentBatch.operationId = null; }
         if (failures.length) throw new Error(failures.join('\n')); if (!currentBatch.cancelled) setOpen(false);

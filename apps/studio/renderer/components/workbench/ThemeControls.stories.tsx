@@ -39,7 +39,7 @@ function ThemeControls({ theme = 'light', panelAvailable = true }: { theme?: 'li
   </div>;
 }
 
-const meta = { title: 'Product/Studio/Workbench/Workbench theme and controls', component: ThemeControls, parameters: { layout: 'fullscreen', docs: { description: { component: '正式主题、工作台、Select 与指令卡片样式。示例文档与立绘比例用于验证外观、滚动和键盘；不包含 M02 编辑或真实媒体预览。' } } }, args: { theme: 'light' }, argTypes: { theme: { control: 'select', options: ['light', 'dark'] } } } satisfies Meta<typeof ThemeControls>;
+const meta = { id: 'product-studio-workbench-workbench-theme-and-controls', title: 'Components/Workbench/WorkbenchShell', component: ThemeControls, parameters: { layout: 'fullscreen', docs: { description: { component: '共享 WorkbenchShell、文档标签、Select 与指令卡片的组件夹具，使用既有固定栏布局验证主题、滚动和键盘。示例数据不包含 M02 编辑或真实媒体预览；现行 Studio 整机装配见 Product/Studio/Workbench/Studio。' } } }, args: { theme: 'light' }, argTypes: { theme: { control: 'select', options: ['light', 'dark'] } } } satisfies Meta<typeof ThemeControls>;
 export default meta;
 type Story = StoryObj<typeof meta>;
 export const Light: Story = {};

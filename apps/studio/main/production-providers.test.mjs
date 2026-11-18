@@ -23,7 +23,7 @@ import {
 } from "@galcraft/templates";
 import { createAssetIndex, decodeSVG, assetFilePath } from "@galcraft/assets";
 import { ImportCoordinator } from '@galcraft/assets';
-import { StudioProduction } from "./production-providers.mjs";
+import { StudioProduction } from "./production-providers.mts";
 import { pluginServiceContext } from './plugin-service-ports.mjs';
 
 const sharp = createRequire(
@@ -40,6 +40,23 @@ const unwrap = (r) => {
 const envelope = (documentId, data) =>
   JSON.stringify({ schemaVersion: 1, documentId, revision: 1, data });
 let project, provider, sceneDocument, statement, template;
+it('reads the current production problem snapshot without loading the overview or starting recovery requests', async () => {
+  let sends = 0, queries = 0, fetches = 0;
+  const issue = { code: 'CONTROLLED_FAILURE', message: 'Controlled task failure', owner: 'M10', severity: 'error', related: [], actions: ['retry'] };
+  provider.adapter.submit = async function* () { sends++; yield { kind: 'error', remoteStatus: 'failed', issue }; };
+  provider.adapter.query = async () => { queries++; throw new Error('Snapshot must not query'); };
+  provider.adapter.fetch = async () => { fetches++; throw new Error('Snapshot must not fetch'); };
+  const { ctx, task } = await generated();
+  const original = ctx.service.listTasks();
+  provider.compileInput = () => { throw new Error('Snapshot must not load the production overview'); };
+  const snapshot = unwrap(await provider.call('problemSnapshot'));
+  expect(snapshot).toEqual({ projectId: project.projectId, tasks: [{ id: task.id, name: task.name, revision: task.revision,
+    failures: task.items.map(item => ({ itemId: item.id, attemptId: item.attempts.at(-1).id, issues: [issue] })) }] });
+  expect(unwrap(await provider.call('problemSnapshot'))).toEqual(snapshot);
+  expect(ctx.service.listTasks()).toEqual(original);
+  expect({ sends, queries, fetches }).toEqual({ sends: 2, queries: 0, fetches: 0 });
+  await ctx.service.close();
+});
 it('keeps personal workflow configuration drafts outside the available workflow overview and preserves revisions through the host', async () => {
   const workflow = { id: randomUUID(), revision: 3, name: 'Available workflow', purpose: 'speech', imageUsages: null, graphVersion: '1', editorWorkflowPath: null,
     apiGraph: { '1': { class_type: 'SaveAudio', inputs: {} } }, inputs: [], uploads: [], requiredNodes: [], modelNotes: [], outputs: [{ nodeId: '1', key: 'audio', kind: 'audio', decoder: 'comfyFileList', group: 'main', role: 'primary', background: 'unknown' }] };
@@ -57,10 +74,12 @@ it('keeps personal workflow configuration drafts outside the available workflow 
 it('runs the packaged GCA provider with an existing text connection and adopts new and revised animation assets through M04/M02', async () => {
   const { createDefinition } = await import('../../../plugins/animation-generation/package/definition/index.js');
   const { createPlugin } = await import('../../../plugins/animation-generation/package/services/index.js');
+  const animationManifest = JSON.parse(await readFile(new URL('../../../plugins/animation-generation/package/manifest.json', import.meta.url), 'utf8'));
+  const generationManifest = JSON.parse(await readFile(new URL('../../../plugins/official-generation-services/package/manifest.json', import.meta.url), 'utf8'));
   const assetContext=pluginServiceContext({projects:provider.projects,assets:{...provider.assets,get:async id=>({ok:true,warnings:[],value:JSON.parse([...project.documents.values()].find(doc=>doc.files['assets/index.json']).files['assets/index.json']).data.assets.find(asset=>asset.id===id)})}},'org.galcraft.animation-generation','windows',project);
   const definition = createDefinition().productionOperations[0], preparation = (await createPlugin().activate(assetContext)).textPreparations[0];
   const common=await import('../../../plugins/official-generation-services/package/services/index.js');const contribution=(await common.createPlugin().activate({})).generationProviders.find(item=>item.protocols.includes('chatCompletions'));
-  const snapshot = { id: definition.id, version: definition.version, provider: { id: 'org.galcraft.animation-generation', version: '0.1.0' }, definition };
+  const snapshot = { id: definition.id, version: definition.version, provider: { id: animationManifest.id, version: animationManifest.version }, definition };
   const original = { type: 'galcraft.animation', version: 1, durationMs: 1000, tracks: [{ path: '/y', mode: 'add', keyframes: [{ timeMs: 0, value: 0, easing: { family: 'linear', direction: 'in' } }, { timeMs: 500, value: -40, easing: { family: 'linear', direction: 'in' } }, { timeMs: 1000, value: 0, easing: { family: 'linear', direction: 'in' } }] }, { path: '/x', mode: 'add', keyframes: [{ timeMs: 1000, value: 20, easing: { family: 'linear', direction: 'in' } }] }] };
   let requests = 0, height = -120, acquired = 0, released = 0;
   const server = createServer(async (request, response) => {
@@ -75,9 +94,10 @@ it('runs the packaged GCA provider with an existing text connection and adopts n
   try {
     const config = { ...unwrap(await provider.call('overview')).connections[0], protocol: 'chatCompletions', providerKey:contribution.key,purposes: ['text'], baseUrl: `http://127.0.0.1:${server.address().port}/v1`, model: 'configured-gca-model', parameters: { request: { temperature: .2 } } };
     provider.connections.read = async () => ({ config }); provider.connections.list = async () => [config];
-    provider.generationProviders = {acquireTextPreparation:async()=>({provider:preparation,packageVersion:'0.1.0',release(){}}), operations: async () => [snapshot], describe: async () => ({ providerKey: contribution.key, packageVersion: '0.1.0', capabilities: contribution.capabilities }),
-      list: async () => [{ key: contribution.key, packageVersion: '0.1.0', purposes: contribution.purposes, configFields: [], capabilities: contribution.capabilities }],
-      acquire: async () => { acquired++; return { provider: contribution, packageVersion: '0.1.0', release() { released++; } }; } };
+    const packageVersion = generationManifest.version;
+    provider.generationProviders = {acquireTextPreparation:async()=>({provider:preparation,packageVersion:animationManifest.version,release(){}}), operations: async () => [snapshot], describe: async () => ({ providerKey: contribution.key, packageVersion, capabilities: contribution.capabilities }),
+      list: async () => [{ key: contribution.key, packageVersion, purposes: contribution.purposes, configFields: [], capabilities: contribution.capabilities }],
+      acquire: async () => { acquired++; return { provider: contribution, packageVersion, release() { released++; } }; } };
     const generate = async (asset = null) => {
       const overview = unwrap(await provider.call('overview')), ctx = await provider.current();
       const resolved=asset?unwrap(await assetContext.assets.resolve({kind:'variant',id:asset.activeVariantId})):null;
@@ -110,7 +130,7 @@ it('runs the packaged GCA provider with an existing text connection and adopts n
     const saved = JSON.parse(await readFile(join(root, 'project', 'assets/index.json'), 'utf8')).data.assets[0]; expect(saved.activeVariantId).toBe(revised.activeVariantId);
     expect(requests).toBe(3); expect(acquired).toBe(released);
   } finally { await new Promise(resolve => server.close(resolve)); }
-});
+}, 25000);
 
 async function storedProductionDraft(operation, usage, fields, extra = {}) {
   const overview = unwrap(await provider.call('overview'));
@@ -514,9 +534,13 @@ beforeEach(async () => {
   };
 });
 afterEach(async () => {
+  await provider?.prepareStop();
+  if (project) await provider?.closeProject(project.projectId);
   await project?.dispose("discard");
   await rm(root, { recursive: true, force: true });
-});
+  provider = undefined;
+  project = undefined;
+}, 20000);
 async function generated(ui = false, usage = "background") {
   const ctx = await provider.current(),
     overview = unwrap(await provider.call("overview"));

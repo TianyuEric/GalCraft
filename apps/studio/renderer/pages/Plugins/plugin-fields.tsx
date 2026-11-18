@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { DocumentView, FieldSpec, Json, Ref, Result } from '@galcraft/contracts';
 import { Button, Choice, Field } from '../../components/controls.js';
 import { Input } from '../../components/ui/input.js';
@@ -35,8 +35,10 @@ const words = (locale: string, zh: string, en: string, ja: string) => locale ===
 export function pluginInputsValid(scope?: Element | null): boolean {
   const root = scope ?? document.activeElement?.closest('[role="dialog"],.plugin-component-properties');
   const invalid = root?.querySelector<HTMLInputElement | HTMLTextAreaElement>('input:invalid,textarea:invalid');
-  if (invalid) { invalid.reportValidity(); return false; }
-  return true;
+  if (!invalid) return true;
+  if (invalid.validity.customError && invalid.getAttribute('aria-describedby')) invalid.focus();
+  else invalid.reportValidity();
+  return false;
 }
 
 function CustomField({ editor, value, change }: { editor: PublicFieldEditor; value: Json; change(value: Json): void }) {
@@ -47,19 +49,20 @@ function CustomField({ editor, value, change }: { editor: PublicFieldEditor; val
 }
 function StructuredInput({ value, change, label }: { value: Json; change(value: Json): void; label: string }) {
   const [text, setText] = useState(JSON.stringify(value, null, 2)), [error, setError] = useState('');
+  const errorId = useId();
   const input = useRef<HTMLTextAreaElement>(null), committed = useRef(value);
   useEffect(() => {
     if (value === committed.current) return;
     committed.current = value;
     setText(JSON.stringify(value, null, 2)); setError(''); input.current?.setCustomValidity('');
   }, [value]);
-  return <><Textarea ref={input} aria-label={label} value={text} onChange={event => {
+  return <><Textarea ref={input} aria-label={label} aria-invalid={!!error || undefined} aria-describedby={error ? errorId : undefined} value={text} onChange={event => {
     setText(event.target.value);
     try {
       const next: Json = JSON.parse(event.target.value);
       committed.current = next; change(next); event.target.setCustomValidity(''); setError('');
     } catch (e) { event.target.setCustomValidity(String(e)); setError(String(e)); }
-  }}/>{error && <small role="alert" className="field-error">{error}</small>}</>;
+  }}/>{error && <small id={errorId} role="alert" className="field-error">{error}</small>}</>;
 }
 export function PluginFields({ fields, value, change, locale, references = [], translate = text => text, editorFor, errors = {}, prefix = '' }: {
   fields: FieldSpec[]; value: Record<string, Json>; change(value: Record<string, Json>): void; locale: string;

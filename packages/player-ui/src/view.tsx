@@ -4,8 +4,9 @@ import { FilmBars, ReadingStatus } from './reading-decorations.js';
 import { playerVariableValues } from './variables.js';
 import { ToolbarIcon } from './toolbar-icon.js';
 import { SettingsPage } from './settings-page.js';
-import { GalleryPage, galleryState, formatTime } from './gallery.js';
+import { GalleryPage, galleryState, galleryUnlocked, formatTime } from './gallery.js';
 import { PageTransition } from './page-animation.js';
+import { BlueprintExecutions, waitBlueprint, type BlueprintNodeResult, type BlueprintRunOptions, type BlueprintRunResult, type BlueprintTrigger } from './blueprint.js';
 import { holdPlayerVisual, waitForPresentedMedia } from './visual-handoff.js';
 import { choiceFirstAssets } from './choice-resources.js';
 import { reportPlayerPreparation } from './preparation.js';
@@ -56,9 +57,9 @@ import { ReadingSurface, readingBackground, textProgress } from './reading-surfa
 import { readingRuns } from './reading-style.js';
 import { ComponentInstances, componentInstanceStyle, type ComponentInstanceProps, type BusinessPageAdapter } from './instance-renderer.js';
 import { componentDefinition } from '@galcraft/templates';
-import { readUIPath, readUIValue, resolveUIOfficialAction, type UIValueContext } from '@galcraft/templates/editor';
+import { evaluateUICondition, readUIPath, readUIValue, resolveUIOfficialAction, type UIValueContext } from '@galcraft/templates/editor';
 import { issueDetails, localizeIssue, issueFromError } from '@galcraft/contracts';
-import type { Issue, OfficialAction, UIAction } from '@galcraft/contracts';
+import type { BlueprintNode, Issue, OfficialAction, UIAction, UIInteraction } from '@galcraft/contracts';
 import { validatePreferences } from './preferences.js';
 import { businessParts } from './business-parts.js';
 
@@ -90,6 +91,8 @@ const clear = (element: HTMLElement) => element.replaceChildren();
 const sameToken = (a: { sessionId: Id; occurrence: number; statementId: Id } | null,
   b: { sessionId: Id; occurrence: number; statementId: Id } | null) =>
   !!a && !!b && a.sessionId === b.sessionId && a.occurrence === b.occurrence && a.statementId === b.statementId;
+const blueprintIssue = (code: string, message: string): Issue => ({ code, message, severity: 'error', owner: 'M07', related: [], actions: [] });
+const blueprintFailure = (code: string, message: string): BlueprintNodeResult => ({ outcome: 'failure', issue: blueprintIssue(code, message) });
 
 
 export class PlayerView {
@@ -139,6 +142,10 @@ export class PlayerView {
   private readonly thumbnailUrls = new Set<string>();
   private inputDraft = '';
   private readonly pageLocals = new Map<string, Record<string, Json>>();
+  private readonly blueprintExecutions = new BlueprintExecutions();
+  private readonly blueprintInstances = new WeakMap<HTMLElement, { context: UIValueContext; disabled: boolean }>();
+  private blueprintDebugger: BlueprintRunOptions | undefined;
+  private blueprintNavigation: AbortSignal | undefined;
   private inputToken = '';
   private retainedPage: { node: ReactNode; page: string; pageId: string; style: string } | null = null;
   private modalLayers: { id: string; page: string; node: ReactNode; element: HTMLElement }[] = [];
@@ -228,7 +235,11 @@ export class PlayerView {
     this.canvasRoot.className = 'gc-canvas';
     this.canvasRoot.append(this.pageBackground, this.content, this.portal, this.message,options.videoElement);
     options.root.append(this.stageRoot, this.canvasRoot);
-    this.navigation.subscribe(() => this.render());
+    this.navigation.subscribe(() => {
+      this.blueprintExecutions.visitChanged(this.navigation.visitId, this.blueprintNavigation);
+      for (const key of this.pageLocals.keys()) if (!this.navigation.hasVisit(key.split('/')[0]!)) this.pageLocals.delete(key);
+      this.render();
+    });
     this.lifecycleRelease = options.host.subscribeLifecycle(event => {
       if (event.type === 'closeRequested') void this.exit();
       if (event.type === 'blur') { this.blurred = true; this.loseInputFocus();
@@ -304,8 +315,9 @@ export class PlayerView {
     return () => {
       if (released) return; released = true; this.resourcePreparations--;
       if (this.preparingResources || this.disposed) return;
-      this.content.inert = this.startup.active || this.transition.busy || !!this.visualHold || ['confirm','error','dataImport','dataClear'].includes(this.navigation.page);
-      this.portal.inert = this.startup.active || this.transition.busy || !!this.visualHold;
+      this.content.inert = this.startup.active || this.transition.busy || !!this.visualHold || this.options.stage.sceneRuleActive ||
+        ['confirm','error','dataImport','dataClear'].includes(this.navigation.page);
+      this.portal.inert = this.startup.active || this.transition.busy || !!this.visualHold || this.options.stage.sceneRuleActive;
       if (this.deferredResourceRender) { this.deferredResourceRender = false; this.render(); }
     };
   }
@@ -341,11 +353,11 @@ export class PlayerView {
     if (this.endingTask) await this.endingTask;
     else await this.waitForTargetPresentation();
   }
-  private async presentGalleryChange(change:()=>void) {
-    if(this.visualHold||this.transition.busy)return;
+  private async presentGalleryChange(change:()=>void): Promise<BlueprintNodeResult> {
+    if(this.visualHold||this.transition.busy)return { outcome: 'unmet' };
     const release=this.holdVisual();
-    try {change();await this.waitForTargetPresentation();}
-    catch(error){if(!this.disposed)this.showError(issueFromError(error,'M07'));}
+    try {change();await this.waitForTargetPresentation();return { outcome: 'success' };}
+    catch(error){const issue=issueFromError(error,'M07');if(!this.disposed)this.showError(issue);return { outcome: 'failure', issue };}
     finally {release();if(!this.disposed){this.render();
       const viewer=this.content.querySelector<HTMLElement>('.gc-gallery-viewer[role="dialog"]:not([hidden])');
       if(viewer&&!viewer.contains(document.activeElement))viewer.querySelector<HTMLElement>('button:not(:disabled),[tabindex="0"]')?.focus({preventScroll:true});
@@ -410,7 +422,8 @@ export class PlayerView {
   }
   get stageElement(): HTMLElement { return this.stageRoot; }
   get isDisposed(): boolean { return this.disposed; }
-  get storyActive(): boolean { return !this.preparingResources && !this.emergencyCover?.active && !this.disposed && !this.startup.active && !this.transition.busy && this.navigation.page === 'story' &&
+  get fastForwarding(): boolean { return this.skip || this.ctrlFast; }
+  get storyActive(): boolean { return !this.saving && !this.preparingResources && !this.emergencyCover?.active && !this.disposed && !this.startup.active && !this.transition.busy && this.navigation.page === 'story' &&
     !this.options.entryPresentation?.active &&
     this.options.session.inspectActivity()?.status !== 'paused' && (!this.blurred || !this.preferences().pauseOnBlur); }
   private get uiScale() { return Math.min(this.options.root.clientWidth / this.options.snapshot.project.canvas.width, this.options.root.clientHeight / this.options.snapshot.project.canvas.height); }
@@ -442,6 +455,8 @@ export class PlayerView {
     }
     const backgroundPage = modal && retained ? retained.page : page;
     const backgroundConfig = this.options.snapshot.template.pages.find(item => item.key === backgroundPage);
+    this.pageBackground.dataset.gcPage = backgroundPage;
+    this.pageBackground.dataset.gcPageId = backgroundConfig?.id ?? '';
     this.content.inert=modal||this.transition.busy||!!this.visualHold;
     for(const node of [this.stageRoot,this.soundButton,this.message])node.inert=modal;
     for(const layer of this.modalLayers)layer.element.inert=layer.element!==this.modalRoot||this.transition.busy;
@@ -493,7 +508,19 @@ export class PlayerView {
         if(!details){details=document.createElement('details');details.dataset.gcDiagnostic='';details.append(text('summary',''),text('pre',''));this.message.replaceChildren(text('span',''),details);}
         this.message.firstElementChild!.textContent=message;details.querySelector('summary')!.textContent=this.t('诊断详情','Diagnostic details','診断の詳細');details.querySelector('pre')!.textContent=detail;
       }else this.message.textContent=`${message}\n${detail}`;}
-      else this.message.textContent=message;return;
+      else this.message.textContent=message;
+      if (this.options.session.canRetryRuleScene && !this.message.querySelector('[data-scene-rule-retry]')) {
+        const retry = button(this.locale('action.retry'), () => {
+          retry.disabled = true;
+          void this.options.session.retryRuleScene().then(result => {
+            this.report(result);
+            if (result.ok) { this.setStageError(null); this.showStory(); }
+          }).finally(() => { retry.disabled = false; this.renderMessage(); });
+        });
+        retry.dataset.sceneRuleRetry = '';
+        this.message.append(retry);
+      } else if (!this.options.session.canRetryRuleScene) this.message.querySelector?.('[data-scene-rule-retry]')?.remove();
+      return;
     }
     const retry=button(this.locale('action.retry'),()=>{if(this.retryingRecords)return;this.retryingRecords=true;retry.disabled=true;void this.options.session.retryLongTerm().then(async result=>{this.report(result);if(result.ok&&result.value.state.phase==='entry')this.report(await this.options.session.start());}).finally(()=>{this.retryingRecords=false;this.render();});},this.retryingRecords);
     const detail=document.createElement('details');detail.append(text('summary',this.t('详情','Details','詳細')),text('p',message));
@@ -637,18 +664,26 @@ export class PlayerView {
     if (action === 'history') this.open('history');
     if (action === 'emergencyRestore') this.back();
   }
-  private back() {
-    if (this.emergencyCover?.active) { this.setEmergency(false); return; }
-    if(this.transition.busy||this.visualHold||!!this.selecting)return;
-    if(['confirm','error','dataImport','dataClear'].includes(this.navigation.page)){void this.transition.navigate(this.modalRoot,this.pageAnimation('exit'),()=>this.backImmediate(),()=>undefined,this.preferences().reducedMotion).then(()=>this.render());return;}
-    if(document.fullscreenElement?.tagName==='VIDEO'){void document.exitFullscreen();return;}
-    if(['cg','music'].includes(this.navigation.page)&&this.galleryView.viewer){this.galleryView.viewer=null;this.render();const id=this.galleryView.selected[this.galleryView.type];this.options.root.querySelector<HTMLElement>(`[data-gallery-id="${id}"]`)?.focus();return;}
-    void this.animateNavigation(()=>this.backImmediate());
+  private async back(signal?: AbortSignal): Promise<boolean> {
+    if (this.emergencyCover?.active) { this.setEmergency(false); return true; }
+    if(this.transition.busy||this.visualHold||!!this.selecting)return false;
+    const change = () => { if (!signal?.aborted) this.ownedBlueprintNavigation(signal, () => this.backImmediate(signal)); };
+    if(['confirm','error','dataImport','dataClear'].includes(this.navigation.page)){const completed=await this.transition.navigate(this.modalRoot,this.pageAnimation('exit'),change,()=>undefined,this.preferences().reducedMotion);this.render();return completed;}
+    if(document.fullscreenElement?.tagName==='VIDEO'){await document.exitFullscreen();return true;}
+    if(['cg','music'].includes(this.navigation.page)&&this.galleryView.viewer){this.galleryView.viewer=null;this.render();const id=this.galleryView.selected[this.galleryView.type];this.options.root.querySelector<HTMLElement>(`[data-gallery-id="${id}"]`)?.focus();return true;}
+    if(signal&&this.navigation.page==='input')return this.cancelInput(signal);
+    if(signal&&!this.navigation.source())return false;
+    return this.animateNavigation(change);
   }
-  private backImmediate() {
+  private backImmediate(signal?: AbortSignal) {
     const inspection = this.options.session.inspect(), waiting = inspection?.state.wait;
     if (waiting?.kind === 'plugin' && waiting.page === this.navigation.page && inspection?.token && this.options.pluginPages?.find(item => item.key === waiting.page)?.wait?.cancel === 'continue') {
-      void this.options.syncStage().then(synced => synced.ok ? this.options.session.dispatch({kind:'cancel',token:inspection.token!}) : synced).then(result => { this.report(result); if (result.ok) this.showStory(); }); return;
+      void this.options.syncStage().then(async synced => {
+        if(signal?.aborted)return;
+        const result=synced.ok?await this.options.session.dispatch({kind:'cancel',token:inspection.token!}):synced;
+        if(signal?.aborted)return;
+        this.report(result); if(result.ok)this.showStory(signal);
+      }); return;
     }
     if(this.navigation.page==='dataImport'&&this.importPlan){this.options.importer.discardDataImport(this.importPlan.id);this.importPlan=null;} if(this.navigation.page==='input'){void this.cancelInput();return;} const pending = this.pendingConfirm; this.pendingConfirm = null; pending?.resolve(false);
     const layer=this.modalLayers?.pop();
@@ -664,16 +699,23 @@ export class PlayerView {
         `[data-focus-key="${CSS.escape(frame.originFocus)}"]`) : null;
       (target ?? this.options.root).focus({ preventScroll: true });
     }); }
-  private open(page: string) { if(page==='emergency'){this.setEmergency(true);return;}if(this.emergencyCover?.active)return;if(this.transition.busy||this.visualHold||!!this.selecting)return;if(!this.canOpen(page)){this.showError(this.t('完成任意一条路线后开放','Complete any route to unlock','いずれかのルートを完了すると解放されます'));return;} if(['confirm','error','dataImport','dataClear'].includes(page)){this.openImmediate(page);void this.transition.play(this.modalRoot,this.pageAnimation('enter'),this.preferences().reducedMotion);return;} void this.animateNavigation(()=>this.openImmediate(page)); }
+  private async open(page: string, signal?: AbortSignal): Promise<boolean> {
+    if(page==='emergency'){this.setEmergency(true);return true;}
+    if(this.emergencyCover?.active||this.transition.busy||this.visualHold||this.options.stage.sceneRuleActive||!!this.selecting)return false;
+    if(!this.canOpen(page)){this.showError(this.t('完成任意一条路线后开放','Complete any route to unlock','いずれかのルートを完了すると解放されます'));return false;}
+    const change=()=>this.ownedBlueprintNavigation(signal,()=>this.openImmediate(page));
+    if(['confirm','error','dataImport','dataClear'].includes(page)){change();void this.transition.play(this.modalRoot,this.pageAnimation('enter'),this.preferences().reducedMotion);return true;}
+    return this.animateNavigation(change);
+  }
   private openImmediate(page:string) { this.stopModes();
     if(page==='dataClear')this.clearScopes.clear();
     if (page !== 'story') { this.options.stage.pause(true); this.options.audio.setPause('systemPage', true); }
     this.navigation.open(page, { focusKey: this.pendingConfirm?.originFocus ?? (document.activeElement as HTMLElement | null)?.dataset.focusKey ?? '',
       scroll: this.content.scrollTop, sessionId: this.options.session.inspectActivity()?.sessionId ?? null }); }
-  private showStory() {
-    if (this.options.video.state === 'error') { this.navigation.replace('videoError'); return; }
+  private showStory(signal?: AbortSignal) {
+    if (this.options.video.state === 'error') { this.ownedBlueprintNavigation(signal,()=>this.navigation.replace('videoError')); return; }
     this.options.stage.pause(false); this.options.audio.setPause('systemPage', false);
-    this.navigation.replace('story', this.options.session.inspectActivity()?.sessionId ?? null); this.options.stage.pause(!this.storyActive); this.render(); if(this.navigation.page==='story')this.options.root.focus({preventScroll:true}); }
+    this.ownedBlueprintNavigation(signal,()=>this.navigation.replace('story', this.options.session.inspectActivity()?.sessionId ?? null)); this.options.stage.pause(!this.storyActive); this.render(); if(this.navigation.page==='story')this.options.root.focus({preventScroll:true}); }
   private action(label: string, run: () => void, disabled = false, focusKey = label) {
     const control = button(label, run, disabled); control.dataset.focusKey = focusKey; return control;
   }
@@ -694,11 +736,145 @@ export class PlayerView {
     let local = this.pageLocals.get(key); if (!local) { local = structuredClone(config?.localState ?? {}); this.pageLocals.set(key, local); }
     const inspection = this.options.session.inspect(), snapshot = this.options.snapshot, profile = this.options.data.current()!;
     const choices = inspection?.state.wait?.kind === 'choice' ? (() => { const wait = inspection.state.wait; if (wait?.kind !== 'choice') return []; const instruction = snapshot.scenes.flatMap(scene => scene.instructions).find(item => item.statementId === inspection.token?.statementId); const options = (instruction?.args as { options?: { id: Id; text?: string; label?: string; lockedReason?: string }[] })?.options ?? []; return options.filter(option => (wait.visibleOptionIds ?? wait.optionIds).includes(option.id)).map(option => ({ id: option.id, text: option.text ?? option.label ?? option.id, lockedReason: option.lockedReason ?? '', disabled: !wait.optionIds.includes(option.id) })); })() : [];
-    return { local, variables: playerVariableValues(snapshot, inspection?.state, profile.longTerm), instance: key, data: { project: { name: snapshot.project.name, description: snapshot.project.description, canvas: snapshot.project.canvas }, preferences: profile.preferences,confirmation:this.pendingConfirm?{requestId:this.pendingConfirm.id,message:this.pendingConfirm.message,remember:this.pendingConfirm.remember??false}:null,
+    return { local, variables: playerVariableValues(snapshot, inspection?.state, profile.longTerm), instance: key, data: { project: { name: snapshot.project.name, description: snapshot.project.description, canvas: snapshot.project.canvas }, preferences: profile.preferences, save: { canContinue: !!profile.index.continueRecordId }, confirmation:this.pendingConfirm?{requestId:this.pendingConfirm.id,message:this.pendingConfirm.message,remember:this.pendingConfirm.remember??false}:null,
       characters: snapshot.characters.map(character => ({ id: character.id, name: character.name, description: character.description ?? '' })),
-      gallery: snapshot.gallery.map(entry => ({ id: entry.id, name: entry.name, kind: entry.kind, series: entry.series, locked: entry.kind === 'cg' ? !(profile.longTerm.cg[entry.id]?.length) : !profile.longTerm[entry.kind].includes(entry.id) })),
+      gallery: snapshot.gallery.map(entry => ({ id: entry.id, name: entry.name, kind: entry.kind, series: entry.series, locked: !galleryUnlocked(entry, profile.longTerm) })),
       history: (inspection?.history ?? []).map(entry => ({ id: entry.id, speaker: entry.speaker, text: entry.text, voiceAssetId: entry.voiceAssetId, restorable: !!entry.entryState, location: `${entry.position.sceneId}/${entry.position.statementId}` })), choices,
       saves: profile.index.manual.slice(this.pageNumber * 12, this.pageNumber * 12 + 12).map((slot, index) => ({ id: slot.slotId, slotId: slot.slotId, recordId: slot.recordId, number: this.pageNumber * 12 + index + 1, empty: !slot.recordId, summary: '', time: '' })) } };
+  }
+  setBlueprintDebugger(options?: BlueprintRunOptions) {
+    if (this.options.data.domain.kind === 'player') return;
+    if (this.blueprintDebugger !== options) this.stopBlueprints();
+    this.blueprintDebugger = options;
+  }
+  stopBlueprints() { this.blueprintExecutions.stop(); }
+  triggerBlueprint(request: BlueprintTrigger, options?: BlueprintRunOptions): Promise<BlueprintRunResult> {
+    const page = this.options.snapshot.template.pages.find(candidate => candidate.id === request.pageId && candidate.key === this.navigation.page);
+    const component = page && this.componentById(page.key, request.componentId);
+    const binding = component?.interactions?.find(candidate => candidate.id === request.bindingId);
+    const visitId = this.navigation.visitId;
+    const { pageId, componentId, bindingId, instance, event } = request;
+    const unavailable = (message: string) => Promise.resolve<BlueprintRunResult>({ pageId, componentId, bindingId, visitId,
+      revision: binding?.blueprint?.revision ?? null, status: 'unavailable', steps: [], issue: blueprintIssue('UI_BLUEPRINT_UNAVAILABLE', message) });
+    if (this.disposed || this.options.data.domain.kind === 'player' || !page || !component || !binding?.blueprint) return unavailable('The requested blueprint is unavailable in this Player visit.');
+    const elements = [...this.options.root.querySelectorAll<HTMLElement>(`[data-gc-component="${CSS.escape(componentId)}"]`)].filter(element => {
+      const registered = this.blueprintInstances.get(element);
+      return registered?.context.instance?.startsWith(`${visitId}/${page.key}/`) && !registered.disabled && !element.matches(':disabled') && !element.closest('[hidden],[inert]') && (!instance || registered.context.instance === instance);
+    });
+    if (elements.length !== 1) return unavailable(elements.length ? 'Choose a single repeated component instance.' : 'The component is absent or disabled in this Player visit.');
+    const element = elements[0]!, { context } = this.blueprintInstances.get(element)!;
+    return this.runBlueprint(page, component, binding, { ...context, event: { ...event, checked: event?.checked ?? Boolean(event?.value) } }, element, options ?? this.blueprintDebugger);
+  }
+  private runBlueprint(page: { id: string; key: string }, component: ComponentConfig, binding: UIInteraction, context: UIValueContext,
+    element: HTMLElement | undefined, options = this.blueprintDebugger) {
+    const visitId = this.navigation.visitId, blueprint = binding.blueprint!;
+    return this.blueprintExecutions.run({ pageId: page.id, componentId: component.id, bindingId: binding.id!, visitId, revision: blueprint.revision }, blueprint,
+      async (node, signal) => {
+        const live = this.instanceContext(page.key);
+        return this.blueprintNode(node, { ...context, data: { ...context.data, ...live.data }, ...(live.variables ? { variables: live.variables } : {}) }, element, signal);
+      }, options);
+  }
+  private async blueprintNode(node: BlueprintNode, context: UIValueContext, element: HTMLElement | undefined, signal: AbortSignal): Promise<BlueprintNodeResult> {
+    if (node.kind === 'condition') {
+      const value = evaluateUICondition(node.condition, context);
+      return { outcome: value ? 'success' : 'unmet', value };
+    }
+    if (node.kind === 'wait') {
+      await waitBlueprint(node.milliseconds, signal);
+      return { outcome: 'success' };
+    }
+    if (node.kind === 'animation') {
+      const animation = this.options.snapshot.template.animations.find(candidate => candidate.id === node.animationId);
+      if (!animation || !element?.isConnected) return blueprintFailure('UI_BLUEPRINT_ANIMATION', 'The animation target or definition is unavailable.');
+      const playback = new PageTransition();
+      const cancel = () => playback.cancel();
+      signal.addEventListener('abort', cancel, { once: true });
+      try {
+        const completed = await playback.play(element, animation, this.preferences().reducedMotion);
+        return completed ? { outcome: 'success' } : blueprintFailure('UI_BLUEPRINT_ANIMATION', 'The animation was interrupted before completion.');
+      } finally { signal.removeEventListener('abort', cancel); }
+    }
+    return this.blueprintAction(node.action, context, signal);
+  }
+  private ownedBlueprintNavigation<T>(signal: AbortSignal | undefined, change: () => T): T {
+    signal?.throwIfAborted();
+    const prior = this.blueprintNavigation;
+    this.blueprintNavigation = signal;
+    try { return change(); } finally { this.blueprintNavigation = prior; }
+  }
+  private async blueprintAction(action: UIAction, context: UIValueContext, signal: AbortSignal): Promise<BlueprintNodeResult> {
+    if (this.emergencyCover?.active && !emergencyActionAllowed(action)) return { outcome: 'unmet' };
+    if (action.kind === 'setLocal' || action.kind === 'toggleLocal') {
+      if (!Object.hasOwn(context.local, action.key)) return blueprintFailure('UI_LOCAL_MISSING', `Unknown page local ${action.key}.`);
+      const value = action.kind === 'toggleLocal' ? !context.local[action.key] : readUIValue(action.value, context) as Json | undefined;
+      if (value === undefined) return blueprintFailure('UI_LOCAL_VALUE_MISSING', `No value was available for page local ${action.key}.`);
+      context.local[action.key] = value;
+      this.render();
+      return { outcome: 'success', value };
+    }
+    if (action.kind === 'plugin') return blueprintFailure('UI_BLUEPRINT_ACTION', 'This plug-in action is unavailable to the page blueprint.');
+    const official: OfficialAction = action.kind === 'open' ? action : resolveUIOfficialAction(action, context);
+    const before = this.navigation.visitId;
+    const priorIssue = this.operationIssue;
+    const navigation = (completed: boolean): BlueprintNodeResult => {
+      const navigated = this.navigation.visitId !== before;
+      if (completed) return { outcome: 'success', navigated };
+      return this.operationIssue && this.operationIssue !== priorIssue ? { outcome: 'failure', issue: this.operationIssue, navigated } : { outcome: 'unmet', navigated };
+    };
+    switch (official.kind) {
+      case 'open': return navigation(await this.open(official.page, signal));
+      case 'back': return navigation(await this.back(signal));
+      case 'continue': return this.continueGame(signal);
+      case 'openCg': return this.openGalleryCg(official.entryId, signal);
+      case 'preference': {
+        const saved = await this.writePagePreference(official.path, official.value, signal);
+        return saved.ok ? { outcome: 'success', value: readUIPath(saved.value, official.path) as Json } : { outcome: 'failure', issue: saved.error };
+      }
+      case 'start': return this.startGame(undefined, undefined, signal);
+      case 'returnTitle': return navigation(await this.returnTitle(true, false, signal));
+      default: return blueprintFailure('UI_BLUEPRINT_ACTION', `The ${official.kind} action is unavailable to the page blueprint.`);
+    }
+  }
+  private async writePagePreference(path: string, value: Json, signal?: AbortSignal): Promise<Result<PlayerPreferences>> {
+    const current = this.preferences(), next = structuredClone(current), keys = path.split('.');
+    let target = next as unknown as Record<string, Json>;
+    for (const part of keys.slice(0, -1)) {
+      if (!Object.hasOwn(target, part) || !target[part] || typeof target[part] !== 'object' || Array.isArray(target[part])) {
+        return { ok: false, error: blueprintIssue('UI_PREFERENCE_PATH', `Unknown preference ${path}.`), issues: [] };
+      }
+      target = target[part] as Record<string, Json>;
+    }
+    const key = keys.at(-1)!;
+    if (!Object.hasOwn(target, key) || ['schemaVersion', 'revision'].includes(key)) return { ok: false, error: blueprintIssue('UI_PREFERENCE_PATH', `Unknown preference ${path}.`), issues: [] };
+    target[key] = value;
+    const checked = validatePreferences(next); if (!checked.ok) return checked;
+    if (next.fullscreen !== current.fullscreen) {
+      const result = await this.options.host.platform('window.fullscreen', { enabled: next.fullscreen });
+      if (!result.ok) return result;
+      next.fullscreen = !!(result.value as { enabled?: boolean }).enabled;
+    } else signal?.throwIfAborted();
+    const result = await this.options.data.savePreferences(next, current.revision);
+    if (result.ok && !this.disposed) {
+      this.options.session.setVoiceLocale(result.value.voiceLocale);
+      this.options.audio.setLevels(result.value.volumes.master / 100, Object.fromEntries(Object.entries(result.value.volumes).filter(([bus]) => bus !== 'master').map(([bus, level]) => [bus, level / 100])));
+      this.options.audio.setDuck(result.value.duckBgm ? .35 : 1, result.value.interruptOnSilent);
+    }
+    if (!this.disposed) this.render();
+    return result;
+  }
+  private async continueGame(signal?: AbortSignal): Promise<BlueprintNodeResult> {
+    const id = this.options.data.current()!.index.continueRecordId;
+    return id ? this.load(id, signal) : { outcome: 'unmet' };
+  }
+  private async openGalleryCg(entryId: Id, signal?: AbortSignal): Promise<BlueprintNodeResult> {
+    const entry = this.options.snapshot.gallery.find(item => item.id === entryId && item.kind === 'cg');
+    if (!entry) return blueprintFailure('UI_GALLERY_ENTRY_MISSING', `Unknown CG gallery entry ${entryId}.`);
+    if (!this.canOpen('cg') || !galleryUnlocked(entry, this.options.data.current()!.longTerm)) return { outcome: 'unmet' };
+    const navigated = this.navigation.page !== 'cg';
+    if (navigated && !await this.open('cg', signal)) return { outcome: 'unmet' };
+    signal?.throwIfAborted();
+    const result = await this.presentGalleryChange(() => { this.galleryView.type = 'cg'; this.galleryView.viewer = entryId; this.galleryView.difference = null; this.render(); });
+    return { ...result, navigated };
   }
   private async instanceAction(action: UIAction, context: UIValueContext): Promise<void> {
     try {
@@ -718,7 +894,7 @@ export class PlayerView {
       case 'open': this.open(action.page); return;
       case 'back': this.back(); return;
       case 'start': await this.newGame(); return;
-      case 'continue': { const id = this.options.data.current()!.index.continueRecordId; if (id) await this.load(id); return; }
+      case 'continue': await this.continueGame(); return;
       case 'advance': await this.advance(); return;
       case 'toggleUI': this.hidden = !this.hidden; this.render(); return;
       case 'toggleAuto': this.auto = !this.auto; this.skip = false; this.render(); return;
@@ -749,9 +925,7 @@ export class PlayerView {
       }
       case 'toolbarReveal': this.toolbarVisible = true; this.render(); return;
       case 'toolbarLock': { const preferences = this.preferences(); this.report(await this.options.data.savePreferences({ ...preferences, toolbarLocked: action.locked }, preferences.revision)); this.render(); return; }
-      case 'preference': { const current = this.preferences(), next = structuredClone(current), keys = action.path.split('.'); let target = next as unknown as Record<string, Json>; for (const key of keys.slice(0, -1)) { if (!target[key] || typeof target[key] !== 'object' || Array.isArray(target[key])) throw new Error(`UI_PREFERENCE_PATH: ${action.path}`); target = target[key] as Record<string, Json>; } const key = keys.at(-1)!; if (!(key in target) || ['schemaVersion', 'revision'].includes(key)) throw new Error(`UI_PREFERENCE_PATH: ${action.path}`); target[key] = action.value; const checked = validatePreferences(next); this.report(checked); if (!checked.ok) return;
-        if (next.fullscreen !== current.fullscreen) { const result = await this.options.host.platform('window.fullscreen', { enabled: next.fullscreen }); this.report(result); if (!result.ok) return; next.fullscreen = !!(result.value as { enabled?: boolean }).enabled; }
-        const result = await this.options.data.savePreferences(next, current.revision); this.report(result); if (result.ok) { this.options.session.setVoiceLocale(result.value.voiceLocale); this.options.audio.setLevels(result.value.volumes.master / 100, Object.fromEntries(Object.entries(result.value.volumes).filter(([key]) => key !== 'master').map(([key, value]) => [key, value / 100]))); this.options.audio.setDuck(result.value.duckBgm ? .35 : 1, result.value.interruptOnSilent); } this.render(); return; }
+      case 'preference': this.report(await this.writePagePreference(action.path, action.value)); return;
       case 'openCg': await this.presentGalleryChange(()=>{this.galleryView.viewer = action.entryId;this.galleryView.difference=null;this.render();}); return;
       case 'nextDifference': { const entry = this.options.snapshot.gallery.find(item => item.id === this.galleryView.viewer), available = entry?.differences?.filter(item => this.options.data.current()!.longTerm.cg[entry.id]?.includes(item.id)) ?? []; const index = available.findIndex(item => item.id === this.galleryView.difference); await this.presentGalleryChange(()=>{this.galleryView.difference = available[(index + action.delta + available.length) % available.length]?.id ?? null;this.render();}); return; }
       case 'enterFlow': await this.enterFlow(action.nodeId); return;
@@ -770,15 +944,24 @@ export class PlayerView {
   private instances(page: string, overrides: Partial<ComponentInstanceProps> = {}): ReactNode {
     const config = this.options.snapshot.template.pages.find(item => item.key === page); if (!config) return null;
     const context = overrides.context ?? this.instanceContext(page);
+    const visitId = this.navigation.visitId;
     return <ComponentInstances externalVisualStates root={config.root} page={{id:config.id,key:config.key}} context={context} label={key => this.locale(key)} textOverride={component => componentTextOverride(component, this.options.snapshot.template.locales, this.preferences().menuLocale)} action={(action, value) => this.instanceAction(action, value)}
-      register={(component, element, instance) => { if (!element) return; element.dataset.gcComponent = component.id; element.dataset.gcPart = component.part; element.dataset.gcInstance = instance;
+      blueprint={async (component, binding, value) => {
+        if (this.disposed || this.navigation.visitId !== visitId || this.navigation.page !== page) return false;
+        const element = this.options.root.querySelector<HTMLElement>(`[data-gc-instance="${CSS.escape(value.instance!)}"]`) ?? undefined;
+        const result = await this.runBlueprint(config, component, binding, value, element);
+        if (result.status === 'failed' && result.issue && !this.disposed) this.showError(result.issue);
+        return result.status !== 'cancelled';
+      }}
+      register={(component, element, instance, value, disabled) => { if (!element) return; element.dataset.gcComponent = component.id; element.dataset.gcPart = component.part; element.dataset.gcInstance = instance;
+        if (component.interactions?.some(binding => binding.blueprint)) this.blueprintInstances.set(element, { context: { ...value, instance }, disabled });
         if(element.matches('button,input,select,textarea,[tabindex]')&&!element.dataset.focusKey)element.dataset.focusKey=instance;
         if (component.part.startsWith('title.menu.')) element.dataset.focusKey = component.part.replace('menu.', ''); }}
       activate={async (component, value) => { if (this.emergencyCover?.active) { if (component.part === 'emergency.restore') this.setEmergency(false); return; } const action = componentDefinition(component.part)?.action; if (!action) return; if(action==='startAfterstory'){const id=(value.item as {id?:Id}|undefined)?.id;if(id)await this.newGame(undefined,id);return;} if(component.part==='settings.titleAction'){await this.returnTitle(true,true);return;} if (action.startsWith('open:')) { this.open(action.slice(5)); return; } if (action === 'selectOption') { const id = (value.item as { id?: Id } | undefined)?.id; if (id) await this.dispatchPageAction({ kind: 'selectOption', optionId: id }); return; } if (action === 'playHistoryVoice' || action === 'jumpHistory') { const id = (value.item as { id?: Id } | undefined)?.id; if (id) await this.dispatchPageAction(action === 'jumpHistory' ? { kind: 'jumpHistory', historyId: id } : { kind: 'playHistoryVoice', historyId: id }); return; } if (['start', 'continue', 'back', 'exit', 'toggleAuto', 'toggleSkip', 'advance', 'quickSave', 'quickLoad', 'replayVoice', 'returnTitle', 'toolbarReveal', 'cancelInput'].includes(action)) await this.dispatchPageAction({ kind: action } as OfficialAction); }}
       state={(component, value) => { const item = value.item as Record<string, unknown> | undefined;
         if (component.part === 'title.workTitle') return { text: this.options.snapshot.project.name };
         if (component.part === 'title.description') return { text: this.options.snapshot.project.description };
-        if (component.part === 'title.menu.continue') return { disabled: !this.options.data.current()!.index.continueRecordId };
+        if (component.part === 'title.menu.continue') return { disabled: !component.interactions?.some(binding => binding.event === 'click' && binding.blueprint) && !this.options.data.current()!.index.continueRecordId };
         if (component.part === 'title.menu.exit') return { visible: this.options.host.target === 'windows' };
         if (/^title\.menu\.(cg|music|flow|characters)$/.test(component.part)) return { disabled: !this.canOpen(component.part.split('.').at(-1)!) };
         if (component.part === 'choice.list.item') return { disabled: item?.disabled === true || !!this.selecting, selected:item?.id===this.selecting };
@@ -957,8 +1140,8 @@ export class PlayerView {
     if (renderSequence === this.renderSequence) { this.mountPluginComponents(page); this.applyPublicVisuals(renderSequence); }
     if(['story','choice'].includes(this.content.dataset.page??page))this.content.style.setProperty('overflow','hidden','important');
     else this.content.style.removeProperty('overflow');
-    if (this.startup.active||this.visualHold||!!this.selecting)this.content.inert = true;
-    this.portal.inert=this.startup.active||this.transition.busy||!!this.visualHold||!!this.selecting;
+    if (this.startup.active||this.visualHold||this.options.stage.sceneRuleActive||!!this.selecting)this.content.inert = true;
+    this.portal.inert=this.startup.active||this.transition.busy||!!this.visualHold||this.options.stage.sceneRuleActive||!!this.selecting;
     for(const layer of this.modalLayers)layer.element.inert=this.startup.active||this.transition.busy||layer.element!==this.modalRoot;
   }
   get emergencyActive() { return !!this.emergencyCover?.active; }
@@ -1122,13 +1305,35 @@ export class PlayerView {
     const value = Number.parseInt(match[1]!, 16);
     return ((value >> 16) * 299 + ((value >> 8) & 255) * 587 + (value & 255) * 114) / 1000 < 128;
   }
-  private ask(message: string, action?:string, originFocus?:string,confirmation?:keyof PlayerPreferences['confirmations']): Promise<boolean> {
-    return new Promise(resolve => { this.pendingConfirm = {id:createId(),message,action,originFocus,confirmation,remember:false,resolve}; this.open('confirm'); });
+  private ask(message: string, action?:string, originFocus?:string,confirmation?:keyof PlayerPreferences['confirmations'], signal?: AbortSignal): Promise<boolean> {
+    return this.confirm({ message, action, originFocus, confirmation }, signal);
+  }
+  private confirm(request: Omit<NonNullable<PlayerView['pendingConfirm']>, 'id' | 'resolve'>, signal?: AbortSignal): Promise<boolean> {
+    return new Promise(resolve => {
+      if (signal?.aborted) { resolve(false); return; }
+      const pending = { id:createId(), remember:false, ...request,
+        resolve: (accepted: boolean) => { signal?.removeEventListener('abort', cancel); resolve(accepted); } };
+      const cancel = () => {
+        if (this.pendingConfirm === pending) {
+          this.pendingConfirm = null;
+          if (!this.disposed && this.navigation.page === 'confirm') this.backImmediate();
+        }
+        pending.resolve(false);
+      };
+      this.pendingConfirm = pending;
+      signal?.addEventListener('abort', cancel, { once:true });
+      const opened = this.open('confirm', signal);
+      if (signal) void opened.then(result => { if (!result) cancel(); }, cancel);
+    });
   }
   private async finishConfirmation(accepted: boolean,remember=this.pendingConfirm?.remember??false) {
     if(this.transition.busy)return;
     const pending = this.pendingConfirm;
-    if(accepted&&remember&&pending?.confirmation){const current=this.preferences(),saved=await this.options.data.savePreferences({...current,confirmations:{...current.confirmations,[pending.confirmation]:false}},current.revision);this.report(saved);if(!saved.ok)return;}
+    if(accepted&&remember&&pending?.confirmation){
+      const current=this.preferences(),saved=await this.options.data.savePreferences({...current,confirmations:{...current.confirmations,[pending.confirmation]:false}},current.revision);
+      if(this.pendingConfirm!==pending)return;
+      this.report(saved);if(!saved.ok)return;
+    }
     this.pendingConfirm = null;
     void this.transition.navigate(this.modalRoot,this.pageAnimation('exit'),()=>this.backImmediate(),()=>undefined,this.preferences().reducedMotion).then(completed=>{this.render();pending?.resolve(completed&&accepted);});
   }
@@ -1166,30 +1371,35 @@ export class PlayerView {
     const saved=await this.options.data.saveCurrentMainStory(currentMainStory(this.options.snapshot.project.player.name,inspection.state));
     this.report(saved);return saved.ok;
   }
-  async newGame(playerName?: string, afterstoryCharacterId?: Id) {
-    if(this.starting)return;
+  async newGame(playerName?: string, afterstoryCharacterId?: Id): Promise<void> {
+    await this.startGame(playerName, afterstoryCharacterId);
+  }
+  private async startGame(playerName?: string, afterstoryCharacterId?: Id, signal?: AbortSignal): Promise<BlueprintNodeResult> {
+    if(this.starting)return { outcome: 'unmet' };
     const character=afterstoryCharacterId?this.options.snapshot.characters.find(character=>character.id===afterstoryCharacterId&&character.narrativeRole==='main'):null;
     const afterstory=character?.afterstory;
-    if(afterstoryCharacterId&&(!character||!afterstoryUnlocked(character,this.options.data.current()!.longTerm.endings))){this.showError('后日谈尚未解锁');return;}
+    if(afterstoryCharacterId&&(!character||!afterstoryUnlocked(character,this.options.data.current()!.longTerm.endings))){this.showError('后日谈尚未解锁');return { outcome: 'unmet' };}
     const name = this.options.snapshot.project.player.name;
     if (!afterstory && name?.allowCustom && playerName === undefined && shouldConfirmPlayerName(name,this.options.data.current()!.currentMainStory)) {
       this.askingName = true; this.composing = false; this.inputDraft = name.defaultName; this.showError('');
-      await this.animateNavigation(()=>this.navigation.replace('input')); return;
+      const navigated = await this.animateNavigation(()=>this.ownedBlueprintNavigation(signal,()=>this.navigation.replace('input')));
+      return { outcome: navigated ? 'success' : 'unmet', navigated };
     }
     if (!afterstory && name?.allowCustom && playerName !== undefined && (!playerName.trim() || countNameCharacters(playerName) > name.maxLength)) {
-      this.showError(!playerName.trim()?this.t('请填写姓名。','Enter a name.','名前を入力してください。'):this.t(`姓名最多 ${name.maxLength} 个可见字符，请缩短后确认。`,`Use at most ${name.maxLength} visible characters, then confirm.`,`名前は${name.maxLength}文字以内で入力してください。`));this.render();return;
+      this.showError(!playerName.trim()?this.t('请填写姓名。','Enter a name.','名前を入力してください。'):this.t(`姓名最多 ${name.maxLength} 个可见字符，请缩短后确认。`,`Use at most ${name.maxLength} visible characters, then confirm.`,`名前は${name.maxLength}文字以内で入力してください。`));this.render();return { outcome: 'unmet' };
     }
     this.starting=true;this.startingAfterstory=afterstoryCharacterId??null;this.render();
     reportPlayerPreparation(this.options.root, 'opening');
     const release=this.holdVisual();
     try {
-    if(afterstory&&!await this.syncCurrentMainStory(true))return;
-    if(afterstory&&this.options.session.inspectActivity()?.status!=='ended'&&this.options.session.inspect()&&!await this.save('continue'))return;
+    if(afterstory&&!await this.syncCurrentMainStory(true))return { outcome: 'unmet' };
+    if(afterstory&&this.options.session.inspectActivity()?.status!=='ended'&&this.options.session.inspect()&&!await this.save('continue'))return { outcome: 'unmet' };
     const snapshot = this.options.snapshot, entry = afterstory?.entry??snapshot.project.entry;
     const scene = snapshot.scenes.find(item => item.scene.id === entry.sceneId);
     const position = { sceneId: entry.sceneId, statementId: entry.labelId ? scene?.labels[entry.labelId] ?? null : scene?.instructions[0]?.statementId ?? null };
-    if (!position.statementId) { this.showError('起始剧情不可用'); return; }
+    if (!position.statementId) { this.showError('起始剧情不可用'); return blueprintFailure('UI_STORY_ENTRY_MISSING','The starting story entry is unavailable.'); }
     await this.options.prepareOpeningAssets?.(position);
+    signal?.throwIfAborted();
     const scenario = { schemaVersion: 1 as const, id: createId(), name: 'New game', projectId: snapshot.projectId,
       entry: position, target: position, initialProgress: afterstory
         ? {...afterstory.initialProgress,...initialNameProgress(name,this.options.data.current()!.currentMainStory)}
@@ -1198,11 +1408,15 @@ export class PlayerView {
       pluginVersions: [snapshot.lock.engine, ...snapshot.lock.plugins, snapshot.lock.template] };
     const prepared = await this.options.session.prepareSession({ snapshot, domain: this.options.data.domain,
       source: { kind: 'entry', scenario }, target: null,
-      story: afterstory?{kind:'afterstory',entryId:afterstory.id,characterId:character!.id,title:afterstory.title}:{kind:'main'} }); this.report(prepared); if (!prepared.ok) return;
+      story: afterstory?{kind:'afterstory',entryId:afterstory.id,characterId:character!.id,title:afterstory.title}:{kind:'main'} });
+    if (signal?.aborted) { if (prepared.ok) this.options.session.disposePrepared(prepared.value.id); signal.throwIfAborted(); }
+    this.report(prepared); if (!prepared.ok) return { outcome:'failure', issue:prepared.error };
     const stage = await this.options.stage.prepareStage(prepared.value.sessionId, prepared.value.state.presentation, null,
-      prepared.value.voiceBinding); if (!stage.ok) { this.setStageError(stage.error); this.options.session.disposePrepared(prepared.value.id); return; }
+      prepared.value.voiceBinding);
+    if (signal?.aborted) { if (stage.ok) this.options.stage.discardPrepared(stage.value.id); this.options.session.disposePrepared(prepared.value.id); signal.throwIfAborted(); }
+    if (!stage.ok) { this.setStageError(stage.error); this.options.session.disposePrepared(prepared.value.id); return { outcome:'failure', issue:stage.error }; }
     const previousSessionId = this.options.session.inspectActivity()?.sessionId ?? null;
-    const activated = this.options.session.activate(prepared.value.id); this.report(activated); if (!activated.ok) return;
+    const activated = this.options.session.activate(prepared.value.id); this.report(activated); if (!activated.ok) return { outcome:'failure', issue:activated.error };
     if(!afterstory)this.mainStorySessionReady=false;
     this.askingName = false;
     if (previousSessionId) { this.options.audio.disposeSession(previousSessionId);
@@ -1211,20 +1425,22 @@ export class PlayerView {
     const owner = activated.value.token ?? { sessionId: activated.value.sessionId,
       occurrence: activated.value.state.occurrence, statementId: activated.value.state.position.statementId! };
     const displayed = this.options.stage.commitStage(stage.value.id, owner);
-    if (!displayed.ok) { this.setStageError(displayed.error); return; }
+    if (!displayed.ok) { this.setStageError(displayed.error); return { outcome:'failure', issue:displayed.error }; }
     this.setStageError(null);
-    this.showStory();
-    const started = await this.options.session.start(); this.report(started); if (!started.ok) return;
+    this.showStory(signal);
+    const started = await this.options.session.start(); this.report(started); if (!started.ok) return { outcome:'failure', issue:started.error, navigated:true };
     if(!afterstory)this.flowSources=[];
-    if(!afterstory){this.mainStorySessionReady=true;if(!await this.syncCurrentMainStory(true))return;}
-    this.showStory();
+    if(!afterstory){this.mainStorySessionReady=true;if(!await this.syncCurrentMainStory(true))return { outcome:'failure', issue:this.operationIssue ?? blueprintIssue('UI_STORY_START_FAILED','The starting story state could not be saved.'), navigated:true };}
+    if(!signal?.aborted)this.showStory(signal);
     await this.waitForTargetPresentation();
-    } catch(error) { if(!this.disposed)this.showError(issueFromError(error,'M07')); }
+    return { outcome:'success', navigated:true };
+    } catch(error) { const issue=issueFromError(error,'M07');if(!this.disposed&&!signal?.aborted)this.showError(issue);return { outcome:'failure', issue }; }
     finally {release();this.starting=false;this.startingAfterstory=null;if(!this.disposed){this.render();reportPlayerPreparation(this.options.root,'ready');}}
   }
   private story(choices?: ReactNode) {
     const inspection = this.options.session.inspect(); if (!inspection) { this.mountPage(<p>{this.t('没有活动剧情','No active story','進行中の物語はありません')}</p>); return; }
     const state = inspection.state;
+    if (this.options.stage.sceneRuleActive && state.wait && ['choice', 'input', 'plugin'].includes(state.wait.kind)) return;
     if (state.wait?.kind === 'plugin' && state.wait.page && inspection.token) {
       const key = JSON.stringify(inspection.token);
       if (this.pluginOpenToken !== key) { this.pluginOpenToken = key; this.open(state.wait.page); return; }
@@ -1241,6 +1457,10 @@ export class PlayerView {
     const pageStart = nvl ? reading.start : 0, pageEnd = nvl ? reading.end ?? clusters.length : clusters.length;
     const portraitSource = readingPortrait(state.presentation.objects, state.presentation.text, this.options.snapshot.characters, state.presentation.characterDifferences);
     const shown = state.wait?.kind === 'say' ? state.wait.textShown : clusters.length;
+    const dialogueWait = state.wait?.kind === 'say' ? state.wait.inline?.waiting : null;
+    const dialoguePause = dialogueWait && (dialogueWait.remainingMs === null
+      ? { kind: 'input' as const, label: this.t('点击继续', 'Click to continue', 'クリックで続行') }
+      : { kind: 'timed' as const, label: this.t('句内停顿', 'Dialogue pause', '台詞の一時停止') });
     const progress = textProgress(Math.min(shown,pageEnd));
     let panel: HTMLElement | null = null, portrait: HTMLCanvasElement | null = null;
     let body!: HTMLDivElement, toolbar: HTMLDivElement | null = null, edge: HTMLButtonElement | null = null, introHost: HTMLDivElement | null = null;
@@ -1274,7 +1494,7 @@ export class PlayerView {
       {choices}
       {this.preferences().filmMode&&state.presentation.film.enabled&&<FilmBars top={state.presentation.film.top} bottom={state.presentation.film.bottom}/>}
       {this.preferences().statusIcons&&(this.auto||this.skip||this.ctrlFast)&&<ReadingStatus mode={this.auto?'auto':'skip'} part={this.partRef('story','story.statusIcons')}/>}
-      {!activeIntro && <ReadingSurface key={nvl?'nvl':'adv'} legacy={!readingPanel} nvl={nvl} runs={runs} start={pageStart} shown={Math.min(shown,pageEnd)} progress={progress} scale={this.preferences().fontScale} paragraphGap={nvl?Number(readingPanel?.content.nvlParagraphGap??16):undefined}
+      {!activeIntro && <ReadingSurface key={nvl?'nvl':'adv'} legacy={!readingPanel} nvl={nvl} runs={runs} start={pageStart} shown={Math.min(shown,pageEnd)} progress={progress} pause={dialoguePause ?? undefined} scale={this.preferences().fontScale} paragraphGap={nvl?Number(readingPanel?.content.nvlParagraphGap??16):undefined}
         compose={parts=>{const actions=businessParts(parts.children());return this.instances('story',{business:(component,children,context)=>{switch(component.part){case 'story.readingPanel':return parts.panel(<>{children}{actions.residual}</>);case 'story.nameBox':return parts.name(children);case 'story.nameText':return parts.nameText(children);case 'story.textBox':return parts.body(children);case 'story.bodyText':return parts.text(children);case 'story.avatar':return !nvl&&readingPanel?.content.portrait===true&&this.preferences().avatar?parts.portrait(children):null;case 'story.statusIcons':return null;case 'story.toolbar.more':return <details className="gc-toolbar-more"><summary title={this.t('更多','More','その他')} aria-label={this.t('更多','More','その他')}><ToolbarIcon kind="more"/></summary><nav>{children}{(this.options.pluginPages??[]).map(page=><button key={page.key} onClick={()=>this.open(page.key)}>{this.locale(page.titleKey)}</button>)}</nav></details>;default:return actions.render(component,children,context);}}});}}
         speaker={state.presentation.text.speakerName}
         panel={{onPointerMove:event=>{if(!toolbar)return;const rect=toolbar.getBoundingClientRect(),band=80*this.uiScale;if(event.clientY>=rect.top-band&&event.clientY<=rect.bottom+band&&event.clientX>=rect.left-band&&event.clientX<=rect.right+band)reveal();},onPointerLeave:()=>queueMicrotask(conceal),ref:node=>{panel=node;if(node&&readingPanel){this.stylePart('story','story.readingPanel',node,true);node.hidden=!choosing&&(this.hidden||!state.presentation.text.textboxVisible)||!readingPanel.visible;node.dataset.nameAbove=String(!nvl&&readingPanel.content.nameAbove===true);node.dataset.portrait=String(!nvl&&readingPanel.content.portrait===true&&this.preferences().avatar&&this.visible('story','story.avatar'));}}}}
@@ -1312,6 +1532,13 @@ export class PlayerView {
     if(state.presentation.intro&&introHost)this.intro(state.presentation.intro,activeIntro,introHost);
     if(activeIntro)return;
     if(!body){this.showError(this.t('阅读页缺少正文容器，请在页面设计中恢复正文部件。','The reading page needs its text container. Restore the reading text part in the page designer.','読書ページの本文領域をページデザイナーで復元してください。'));return;}
+    if (dialogueWait) {
+      body.dataset.dialogueEventWait = dialogueWait.remainingMs === null ? 'input' : 'timed';
+      body.dataset.dialogueEventId = dialogueWait.eventId;
+    } else {
+      delete body.dataset.dialogueEventWait;
+      delete body.dataset.dialogueEventId;
+    }
     const textBox = this.part('story', 'story.textBox');
     this.stylePart('story', 'story.textBox', body, !readingPanel); body.hidden=this.hidden||!state.presentation.text.textboxVisible||!this.visible('story','story.textBox');
     body.style.display='grid';body.style.alignItems='start';body.style.justifyContent='stretch';body.style.gridTemplateColumns='minmax(0,1fr)';
@@ -1378,25 +1605,55 @@ export class PlayerView {
     });
     if (this.storyActive && (this.skip || this.ctrlFast) && inspection.token) {
       this.scheduleSkip();
-    } else if (this.storyActive && state.wait?.kind === 'say' && shown < pageEnd && inspection.token && (!nvl||reading!.end!==null)) {
+    } else if (this.storyActive && dialogueWait) {
+      this.autoReadyAt = null;
+      if (this.auto && inspection.token && dialogueWait.remainingMs === null) {
+        const token = inspection.token, sequence = this.renderSequence;
+        const duration = this.options.session.dialogueAutoWaitMs(dialogueWait.eventId) ?? this.preferences().autoWaitMs;
+        const deadline = performance.now() + duration;
+        const release = () => {
+          const activity = this.options.session.inspectActivity();
+          if (!this.auto || !this.storyActive || sequence !== this.renderSequence || !activity ||
+            !sameToken(activity.token, token) || activity.dialogueWait?.eventId !== dialogueWait.eventId) return;
+          const remaining = deadline - performance.now();
+          if (remaining > 0 || this.options.stage.sceneRuleActive) {
+            this.autoTimer = setTimeout(release, Math.min(Math.max(20, Math.ceil(remaining)), 2_147_483_647));
+            return;
+          }
+          void this.options.session.releaseDialogueWait({ token, eventId: dialogueWait.eventId,
+            expectedSequence: activity.sequence, mode: 'auto' }).then(result => {
+            if (!result.ok && !['TOKEN_STALE', 'STATE_CHANGED', 'SESSION_PAUSED'].includes(result.error.code)) {
+              this.report(result); this.stopModes();
+            }
+            this.render();
+          });
+        };
+        this.autoTimer = setTimeout(release, Math.min(duration, 2_147_483_647));
+      }
+    } else if (this.storyActive && state.wait?.kind === 'say' && !state.wait.textComplete && inspection.token && (!nvl||reading!.end!==null)) {
       this.autoReadyAt = null;
       const sequence=this.renderSequence;
       const tick = (count:number) => { this.typingTimer = setTimeout(() => {
-        if (this.disposed||sequence!==this.renderSequence||!this.storyActive||this.navigation.page !== 'story' || !sameToken(this.options.session.inspectActivity()?.token ?? null, inspection.token)) return;
-        void this.options.session.updateTextProgress({ token: inspection.token!, textShown: count }).then(result => {
-          if (!sameToken(this.options.session.inspectActivity()?.token ?? null, inspection.token)) return;
+        const activity = this.options.session.inspectActivity();
+        if (!activity || sequence!==this.renderSequence||!this.storyActive||!sameToken(activity.token, inspection.token)) return;
+        void this.options.session.updateTextProgress({ token: inspection.token!, textShown: count, expectedSequence: activity.sequence }).then(result => {
+          if (this.disposed || sequence !== this.renderSequence) return;
+          if (!result.ok && ['TOKEN_STALE', 'STATE_CHANGED', 'SESSION_PAUSED'].includes(result.error.code)) { this.render(); return; }
           if(!result.ok){this.report(result);return;}
-          progress.reveal(count);
-          if(count<pageEnd)tick(count+1);else this.render(); });
+          const confirmed = result.value.state.wait;
+          if (!sameToken(result.value.token, inspection.token) || confirmed?.kind !== 'say') { this.render(); return; }
+          progress.reveal(Math.min(confirmed.textShown, pageEnd));
+          if (confirmed.textComplete || confirmed.inline?.waiting) this.render();
+          else tick(Math.min(confirmed.textShown + 1, pageEnd)); });
       }, 1000 / this.preferences().textSpeed); };
-      tick(shown+1);
+      tick(Math.min(shown + 1, pageEnd));
     } else if (this.storyActive && this.auto && state.wait?.kind === 'say' && inspection.token) {
       const token = inspection.token, key = `${token.sessionId}/${token.occurrence}/${token.statementId}`;
       if (this.autoReadyKey !== key) { this.autoReadyKey = key; this.autoReadyAt = null; }
       const poll = () => {
         if (!this.auto || !body.isConnected || this.navigation.page !== 'story' ||
           !sameToken(this.options.session.inspectActivity()?.token ?? null, token)) return;
-        if (this.autoAttempting) { this.autoTimer = setTimeout(poll, 100); return; }
+        if (this.autoAttempting || this.options.stage.sceneRuleActive) { this.autoTimer = setTimeout(poll, 100); return; }
         this.autoAttempting = true;
         void (async () => {
           try {
@@ -1432,6 +1689,7 @@ export class PlayerView {
     if(this.skipTimer || this.skipAttempting)return;
     this.skipTimer=setTimeout(()=>{this.skipTimer=null;
       if(!this.storyActive||!(this.skip||this.ctrlFast))return;
+      if (this.options.stage.sceneRuleActive) this.options.stage.completeSceneRule();
       this.skipAttempting=true;
       void this.options.session.skipStep(this.ctrlFast?'all':this.preferences().skipScope).then(result=>{
         if(!result.ok){this.report(result);this.stopModes();}
@@ -1440,7 +1698,7 @@ export class PlayerView {
     },50);
   }
   private async advance() {
-    if(this.transition.busy||!this.storyActive)return;
+    if(this.transition.busy||!this.storyActive||this.options.stage.sceneRuleActive)return;
     if(this.auto||this.skip||this.ctrlFast){this.stopModes();this.render();return;}
     if (this.hidden) { this.hidden = false; this.render(); return; }
     const inspection = this.options.session.inspect(); if (!inspection?.token) return;
@@ -1458,8 +1716,17 @@ export class PlayerView {
     }
     const synced = await this.options.syncStage(); this.report(synced); if (!synced.ok) return;
     if(!this.storyActive||!sameToken(this.options.session.inspectActivity()?.token??null,inspection.token))return;
-    const result = await this.options.session.dispatch({ kind: 'advance', token: inspection.token });
-    this.report(result); this.render();
+    const observed = inspection.state.wait;
+    let expectedSequence: number | undefined;
+    if (observed?.kind === 'say' && observed.inline) {
+      const latest = this.options.session.inspect()!, wait = latest.state.wait;
+      if (wait?.kind !== 'say' || wait.textShown !== observed.textShown || wait.textComplete !== observed.textComplete ||
+        wait.inline?.cursor !== observed.inline.cursor || wait.inline?.waiting?.eventId !== observed.inline.waiting?.eventId) return;
+      expectedSequence = latest.sequence;
+    }
+    const result = await this.options.session.dispatch({ kind: 'advance', token: inspection.token, expectedSequence });
+    if (result.ok || !['TOKEN_STALE', 'STATE_CHANGED', 'SESSION_PAUSED'].includes(result.error.code)) this.report(result);
+    this.render();
   }
   private intro(state: NonNullable<PresentationState['intro']>, active: boolean, host: HTMLElement) {
     const panel = document.createElement('div'); panel.className = active ? 'gc-intro' : 'gc-intro gc-intro-retained';
@@ -1514,18 +1781,19 @@ export class PlayerView {
       activate:async(component)=>{if(component.part==='input.confirm')await submit();if(component.part==='input.cancel')await this.cancelInput();},
       business:(component,children)=>component.part==='input.field'?<input autoFocus aria-label={prompt} aria-invalid={!!this.operationMessage} aria-describedby={this.operationMessage?validationId:undefined} value={this.inputDraft} placeholder={this.askingName?name?.defaultName:prompt} onChange={event=>{this.inputDraft=event.currentTarget.value;this.showError('');this.render();}} onCompositionStart={()=>{this.composing=true;}} onCompositionEnd={()=>{this.composing=false;}} onKeyDown={event=>{if(event.nativeEvent.isComposing||this.composing)return;if(event.key==='Escape'){event.preventDefault();event.stopPropagation();void this.cancelInput();}if(event.key==='Enter'){event.preventDefault();event.stopPropagation();void submit();}}}/>:component.part==='input.validation'?<p id={validationId} role="alert">{this.operationMessage}</p>:undefined}));
   }
-  private async cancelInput() {
-    if (this.askingName) { this.askingName=false;this.composing=false;this.inputDraft='';this.showError('');this.navigation.replace('title');return; }
-    const inspection=this.options.session.inspect(); if(!inspection?.token)return;
-    const synced=await this.options.syncStage();this.report(synced);if(!synced.ok)return;
-    const result=await this.options.session.dispatch({kind:'cancel',token:inspection.token});this.report(result);
-    if(result.ok){this.inputDraft='';this.showStory();}
+  private async cancelInput(signal?:AbortSignal):Promise<boolean> {
+    if (this.askingName) { this.askingName=false;this.composing=false;this.inputDraft='';this.showError('');this.ownedBlueprintNavigation(signal,()=>this.navigation.replace('title'));return true; }
+    const inspection=this.options.session.inspect(); if(!inspection?.token)return false;
+    const synced=await this.options.syncStage();if(signal?.aborted)return false;this.report(synced);if(!synced.ok)return false;
+    const result=await this.options.session.dispatch({kind:'cancel',token:inspection.token});if(signal?.aborted)return false;this.report(result);
+    if(result.ok){this.inputDraft='';this.showStory(signal);}
+    return result.ok;
   }
   private saves(mode: 'save'|'load') {
     this.mountPage(<SavePage compose={adapter=>{const {data,...overrides}=adapter;const context=this.instanceContext(mode);return this.instances(mode,{...overrides,context:{...context,data:{...context.data,...data}}});}} data={this.options.data} mode={mode} category={this.category} pageNumber={this.pageNumber} saving={this.saving} locale={this.preferences().menuLocale} label={key=>this.locale(key)} part={key=>this.partRef(mode,key,[`${mode}.detail`,`${mode}.grid`,`${mode}.categoryTabs`,`${mode}.pagination`,`${mode}.primary`,`${mode}.back`].includes(key))} setCategory={value=>{this.category=value;this.pageNumber=0;this.render();}} setPage={value=>{this.pageNumber=value;this.render();}} addPage={()=>{const index=this.options.data.current()!.index;void this.options.data.addManualPage(index.revision).then(result=>{this.report(result);if(result.ok){this.pageNumber=Math.max(0,Math.ceil(result.value.manual.length/12)-1);this.render();}});}} notice={this.saveReceipt} save={slot=>this.save('manual',slot)} load={id=>this.load(id)} back={()=>this.back()}/>);
   }
   private save(kind: SaveRecord['kind'], slotId?: Id): Promise<boolean> {
-    if(this.saving)return Promise.resolve(false);
+    if(this.saving || this.options.stage.sceneRuleActive)return Promise.resolve(false);
     const operation=this.saveOwned(kind,slotId);this.savingTask=operation;
     void operation.then(()=>{if(this.savingTask===operation)this.savingTask=null;},()=>{if(this.savingTask===operation)this.savingTask=null;});
     return operation;
@@ -1544,6 +1812,7 @@ export class PlayerView {
     }
   }
   private async writeSave(kind: SaveRecord['kind'], slotId?: Id): Promise<boolean> {
+    if (kind !== 'continue') await this.options.session.waitForIdle();
     const inspection = this.options.session.inspect(); if (!inspection) return false;
     if(kind==='continue'&&(this.flowSources?.length||this.mainStorySessionReady===false))return true;
     const priorRecordId = this.options.data.current()!.index.manual.find(item => item.slotId === slotId)?.recordId ?? null;
@@ -1554,7 +1823,8 @@ export class PlayerView {
       if(!await this.ask(this.t(`覆盖手动存档 ${String(number).padStart(2,'0')} 的已有进度？`,`Overwrite the existing progress in manual slot ${String(number).padStart(2,'0')}?`,`手動セーブ ${String(number).padStart(2,'0')} の進行状況を上書きしますか？`)+description,this.t('覆盖存档','Overwrite save','上書きする'),'save:save.primary','overwrite'))return false;
     }
     const waitPolicy = this.options.session.pluginWaitPolicy();
-    const unstable = !!this.options.entryPresentation?.active || ['loading', 'playing', 'fading', 'error'].includes(this.options.video.state) || !waitPolicy.restorable;
+    const unstable = this.options.stage.sceneRuleActive || this.options.session.canRetryRuleScene ||
+      !!this.options.entryPresentation?.active || ['loading', 'playing', 'fading', 'error'].includes(this.options.video.state) || !waitPolicy.restorable;
     if (unstable && kind !== 'continue') { this.showError(waitPolicy.reason ?? '当前演出尚不能捕获，请稍后保存'); return false; }
     const checkpoint = unstable ? this.options.session.checkpointsFor(inspection.sessionId).filter(checkpoint=>checkpoint.state.entryPresentation?.completed!==false).at(-1) : null;
     if (unstable && !checkpoint) { this.showError('当前没有可用的退出检查点'); return false; }
@@ -1586,38 +1856,45 @@ export class PlayerView {
     this.report(result); if (result.ok) { if(!await this.syncCurrentMainStory())return false;this.selectedSave = recordId; this.saveReceipt=this.t('进度已保存','Progress saved','進行状況を保存しました'); this.render(); }
     return result.ok;
   }
-  private async load(recordId: Id) {
-    if (this.preferences().confirmations.load && !await this.ask(this.locale('title.load'),undefined,undefined,'load')) return;
-    const context = this.options.restore.context(); this.report(context); if (!context.ok) return;
+  private async load(recordId: Id, signal?: AbortSignal): Promise<BlueprintNodeResult> {
+    if (this.preferences().confirmations.load && !await this.ask(this.locale('title.load'),undefined,undefined,'load',signal)) return { outcome: 'unmet' };
+    signal?.throwIfAborted();
+    const context = this.options.restore.context(); this.report(context); if (!context.ok) return { outcome: 'failure', issue: context.error };
     const requestId = createId();
     const prepared = await this.options.restore.prepareLoad({ requestId, recordId, context: context.value });
-    this.report(prepared); if (!prepared.ok) return;
-    const accepted = prepared.value.mappings.length ? await this.confirmMappings(prepared.value.mappings) : true;
-    if (!accepted) { this.options.restore.disposePreparedRestore(requestId); return; }
+    if (signal?.aborted) { this.options.restore.disposePreparedRestore(requestId); signal.throwIfAborted(); }
+    this.report(prepared); if (!prepared.ok) return { outcome: 'failure', issue: prepared.error };
+    const accepted = prepared.value.mappings.length ? await this.confirmMappings(prepared.value.mappings, signal) : true;
+    if (!accepted || signal?.aborted) { this.options.restore.disposePreparedRestore(requestId); return { outcome: 'unmet' }; }
     const release=this.holdVisual();
     try {
     const committed = this.options.restore.commitLoad({ requestId, acceptMappings: accepted });
     this.report(committed); if (committed.ok) { this.options.longTerm.setActiveSession(committed.value.sessionId);
       this.mainStorySessionReady=false;
-      this.showStory();
+      this.showStory(signal);
       if (this.options.session.inspect()?.state.phase === 'entry') {
-        const started=await this.options.session.start();this.report(started);if(!started.ok)return;this.render();
+        const started=await this.options.session.start();this.report(started);if(!started.ok)return { outcome:'failure',issue:started.error,navigated:true };this.render();
       }
-      this.mainStorySessionReady=true;if(!await this.syncCurrentMainStory())return;
+      this.mainStorySessionReady=true;if(!await this.syncCurrentMainStory())return { outcome:'failure', issue:this.operationIssue ?? blueprintIssue('UI_CONTINUE_FAILED','The restored story state could not be saved.'), navigated:true };
       await this.waitForTargetPresentation();
+      return { outcome: 'success', navigated: true };
     }
-    } finally {release();}
+    return { outcome: 'failure', issue: committed.error };
+    } finally {
+      release();
+      if (!this.disposed) this.render();
+    }
   }
   private async replayVoice() {
     const synced = await this.options.syncStage(); this.report(synced);
     if (synced.ok) this.report(this.options.session.replayVoice());
   }
-  private confirmMappings(mappings: EntryMapping[]) {
+  private confirmMappings(mappings: EntryMapping[], signal?: AbortSignal) {
     const unique = mappings.filter((item, index) => mappings.findIndex(other => other.oldRelease === item.oldRelease &&
       other.oldSceneId === item.oldSceneId && other.oldStatementId === item.oldStatementId &&
       other.newSceneId === item.newSceneId && other.newStatementId === item.newStatementId) === index);
     return this.ask(`${this.locale('restore.mapping')}\n${unique.map(item =>
-      `${item.oldSceneId}/${item.oldStatementId} → ${item.newSceneId}/${item.newStatementId} (${item.reason})`).join('\n')}\n${this.locale('restore.mappingConfirm')}`);
+      `${item.oldSceneId}/${item.oldStatementId} → ${item.newSceneId}/${item.newStatementId} (${item.reason})`).join('\n')}\n${this.locale('restore.mappingConfirm')}`,undefined,undefined,undefined,signal);
   }
   private async playHistoryVoice(id: Id): Promise<void> {
     const entry = this.options.session.inspect()?.history.find(item => item.id === id), sessionId = this.options.session.inspectActivity()?.sessionId;
@@ -1686,7 +1963,7 @@ export class PlayerView {
   }
   private gallery(kind:'cg'|'music') {
     if(!this.canOpen(kind)){this.mountPage(<><p>{this.t('完成任意一条路线后开放','Complete any route to unlock','いずれかのルートを完了すると解放されます')}</p><button onClick={()=>this.back()}>{this.locale('nav.back')}</button></>);return;}
-    this.mountPage(<GalleryPage present={change=>this.presentGalleryChange(change)} compose={(adapter,rootPart)=>this.composeBusiness(kind,adapter,rootPart)} sample={this.gallerySample} snapshot={this.options.snapshot} data={this.options.data.current()!.longTerm} host={this.options.host} state={this.galleryView} page={kind} audio={this.pageAudio} mixer={this.options.audio} part={key=>this.partRef(kind,key)} language={this.preferences().menuLocale} volume={this.preferences().volumes.master*this.preferences().volumes.video/10000} paused={this.blurred&&this.preferences().pauseOnBlur||this.emergencyCover?.active} redraw={()=>this.render()} back={()=>this.back()} settings={()=>this.open('settings')} animate={change=>{const element=this.content.querySelector<HTMLElement>('[data-gc-part="cg.root"]')??this.content;if(this.contentTransition.busy)return;const root=this.part('cg','cg.types');const animation=this.options.snapshot.template.animations.find(item=>item.id===root?.animations.show),exit=this.options.snapshot.template.animations.find(item=>item.id===root?.animations.hide);void this.contentTransition.navigate(element,exit,change,()=>animation,this.preferences().reducedMotion,undefined,1);}}/>);
+    this.mountPage(<GalleryPage present={async change=>{await this.presentGalleryChange(change);}} compose={(adapter,rootPart)=>this.composeBusiness(kind,adapter,rootPart)} sample={this.gallerySample} snapshot={this.options.snapshot} data={this.options.data.current()!.longTerm} host={this.options.host} state={this.galleryView} page={kind} audio={this.pageAudio} mixer={this.options.audio} part={key=>this.partRef(kind,key)} language={this.preferences().menuLocale} volume={this.preferences().volumes.master*this.preferences().volumes.video/10000} paused={this.blurred&&this.preferences().pauseOnBlur||this.emergencyCover?.active} redraw={()=>this.render()} back={()=>this.back()} settings={()=>this.open('settings')} animate={change=>{const element=this.content.querySelector<HTMLElement>('[data-gc-part="cg.root"]')??this.content;if(this.contentTransition.busy)return;const root=this.part('cg','cg.types');const animation=this.options.snapshot.template.animations.find(item=>item.id===root?.animations.show),exit=this.options.snapshot.template.animations.find(item=>item.id===root?.animations.hide);void this.contentTransition.navigate(element,exit,change,()=>animation,this.preferences().reducedMotion,undefined,1);}}/>);
   }
   private flow() {
     const snapshot = this.options.snapshot, records = this.options.data.current()!.longTerm.flowEntries;
@@ -1708,12 +1985,12 @@ export class PlayerView {
   }
   private flowEntering = false;
   private flowSources: (SaveRecord | null)[] = [];
-  private async activateFlowSession(prepared: PreparedSession, beforeStart: () => void): Promise<boolean> {
+  private async activateFlowSession(prepared: PreparedSession, beforeStart: () => void, signal?: AbortSignal): Promise<boolean> {
     const previousSessionId = this.options.session.inspectActivity()?.sessionId ?? null;
     const page = this.navigation.page;
     const stage = await this.options.stage.prepareStage(prepared.sessionId, prepared.state.presentation, null, prepared.voiceBinding);
     if (!stage.ok) { this.setStageError(stage.error); this.options.session.disposePrepared(prepared.id); return false; }
-    if (this.disposed || this.navigation.page !== page || (this.options.session.inspectActivity()?.sessionId ?? null) !== previousSessionId) {
+    if (signal?.aborted || this.disposed || this.navigation.page !== page || (this.options.session.inspectActivity()?.sessionId ?? null) !== previousSessionId) {
       this.options.stage.discardPrepared(stage.value.id); this.options.session.disposePrepared(prepared.id); return false;
     }
     const activated = this.options.session.activate(prepared.id); this.report(activated);
@@ -1723,9 +2000,9 @@ export class PlayerView {
     const release=this.holdVisual();
     try {const displayed = this.options.commitSessionStage(stage.value.id, owner, previousSessionId); this.report(displayed);
     if (!displayed.ok) { this.setStageError(displayed.error); return false; }
-    beforeStart(); this.setStageError(null); this.showStory();
+    beforeStart(); this.setStageError(null); this.showStory(signal);
     if (activated.value.state.phase === 'entry') this.report(await this.options.session.start());
-    this.showStory();await this.waitForTargetPresentation();return true;
+    if(!signal?.aborted)this.showStory(signal);await this.waitForTargetPresentation();return true;
     } finally {release();}
   }
   private async enterFlow(id: Id) {
@@ -1775,20 +2052,20 @@ export class PlayerView {
       await this.activateFlowSession(prepared.value, () => this.flowSources.push(source));
     } finally { this.flowEntering = false; if (!this.disposed) this.render(); }
   }
-  private async returnFlowSource(confirmation: boolean): Promise<boolean> {
-    if (confirmation && this.preferences().confirmations.title && !await this.ask(this.t('返回原剧情？','Return to the original story?','元の物語へ戻りますか？'))) return false;
-    if (!await this.ensureLongTerm()) return false;
+  private async returnFlowSource(confirmation: boolean, signal?: AbortSignal): Promise<boolean> {
+    if (confirmation && this.preferences().confirmations.title && !await this.ask(this.t('返回原剧情？','Return to the original story?','元の物語へ戻りますか？'),undefined,undefined,undefined,signal)) return false;
+    if (!await this.ensureLongTerm() || signal?.aborted) return false;
     const source = this.flowSources.at(-1);
     if (source) {
       const prepared = await this.options.session.prepareSession({ snapshot: this.options.snapshot, domain: this.options.data.domain,
         source: { kind: 'restored', state: source.state, history: source.history, voiceLocale: this.preferences().voiceLocale }, target: null });
       this.report(prepared); if (!prepared.ok) return false;
-      return this.activateFlowSession(prepared.value, () => { this.flowSources.pop(); });
+      return this.activateFlowSession(prepared.value, () => { this.flowSources.pop(); }, signal);
     }
     const inspection = this.options.session.inspect();
     if (inspection) { this.options.audio.disposeSession(inspection.sessionId); this.options.onSessionEnd(inspection.sessionId); this.options.session.dispose(); }
     this.options.longTerm.setActiveSession(null); this.flowSources.pop(); this.options.video.returnTitle();
-    this.options.stage.pause(true); this.options.audio.setPause('systemPage', true); this.setStageError(null); this.navigation.replace('title'); return true;
+    this.options.stage.pause(true); this.options.audio.setPause('systemPage', true); this.setStageError(null); this.ownedBlueprintNavigation(signal,()=>this.navigation.replace('title')); return true;
   }
   private characters() {
     if (!this.canOpen('characters')) { this.navigation.replace('title'); this.title(); return; }
@@ -1923,34 +2200,35 @@ export class PlayerView {
     await this.options.session.waitForIdle();
     await this.options.data.waitForIdle();
   }
-  private async saveBeforeLeaving(target:'title'|'exit'):Promise<boolean> {
+  private async saveBeforeLeaving(target:'title'|'exit', signal?:AbortSignal):Promise<boolean> {
     for(;;){
       await this.waitForWrites();
+      if(signal?.aborted)return false;
       const inspection=this.options.session.inspect();
       if(!inspection)return true;
       const ready=await this.ensureLongTerm();
-      if(ready&&await this.syncCurrentMainStory()&&(target==='title'&&(inspection.status==='ended'||!!this.flowSources?.length)||await this.save('continue')))return true;
+      if(ready&&await this.syncCurrentMainStory()&&(target==='title'&&(inspection.status==='ended'||!!this.flowSources?.length)||await this.save('continue')))return !signal?.aborted;
+      if(signal?.aborted)return false;
       let retry=false;
       const reason=this.operationIssue?.message??this.operationMessage;
       const action=target==='exit'?this.t('直接退出','Exit without saving','保存せず終了'):this.t('直接返回标题','Return to title without saving','保存せずタイトルへ');
-      const decision=await new Promise<'retry'|'direct'|'cancel'>(resolve=>{
-        this.pendingConfirm={id:createId(),message:this.t('本次进度尚未保存。','This progress has not been saved.','今回の進行状況は保存されていません。')+'\n'+reason+'\n\n'+this.t('可以重试保存，或放弃本次尚未保存的进度直接离开。已有存档和已保存的阅读记录会保留。','Retry saving, or leave and discard this unsaved progress. Existing saves and saved reading records are kept.','保存を再試行するか、未保存の進行状況を破棄して移動できます。既存のセーブと保存済みの読書記録は保持されます。'),action,
-          retry:()=>{retry=true;void this.finishConfirmation(false);},resolve:accepted=>resolve(accepted?'direct':retry?'retry':'cancel')};
-        this.open('confirm');
-      });
+      const message=this.t('本次进度尚未保存。','This progress has not been saved.','今回の進行状況は保存されていません。')+'\n'+reason+'\n\n'+this.t('可以重试保存，或放弃本次尚未保存的进度直接离开。已有存档和已保存的阅读记录会保留。','Retry saving, or leave and discard this unsaved progress. Existing saves and saved reading records are kept.','保存を再試行するか、未保存の進行状況を破棄して移動できます。既存のセーブと保存済みの読書記録は保持されます。');
+      const confirmed=await this.confirm({message,action,retry:()=>{retry=true;void this.finishConfirmation(false);}},signal);
+      const decision=confirmed?'direct':retry?'retry':'cancel';
       if(decision==='cancel')return false;
       if(decision==='direct'){await this.waitForWrites();return true;}
     }
   }
   private leaving=false;
-  private async returnTitle(confirmation = true, forceTitle = false): Promise<boolean> {
-    if (this.flowSources?.length&&!forceTitle) return this.returnFlowSource(confirmation);
+  private async returnTitle(confirmation = true, forceTitle = false, signal?: AbortSignal): Promise<boolean> {
+    if (this.flowSources?.length&&!forceTitle) return this.returnFlowSource(confirmation,signal);
     if(this.leaving)return false;this.leaving=true;
     try{
+    if (this.options.stage.sceneRuleActive) this.options.stage.completeSceneRule();
     const inspection = this.options.session.inspect(); if (inspection && inspection.status !== 'ended') {
-      if (confirmation && this.preferences().confirmations.title && !await this.ask(this.locale('nav.title'),undefined,undefined,'title')) return false;
+      if (confirmation && this.preferences().confirmations.title && !await this.ask(this.locale('nav.title'),undefined,undefined,'title',signal)) return false;
     }
-    if(!await this.saveBeforeLeaving('title'))return false;
+    if(!await this.saveBeforeLeaving('title',signal)||signal?.aborted)return false;
     const release=this.holdVisual();
     try {
     if(forceTitle)this.flowSources=[];
@@ -1960,7 +2238,7 @@ export class PlayerView {
     this.options.video.returnTitle();
     this.options.stage.pause(true); this.options.audio.setPause('systemPage', true);
     this.setStageError(null);
-    this.navigation.replace('title');
+    this.ownedBlueprintNavigation(signal,()=>this.navigation.replace('title'));
     await this.waitForTargetPresentation();
     return true;
     } finally {release();}
@@ -1973,6 +2251,7 @@ export class PlayerView {
       if(this.options.host.target==='web'){await this.returnTitle();return;}
       if(this.leaving)return;this.leaving=true;
       try{
+      if (this.options.stage.sceneRuleActive) this.options.stage.completeSceneRule();
       if(this.preferences().confirmations.exit&&!await this.ask(this.locale('nav.exit'),undefined,undefined,'exit'))return;
       if(!await this.saveBeforeLeaving('exit'))return;
       const closed=await this.options.host.close();this.report(closed);
@@ -1983,7 +2262,7 @@ export class PlayerView {
   dispose() {
     this.clearEmergencyComponents(); this.emergencyRoot?.unmount(); this.emergencyRoot = null; this.emergencyCover.close(false); this.inputRelease();
     this.visualHold?.release();this.visualHold=null;this.visualHoldUsers=0;
-    this.visualLifetime.abort();this.stopModes(); this.disposed = true; this.renderSequence++; this.lifecycleRelease(); this.visualEvents.abort(); this.scrollCleanup(); this.pendingConfirm?.resolve(false); this.pendingConfirm=null; if (this.typingTimer) clearTimeout(this.typingTimer);
+    this.visualLifetime.abort();this.stopModes(); this.disposed = true; this.stopBlueprints(); this.renderSequence++; this.lifecycleRelease(); this.visualEvents.abort(); this.scrollCleanup(); this.pendingConfirm?.resolve(false); this.pendingConfirm=null; if (this.typingTimer) clearTimeout(this.typingTimer);
     this.releasePluginRender();
     this.clearPluginComponents();
     this.pageRoot?.unmount(); this.pageRoot = null;

@@ -26,7 +26,9 @@ export function commandOwnedIds(command: string, args: Record<string, any>): Id[
   return (command === 'label' ? [args.labelId] : ['changeBg', 'changeFigure', 'changeIllustration'].includes(command) && (!args.op || args.op === 'show') ? [args.objectId]
     : ['setAnimation', 'setComplexAnimation'].includes(command) ? [args.animationId]
     : command === 'pixi' ? [args.effectId] : command === 'playEffect' && args.op !== 'stop' ? [args.soundId]
-      : command === 'choose' ? (args.options ?? []).map((option: any) => option.id) : []).filter((value: unknown): value is Id => typeof value === 'string');
+      : command === 'choose' ? (args.options ?? []).map((option: any) => option.id)
+      : command === 'say' && Array.isArray(args.events) ? args.events.map((event: any) => event?.id)
+      : []).filter((value: unknown): value is Id => typeof value === 'string');
 }
 export function rewriteFieldReferences(args: Record<string, any>, fields: FieldSpec[], mapping: Record<Id, Id>): Record<string, any> {
   const visit = (value: any, field: FieldSpec): any => {
@@ -65,26 +67,33 @@ export function rewriteScriptReferences(input: ParseInput, mapping: Record<Id, I
       if(contains(node.object.value))throw new Error(`Missing reference contract for ${node.command}`);continue;
     }
     if (node.id && mapping[node.id]) edits.push({ start: node.idStart!, end: node.idStart! + node.id.length, oldText: node.id, text: mapping[node.id]! });
+    const dialogueShifts: { end: number; delta: number }[] = [];
     for (const field of node.fields) {
       const args=node.object?.value as Record<string,any>;
       if(field.key==='scope'&&typeof args.variableId==='string'&&scopes[args.variableId])replace(field.valueNode,JSON.stringify(scopes[args.variableId]));
       if(field.key==='receiver') {const receiver=args.receiver;if(receiver&&typeof receiver.variableId==='string'&&scopes[receiver.variableId]){const scope=field.valueNode.fields?.find(field=>field.key==='scope');if(scope)replace(scope.valueNode,JSON.stringify(scopes[receiver.variableId]));}}
       if (node.command === 'say' && field.key === 'text') {
-        const rewriteText = (value: ValueNode): void => {
-          if (typeof value.value === 'string') {
-            let rewritten = '', offset = 0;
-            for (const match of dialogueInterpolations(value.value)) {
-              rewritten += value.value.slice(offset, match.start); offset = match.end;
-              const original = value.value.slice(match.start, match.end);
-              if (match.source === null || !match.closed) { rewritten += original; continue; }
-              const parsedExpression = parseExpression(match.source); if (!parsedExpression.ok) { rewritten += original; continue; }
-              const next = rewriteExpressionIds(parsedExpression.expr,mapping,scopes);
-              rewritten += JSON.stringify(next) === JSON.stringify(parsedExpression.expr) ? original : `{{${printExpression(next)}}}`;
-            }
-            rewritten += value.value.slice(offset);
-            if (rewritten !== value.value) replace(value,JSON.stringify(rewritten));
-          } else { for (const child of value.fields ?? []) rewriteText(child.valueNode); for (const child of value.items ?? []) rewriteText(child); }
-        }; rewriteText(field.valueNode);
+        const segments = typeof field.valueNode.value === 'string' ? [field.valueNode] :
+          (field.valueNode.fields?.find(item => item.key === 'segments')?.valueNode.items ?? [])
+            .flatMap(segment => segment.fields?.find(item => item.key === 'text')?.valueNode ?? []);
+        let base = 0;
+        for (const segment of segments) {
+          if (typeof segment.value !== 'string') continue;
+          let rewritten = '', offset = 0;
+          for (const match of dialogueInterpolations(segment.value)) {
+            rewritten += segment.value.slice(offset, match.start); offset = match.end;
+            const original = segment.value.slice(match.start, match.end);
+            const parsedExpression = match.source !== null && match.closed && parseExpression(match.source);
+            if (!parsedExpression || !parsedExpression.ok) { rewritten += original; continue; }
+            const next = rewriteExpressionIds(parsedExpression.expr, mapping, scopes);
+            const replacement = JSON.stringify(next) === JSON.stringify(parsedExpression.expr) ? original : `{{${printExpression(next)}}}`;
+            if (replacement.length !== original.length) dialogueShifts.push({ end: base + match.end, delta: replacement.length - original.length });
+            rewritten += replacement;
+          }
+          rewritten += segment.value.slice(offset);
+          if (rewritten !== segment.value) replace(segment, JSON.stringify(rewritten));
+          base += segment.value.length;
+        }
       }
       const description = spec.fields.find(value => value.path === field.key); if (description) visit(field.valueNode, description);
       if (node.command === 'characterDifference' && field.key === 'differenceId' && typeof field.valueNode.value === 'string' && mapping[field.valueNode.value]) replace(field.valueNode, JSON.stringify(mapping[field.valueNode.value]));
@@ -94,6 +103,16 @@ export function rewriteScriptReferences(input: ParseInput, mapping: Record<Id, I
       if (node.command === 'callScene' && field.key === 'parameters') for (const parameter of field.valueNode.fields ?? []) {
         if (mapping[parameter.key]) edits.push({ start: parameter.keyStart, end: parameter.keyEnd, oldText: input.text.slice(parameter.keyStart, parameter.keyEnd), text: JSON.stringify(mapping[parameter.key]) });
         if (parameter.valueNode.kind === 'expression') replace(parameter.valueNode, `expr(${JSON.stringify(printExpression(rewriteExpressionIds(parameter.valueNode.value as Expr, mapping,scopes)))})`);
+      }
+    }
+    if (dialogueShifts.length) {
+      const events = node.fields.find(field => field.key === 'events')?.valueNode.items ?? [];
+      for (const event of events) {
+        const offset = event.fields?.find(field => field.key === 'offset')?.valueNode;
+        if (typeof offset?.value !== 'number') continue;
+        const prior = offset.value;
+        const next = dialogueShifts.reduce((sum, shift) => sum + (prior >= shift.end ? shift.delta : 0), prior);
+        if (next !== prior) replace(offset, String(next));
       }
     }
   }

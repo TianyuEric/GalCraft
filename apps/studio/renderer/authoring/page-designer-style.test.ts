@@ -75,8 +75,8 @@ function setup(initial: ReturnType<typeof fixture>) {
   const compile = vi.fn(async (_input: Parameters<typeof compileStyle>[0]): Promise<{ ok: boolean; value?: ReturnType<typeof compileStyle>; error?: { message: string }; issues: [] }> =>
     ({ ok: false, error: { message: 'stop before applying' }, issues: [] }));
   let undoDocuments = current;
-  const designer = Object.assign(Object.create(PageDesigner.prototype), { root, locale: 'zh-CN', page: 'title', template: initial.template,
-    documents: current, selected: new Set(), styleDrafts: {}, styleEditors: new Map(), canvas: new Element(), notice: new Element(),
+  const designer = Object.assign(Object.create(PageDesigner.prototype), { root, center, locale: 'zh-CN', page: 'title', template: initial.template,
+    documents: current, selected: new Set(), styleDrafts: {}, styleDraftOptions: {}, styleEditors: new Map(), canvas: new Element(), notice: new Element(),
     lastUndo: initial.style.id, redoPlan: null, changed: async () => {}, drawTree: () => {}, drawInspector: () => {}, preview: async () => {},
     services: { compileStyle: compile, bridge: { documents: {
       list: async () => ({ ok: true, value: current }), planUndo: async () => ({ ok: true, value: { planId: 'style-undo' } }),
@@ -122,7 +122,9 @@ test('M02 reload keeps unapplied invalid input, local language and editor histor
   const initial = fixture(4), harness = setup(initial); harness.designer.styleEditor();
   const editor = monacoState.editors[0]!, view = editor.view, invalid = '[data-gc-part="button"] { color:';
   editor.model.setValue(invalid);
-  const language = harness.panel().children.find(child => child.className === 'designer-style-controls')!.children.find(child => child.tagName === 'select')!; language.value = 'css'; language.onchange!();
+  const controls = harness.panel().children.find(child => child.className === 'designer-style-controls')!;
+  const language = controls.children.flatMap(field => field.children).find(child => child.tagName === 'select' && child.ariaLabel === '样式语言')!;
+  language.value = 'css'; language.onchange!();
   const undone = structuredClone(initial); undone.style.sourceRevision = 1; undone.style.compiledSourceRevision = 1;
   undone.files[undone.style.sourcePath] = '[data-gc-part="button"] { color: red; }';
   harness.setUndo(undone); await harness.designer.history('undo'); harness.designer.styleEditor();

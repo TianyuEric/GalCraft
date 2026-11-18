@@ -7,7 +7,7 @@ import type { StudioLocale } from '../../authoring/controller.js';
 import '../../authoring/shell.css';
 import { WorkbenchShell } from '../../components/workbench/WorkbenchShell.js';
 
-function ProjectCenter({ locale = 'zh-CN', theme = 'light', empty = false, workbench = false, delayMs = 0, creationFailure = false, createDelayMs = 0, createError = false }: { locale?: StudioLocale; theme?: 'light' | 'dark'; empty?: boolean; workbench?: boolean; delayMs?: number; creationFailure?: boolean; createDelayMs?: number; createError?: boolean }) {
+function ProjectCenter({ locale = 'zh-CN', theme = 'light', empty = false, workbench = false, delayMs = 0, creationFailure = false, createDelayMs = 0, createError = false, recoveryPending = false }: { locale?: StudioLocale; theme?: 'light' | 'dark'; empty?: boolean; workbench?: boolean; delayMs?: number; creationFailure?: boolean; createDelayMs?: number; createError?: boolean; recoveryPending?: boolean }) {
   const library = useMemo(() => projectLibraryFixture(empty), [empty]);
   const [draft, setDraft] = useState<ProjectDraft>({ name: '', template: 'standard', width: 1920, height: 1080, engineVersion: '0.1.0' });
   const [notice, setNotice] = useState('');
@@ -17,6 +17,8 @@ function ProjectCenter({ locale = 'zh-CN', theme = 'light', empty = false, workb
       open={async () => setNotice('Storybook：选择本地目录需要桌面宿主。')} openRecent={async directory => setNotice(directory)}
       copy={async () => setNotice('Storybook：复制作品需要桌面宿主。')} backup={async () => setNotice('Storybook：备份需要桌面宿主。')}
       reveal={async () => setNotice('D:\\GalCraft\\春日来信')} navigate={page => setNotice(page)}
+      openSettings={() => setNotice('作品设置')} openMaintenance={() => setNotice('作品维护')}
+      recovery={{ pending: recoveryPending, review: () => setNotice('查看保留的草稿') }}
       create={async () => {await new Promise(resolve=>setTimeout(resolve,createDelayMs));if(createError)throw Error('创建失败：无法写入所选目录。请更换目录后重试。');return false;}} listCreationVersions={async () => { await new Promise(resolve => setTimeout(resolve, delayMs)); return creationFailure ? {ok:false,error:{code:'ENGINE_UNAVAILABLE',severity:'error',owner:'M11',message:'Engine catalog unavailable',related:[],actions:['retry']},issues:[]} : { ok: true, value: ['0.1.0'], warnings: [] }; }} />;
   return <div data-theme={theme}><div className="authoring-shell" data-locale={locale} style={{ display: 'block', height: '100vh', overflow: 'auto', background: 'var(--background)' }}>
     <div id="studio-portals" lang={locale} data-theme={theme} />
@@ -33,6 +35,7 @@ export const DarkJapanese: Story = { args: { locale: 'ja', theme: 'dark' } };
 export const Workbench: Story = { args: { workbench: true } };
 export const WorkbenchDark: Story = { args: { workbench: true, theme: 'dark' } };
 export const WorkbenchEmpty: Story = { args: { workbench: true, empty: true } };
+export const RecoveryPending: Story = { args: { recoveryPending: true } };
 
 export const DelayedCreation: Story = { args: { delayMs: 2000 } };
 export const CreationFailure: Story = { args: { creationFailure: true } };

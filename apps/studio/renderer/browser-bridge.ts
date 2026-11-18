@@ -1,4 +1,4 @@
-import type { DesktopBridge } from '../desktop-bridge.js';
+import type { DesktopBridge, StudioBridgeRequest } from '../desktop-bridge.js';
 import { studioClientId, studioEntry } from './client-identity.js';
 
 export type LocalFileDialog = { id: number; kind: 'open' | 'save'; title?: string; properties?: string[]; defaultPath?: string; filters?: { name: string; extensions: string[] }[] };
@@ -27,7 +27,10 @@ export async function createBrowserBridge(origin = location.origin): Promise<Bro
   };
   const surface = await fetch(`${origin}/api/methods`).then(response => response.json()) as Record<string, string[]>;
   const bridge: Record<string, unknown> = {};
-  for (const [group, methods] of Object.entries(surface)) bridge[group] = Object.fromEntries(methods.map(method => [method, (...args: unknown[]) => post('/api/bridge', { group, method, args, clientId, entry: studioEntry() })]));
+  for (const [group, methods] of Object.entries(surface)) bridge[group] = Object.fromEntries(methods.map(method => [method, (...args: unknown[]) => {
+    const request: StudioBridgeRequest = { group, method, args, clientId, entry: studioEntry() };
+    return post('/api/bridge', request);
+  }]));
   const events = new EventSource(`${origin}/api/events?client=${encodeURIComponent(clientId)}`);
   const listen = <T>(event: string, listener: (value: T) => void) => {
     const callback = (message: Event) => listener(JSON.parse((message as MessageEvent<string>).data) as T);

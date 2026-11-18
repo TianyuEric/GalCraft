@@ -2,7 +2,7 @@ import { PerformanceGuidance } from '@galcraft/contracts';
 import { z } from 'zod';
 import {ComponentEditInputSchema} from './collaboration-contracts.mjs';
 import { ComponentConfigSchema, PageConfigSchema, ExprSchema, SceneSchema, VersionRefSchema, fieldSpecsInputSchema } from '@galcraft/contracts';
-import { CoreCommandSpecsEnglish as CoreCommandSpecs, commandInputSchema } from '@galcraft/dsl';
+import { CoreCommandSpecsEnglish as CoreCommandSpecs, commandCreationDefaults, commandInputSchema } from '@galcraft/dsl';
 import { presetCatalog, PresetDomainOperations } from './collaboration-presets.mjs';
 import { ComponentCatalog, readTemplateDocuments } from '@galcraft/templates';
 import { acquirePluginDefinition, loadPluginModule } from '@galcraft/plugins';
@@ -24,6 +24,8 @@ export const collaborationGuide = {
     reviewId: 'Returned by the project/collaboration control prepare action. An author decision applies exactly this target, scope and version review. galcraft_control_call queries original control calls.',
     writeSessionId: 'The current M02 write binding returned by project/open and collaboration control. An old binding keeps its historical meaning.',
     documentId: 'Read from capabilities/context. expected uses its current revision. A sceneId, statementId, componentId and assetId identify different objects.',
+    eventId: 'Read the stable dialogue event ID in the source of the selected statement. Use the same scene document revision for event preview.',
+    bindingId: 'Read the page and component with galcraft_pages blueprintRead. Use the exact binding ID and page document revision for blueprint preview.',
     planId: 'A reviewed input from edit_prepare, production prepare or prepareAdoption. submit/adopt takes this planId.',
     taskId: 'The id of the executed M10 task returned by submit/tasks. Use production wait on this original task (25 seconds by default), inspect the reason and candidateIds, and wait again when running.',
     candidateId: 'One output listed by a task item. Read its identity, artifacts and diagnostics as needed; viewing or listening is goal-dependent.',
@@ -37,12 +39,13 @@ export const collaborationGuide = {
     'For plugin author documents use galcraft_documents; it validates through the installed provider and applies one M02 transaction.', 'Use galcraft_pages read/catalog, prepare/compileStyle and apply for semantic page/component/layout/interaction/animation edits. The same M08 schemas and plans serve Studio. Template library and switch plans retain the actual source, instance mapping and explicit conflicts. galcraft_ui_composition adopts reviewed config/style/assets in one transaction; capture when the goal needs visual inspection.',
     'Use galcraft_save plan to review requested objects, necessary associations and complete object changes. Resolve scope issues with an author-reviewed scope change, then save the current plan. Unselected unrelated objects remain dirty.',
     'Use context mode target for the object explicitly handed off from Studio, mode statistics for existing call/send facts, and mode environment for public setup readiness. A later Studio selection does not change the handed-off target.',
-    'An explicit local export/update request authorizes galcraft_release check/prepare/build. Discover targets and the selected targetContract/signingOptions as needed. Choose saving current changes or the actual saved snapshot, then build and query status. Android project export needs no SDK/JDK/Gradle; APK and AAB honor the selected signing mode.'],
+    'An explicit local export/update request authorizes galcraft_release check/prepare/build. Discover targets and the selected targetContract/signingOptions. Choose saving current changes or using the saved version. Run check in the same session that will prepare, and recheck after the saved version changes. Build from the reviewed plan and query status with its planId. Android project export needs no SDK/JDK/Gradle; APK and AAB honor the selected signing mode.'],
   production: ['Use an existing compatible connection/model/workflow from capabilities and the selected operation contract. Supply the final prompt or structured fields directly. Recipes, prompt generation and text-model preparation are optional; do not add them when usable input already exists. Local operations use an actual configured protocol:plugin connection; missing setup belongs to Studio Connections and tools.',
     'Explicit parameterOverrides take precedence, followed by explicit direct fields, applicable selected recipe/parameter defaults and operation defaults. Auto-filled form values are not author overrides. Read defaults/frozen only when needed to inspect effective values and sources; a modified score stays one whole value until explicit replacement or restoration of default following.',
     'Music render uses an existing complete score locally. writeScore uses the chosen text connection with a creative description; style, recipe, reference score and full instrument list are optional. Discover the real soundbank and exact operation fields first. Reference tempo, duration and instrumentation are creative context; only independently declared music constraints are requirements. Missing banks or contracts need their actual dependency, never a guessed substitute.',
     'A complete music result violating a declared constraint is a known business failure. Keep its raw text and original task; correct the score and reprocess locally without another model request. A necessary new request uses existing authorization and the real additional-send budget; include the diagnosed deviation. Query the original receipt before retrying after a lost response.',
     'Use configured workflows from the paged public catalog. Selected operation contracts define fields and media ports; unavailable plugin contracts are unavailable. Studio manages personal workflow drafts, imports and library updates. A usable local binding need not have a paid trial; connection checks and actual generation results are separate facts.',
+    'For a Studio whole-figure variation draft, prepareDraft uses the frozen exact main image version and the compatible figure image workflow. The adoption character is separate. Adopt an approved candidate to the library, read its exact assetId and variantId, then use character.difference.create when binding is in scope. Save separately.',
     'Studio service setup presets describe text, image, speech and music protocols and their initial connection defaults. They do not establish an installed service, available model or voice. Read capabilities.connections for actual allowed IDs, revisions, protocols, providers and configured models; inspectConnection queries the chosen provider capabilities. Credentials stay in personal configuration. VoiceStudio engines, languages and voices come from the selected live connection.',
     'Discover animationPresets, weatherPresets, uiAnimationPresets, readingLayouts, actionIcons and recipes with galcraft_catalog. Core keys are factory identities, never animation asset IDs. Use each definition guide example to prepare the same-domain edit. Use recipes scope/id keys and exact id/scope/revision selections in production prepare; preparation freezes the chosen recipes and parameter values.',
     'galcraft_production prepare returns result.planId and a task preview. submit takes planId, then tasks returns real taskId/items/candidateIds. Use drafts/draft/defaults/frozen for actual saved production forms and frozen configuration; saveDraft/prepareDraft update or execute one with its revision. Continue existing tasks with planContinuation/submitContinuation, transferPrompt or keepResults as needed. Original source and execution authorization remain distinct. candidate reads content; editCandidate only edits supported textual candidates. References use references:[{assetId,variantId,port}] with exact IDs from assets and port keys from the operation; Studio resolves media bytes without client paths.',
@@ -53,7 +56,8 @@ export const collaborationGuide = {
   media: ['Use source:{kind:"asset",assetId,variantId} from assets or source:{kind:"candidate",candidateId,artifactIndex} from a task. Paths and private resource URIs are not portable media.',
     'mode metadata returns codecs, dimensions and duration; resource returns the complete original media; image returns an absolute localPath; use the client image reader to view pixels; frame requires exactly one timeSec or zero-based frame and reports the actual sampling position; audio supplies the full track or startSec/endSec WAV excerpt.',
     'mode resource returns the complete original localPath plus readable URI/HTTP addresses. image defaults to the original file; request preview:{maxWidth,maxHeight,maxBytes?,format?} only when needed. Actually read its bytes with MCP resources/read at resource.uri or HTTP GET at resource.httpUrl; listing a URI, byte count or resource_link does not establish a complete client read. HTTP Range supports playback. Keep resources until finished, then release by resourceId. release, explicit collaboration end and service stop clean review files outside the project. Startup removes crash remnants. Disconnecting a client does not end a collaboration. Historical media reports expired/missing without changing the original completed call.',
-    'galcraft_preview action:capture renders the exact installed Player in an isolated window. action:observe reads only the requested variable scopes or component CSS properties and reports unknown sources explicitly. entryId/target/route/playerInputs use the same full entry preparation as preview state; page can select an actual Player page. These are isolated preview values, not a private running player profile.',
+    'galcraft_preview action:capture renders the exact installed Player in an isolated window. action:observe reads requested variable scopes or component CSS properties and reports unknown sources explicitly. entryId/target/route/playerInputs use the same full entry preparation as preview state. Supply eventId with target.sceneId, target.statementId and one expected document revision from galcraft_context to inspect a dialogue event. A reached event result includes eventSource.',
+    'Discover blueprint requests with galcraft_pages catalog part:blueprint. Use blueprintRead, blueprintValidate and blueprintPlan with the current page version. Apply the returned plan with its expected versions and save separately. Use galcraft_preview action:blueprint with a page/component/binding trigger, expected page version and source kind applied or draft. The isolated Player returns executed node IDs, outcomes, diagnostics and the graph revision. Use Studio for interactive stepping.',
     'State which images/frames were actually viewed and whether audio or full playback was supported. Metadata or one frame does not prove full visual quality or audio/video synchronization.'],
   examples: [
     { tool: 'galcraft_catalog', arguments: { projectId: '<projectId>', sessionId: '<from sessions>', input: { category: 'commands', text: 'say' } } },
@@ -91,18 +95,28 @@ export async function domainCatalog(studio, input, context) {
   const push = (category, key, title, provider, definition, inputSchema, current = null) => rows.push({ category, key, title, provider:provider?{id:provider.id,version:provider.version}:null, version: provider?.version ?? '0.1.0', definition, inputSchema, current });
   if(!input.category||input.category==='documents')push('documents','core.scene','Scene document',null,{description:'Core scene metadata. Script source is read from context by documentId.'},z.toJSONSchema(SceneSchema,{io:'input',reused:'ref'}));
   if (!input.category || input.category === 'commands') {
-    for (const command of CoreCommandSpecs) push('commands', command.key, command.name, null, command, commandInputSchema(command));
+    const projectFile = input.key && [...project.documents.values()].find(document => document.files['project.json'])?.files['project.json'];
+    const textLocale = (projectFile ? JSON.parse(projectFile).data.languages?.textDefault : undefined) ?? 'en';
+    const add = (command, provider, schema) => {
+      const creation = input.key === command.key ? {
+        operation: 'commands.insert',
+        initialArgs: commandCreationDefaults(command, {}, { textLocale }),
+        description: 'Supply required content and targets for the selected mode. The provider assigns omitted identities for new objects, labels, animation and effect instances, and new choice entries and dialogue events. Explicit values take precedence. Omitted inherited values follow the existing object or resource.',
+      } : undefined;
+      push('commands', command.key, command.name, provider, creation ? { ...command, creation } : command, schema);
+    };
+    for (const command of CoreCommandSpecs) add(command, null, commandInputSchema(command));
     for (const dependency of studio.plugins.dependencies?.(project) ?? []) {
       const exact = await studio.plugins.exactDirectory(dependency.id, dependency.version);
       if (!exact.ok) { diagnostics.push(exact.error); continue; }
       if (!exact.value.manifest.entry.definition) {
         const instance=await loadPluginModule(exact.value.directory,exact.value.manifest);
-        try{const offered=await instance.activate(studio.plugins.context(dependency.id,'web',project));for(const contribution of offered.commands??[])push('commands',contribution.spec.key,contribution.spec.name,dependency,contribution.spec,fieldsSchema(contribution.spec.fields));}
+        try{const offered=await instance.activate(studio.plugins.context(dependency.id,'web',project));for(const contribution of offered.commands??[])add(contribution.spec,dependency,fieldsSchema(contribution.spec.fields));}
         finally{await instance.deactivate();}
         continue;
       }
       const lease = await acquirePluginDefinition(exact.value.directory, exact.value.manifest);
-      try { for (const command of lease.definition.commands ?? []) push('commands', command.key, command.name, dependency, command, fieldsSchema(command.fields)); }
+      try { for (const command of lease.definition.commands ?? []) add(command,dependency,fieldsSchema(command.fields)); }
       finally { await lease.release(); }
     }
   }

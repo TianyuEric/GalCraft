@@ -1,12 +1,13 @@
 import { domButton } from '../components/dom-button.js';
 import { prepareNativeDialog } from '../components/motion.js';
-import type { Asset, AssetKind, AssetListIdentity, AssetPickerContext, AssetPickerPage, AssetQuery, AssetTypeCatalogEntry, Id, Result } from '@galcraft/contracts';
+import type { Asset, AssetImportReceipt, AssetKind, AssetListIdentity, AssetPickerContext, AssetPickerPage, AssetQuery, AssetTypeCatalogEntry, Id, Result } from '@galcraft/contracts';
 import type { AuthoringServices } from './controller.js';
 import { createAssetPickerPreview } from './asset-picker-preview.js';
 import { loadVisibleAssetThumbnails } from './asset-picker-thumbnails.js';
 import './asset-picker.css';
 import { assetTypeName, assetTypeIcon } from './asset-type-catalog.js';
 import { createAssetTypeFilters } from './asset-type-filters.js';
+import { markAuthoringFocus } from './focus.js';
 
 export type AssetPickerChoice = { asset: Asset; assetId: Id; variantId: Id | null };
 export type AssetPickerOptions = {
@@ -15,7 +16,7 @@ export type AssetPickerOptions = {
   currentAssetId?: Id | null; currentVariantId?: Id | null; currentName?: string; purpose?: string;
   mode?: 'compact' | 'full'; scope?: HTMLElement; returnFocus?: HTMLElement; remember?: boolean;
   onApply(choice: AssetPickerChoice): Promise<Result<unknown>>;
-  onImport?(): Promise<void>; onGenerate?(): void; onLocate?(assetId: Id): void;
+  onImport?(): Promise<void | AssetImportReceipt>; onGenerate?(): void; onLocate?(assetId: Id): void;
 };
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = '') => {
   const value = document.createElement(tag); value.className = className; value.textContent = text; return value;
@@ -34,8 +35,8 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
   const importAssets = options.onImport ?? (services.pickAssetFiles && services.importAssets ? async () => {
     const paths = await services.pickAssetFiles!(); if (!paths.ok) throw new Error(paths.error.message);
     if (!paths.value.length) return;
-    const result = await services.importAssets!(paths.value); if (!result.ok) throw new Error(result.error.message);
-    if (result.value.failed.length) throw new Error(result.value.failed.map(item => item.issue.message).join('\n'));
+    const result = await services.importAssets!(paths.value, { projectId: options.projectId }); if (!result.ok) throw new Error(result.error.message);
+    return result.value;
   } : undefined);
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
   let catalog: AssetTypeCatalogEntry[] = [];
@@ -45,6 +46,8 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
   const expand = button(t('展开素材库', 'Expand library', 'ライブラリを展開'), () => {
     root.closest('dialog')?.classList.toggle('asset-picker-full'); expand.hidden = true;
   }); expand.hidden = options.mode === 'full'; header.append(heading, expand);
+  const importButton = importAssets ? button(t('导入素材', 'Import assets', '素材を読み込む'), () => { void importSelection(); }) : null;
+  if (importButton) header.append(importButton);
   const controls = node('div', 'asset-picker-controls'), search = node('input'); search.type = 'search';
   search.placeholder = t('搜索名称、来源或标签', 'Search name, source or tags', '名前・元ファイル・タグを検索'); search.ariaLabel = search.placeholder;
   const kind = node('select'); kind.ariaLabel = t('素材类型', 'Asset type', '素材の種類'); kind.append(new Option(t('全部适用类型', 'All allowed types', '利用可能な種類すべて'), ''));
@@ -61,6 +64,7 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
   const tabs = node('nav', 'asset-picker-tabs'); tabs.ariaLabel = t('素材范围', 'Asset scope', '素材の範囲');
   const conditions = node('div', 'asset-picker-conditions'), fixed = node('div', 'asset-picker-current');
   const status = node('p', 'asset-picker-status'); status.setAttribute('role', 'status'); status.ariaLive = 'polite';
+  const importFeedback = node('section', 'asset-picker-import-result'); importFeedback.ariaLabel = t('本次导入结果', 'Import result', '読み込み結果'); importFeedback.hidden = true;
   const body = node('div', 'asset-picker-body'), results = node('div', 'asset-picker-results'), previewRoot = node('aside', 'asset-picker-preview');
   results.setAttribute('role', 'listbox'); results.ariaLabel = t('可选素材', 'Available assets', '選択可能な素材');
   previewRoot.ariaLabel = t('素材预览', 'Asset preview', '素材プレビュー');
@@ -70,7 +74,7 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
   const selectedLabel = node('span', 'asset-picker-selection', t('尚未选择', 'No selection', '未選択'));
   const apply = button(t('应用', 'Apply', '適用'), () => { void applySelection(); }, 'authoring-primary'); apply.disabled = true;
   const cancel = button(t('取消', 'Cancel', 'キャンセル'), () => { if (!applying) finish(null); });
-  footer.append(selectedLabel, cancel, apply); root.append(header, controls, tabs, conditions, fixed, status, body, pagination, footer);
+  footer.append(selectedLabel, cancel, apply); root.append(header, controls, tabs, conditions, fixed, status, importFeedback, body, pagination, footer);
   const context: AssetPickerContext = { projectId: options.projectId, allowedKinds: [...options.allowedKinds], allowedCapabilities: options.allowedCapabilities,
     characterId: options.characterId ?? null, sceneId: options.sceneId ?? null, locale: options.assetLocale ?? null,
     currentAssetId: options.currentAssetId ?? null, currentVariantId: options.currentVariantId ?? null,
@@ -80,6 +84,7 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
     direction: 'asc', offset: 0, limit: options.mode === 'full' ? 40 : 12, indexRevision: null };
   let generation = 0, disposed = false, applying = false, selected: AssetPickerChoice | null = null;
   let page: AssetPickerPage | null = null, currentAsset: Asset | null = null, timer: ReturnType<typeof setTimeout> | null = null;
+  let importing = false, importReceipt: AssetImportReceipt | null = null, viewingImport = false, resultScroll = 0;
   const tabButtons = new Map<AssetPickerContext['tab'], HTMLButtonElement>();
   const assetDetails = (asset: Asset, row?: AssetListIdentity) => {
     const metadata = row ? row.shownVariant?.metadata : asset.variants.find(item => item.id === asset.activeVariantId)?.metadata;
@@ -89,7 +94,7 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
   };
   const select = (asset: Asset, variantId: Id | null) => {
     if (!options.allowedKinds.includes(asset.kind) || variantId && !asset.variants.some(item => item.id === variantId)) return;
-    selected = { asset, assetId: asset.id, variantId }; apply.disabled = applying;
+    selected = { asset, assetId: asset.id, variantId }; apply.disabled = applying || importing;
     selectedLabel.textContent = asset.name;
     for (const item of root.querySelectorAll<HTMLElement>('[data-asset-option]'))
       item.setAttribute('aria-selected', String(item.dataset.assetOption === asset.id && (item.dataset.variant || null) === variantId));
@@ -115,10 +120,37 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
     previewButton.disabled = !!missingVariant; previewButton.ariaLabel = `${previewButton.textContent} ${asset.name}`; item.append(previewButton);
     return item;
   };
+  const importedAssets = () => importReceipt?.succeeded.filter(asset => options.allowedKinds.includes(asset.kind) && (!options.allowedCapabilities?.length || catalog.some(entry => {
+    const variant = asset.variants.find(item => item.id === asset.activeVariantId);
+    return entry.descriptor.key === asset.kind && !entry.unavailable && entry.descriptor.typeVersion === (variant?.typeData?.typeVersion ?? 1)
+      && (!variant?.typeData || entry.provider?.id === variant.typeData.provider.id && entry.provider.version === variant.typeData.provider.version)
+      && options.allowedCapabilities!.every(capability => entry.descriptor.capabilities.includes(capability) || variant?.groupCapabilities?.capabilities.includes(capability));
+  }))) ?? [];
+  const showImport = (captureScroll = true) => {
+    if (!viewingImport && captureScroll) resultScroll = results.scrollTop;
+    viewingImport = true; draw(); results.scrollTop = 0;
+    results.querySelector<HTMLButtonElement>('[data-asset-option]')?.focus({ preventScroll: true });
+  };
+  const leaveImport = () => { viewingImport = false; draw(); results.scrollTop = resultScroll; search.focus({ preventScroll: true }); };
+  const drawImportFeedback = () => {
+    importFeedback.replaceChildren();
+    if (!importReceipt) return;
+    importFeedback.hidden = false;
+    const summary = node('p', '', t(`已导入 ${importReceipt.succeeded.length} 项，${importReceipt.failed.length} 项未导入。`,
+      `${importReceipt.succeeded.length} imported; ${importReceipt.failed.length} not imported.`, `${importReceipt.succeeded.length} 件を読み込み、${importReceipt.failed.length} 件は未読み込みです。`));
+    summary.setAttribute('role', importReceipt.failed.length ? 'alert' : 'status'); importFeedback.append(summary);
+    if (importReceipt.batch) { importFeedback.dataset.batchId = importReceipt.batch.id; importFeedback.dataset.attemptId = importReceipt.batch.attemptId; importFeedback.dataset.batchRevision = String(importReceipt.batch.revision); }
+    if (importReceipt.succeeded.length) importFeedback.append(button(t('查看本批', 'View this import', '今回の読み込みを表示'), showImport));
+    if (importReceipt.failed.length) {
+      const details = node('details'), label = node('summary', '', t('查看未导入原因', 'View import failures', '未読み込みの理由を表示')), failures = node('ul');
+      for (const failure of importReceipt.failed) failures.append(node('li', '', `${failure.path.split(/[\\/]/).at(-1) ?? failure.path} · ${failure.issue.message}`));
+      details.append(label, failures); importFeedback.append(details);
+    }
+  };
   const draw = () => {
     fixed.replaceChildren(); results.replaceChildren(); pagination.replaceChildren(); conditions.replaceChildren();
     controls.querySelector('.asset-type-filters')?.remove();
-    controls.append(createAssetTypeFilters(catalog, query.kind, query.typeFields, locale, values => { query.typeFields = values; query.offset = 0; void refresh(); }));
+    controls.append(createAssetTypeFilters(catalog, query.kind, query.typeFields, locale, values => { viewingImport = false; query.typeFields = values; query.offset = 0; void refresh(); }));
     for (const [key, value] of tabButtons) value.setAttribute('aria-pressed', String(context.tab === key));
     if (context.tab === 'context') {
       const filters: [keyof Pick<AssetPickerContext, 'characterId' | 'sceneId' | 'locale'>, string][] = [
@@ -126,9 +158,9 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
       for (const [key, label] of filters) if (context[key]) {
         const value = key === 'characterId' ? [...character.options].find(item => item.value === context[key])?.text :
           key === 'sceneId' ? [...scene.options].find(item => item.value === context[key])?.text : context[key];
-        conditions.append(button(`${label}: ${value ?? context[key]} ×`, () => { context[key] = null; query.offset = 0; void refresh(); }, 'asset-picker-condition'));
+        conditions.append(button(`${label}: ${value ?? context[key]} ×`, () => { viewingImport = false; context[key] = null; query.offset = 0; void refresh(); }, 'asset-picker-condition'));
       }
-      conditions.append(button(t('查看全部适用素材', 'View all allowed assets', '利用可能な素材すべてを表示'), () => { context.tab = 'all'; query.offset = 0; void refresh(); }));
+      conditions.append(button(t('查看全部适用素材', 'View all allowed assets', '利用可能な素材すべてを表示'), () => { viewingImport = false; context.tab = 'all'; query.offset = 0; void refresh(); }));
     }
     if (options.currentAssetId) {
       fixed.append(node('small', '', t('当前引用', 'Current reference', '現在の参照')));
@@ -137,6 +169,14 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
         if (options.onLocate) fixed.append(button(t('定位并补齐', 'Locate and supply', '場所を確認して補完'), () => options.onLocate!(options.currentAssetId!))); }
     }
     if (!page) return;
+    if (viewingImport) {
+      conditions.append(node('span', '', t('本批已导入 · 仅显示适用于此字段的素材', 'This import · assets supported by this field', '今回の読み込み · この項目に対応する素材')),
+        button(t('返回原素材结果', 'Back to previous results', '元の素材一覧に戻る'), leaveImport));
+      const assets = importedAssets();
+      for (const asset of assets) results.append(card(asset, undefined));
+      if (!assets.length) results.append(node('p', 'asset-picker-empty', t('本批没有适用于此字段的素材，原引用保持不变。', 'This import has no assets supported by this field. The original reference is retained.', '今回の読み込みにこの項目で利用できる素材はありません。元の参照を保持します。')));
+      void loadVisibleAssetThumbnails(services).catch(() => undefined); return;
+    }
     for (const asset of page.items) results.append(card(asset, page.rows.find(row => row.assetId === asset.id)));
     if (context.tab === 'recent') for (const entry of page.recentEntries.filter(item => item.missing)) {
       const missing = node('article', 'asset-picker-missing', `${entry.assetId} · ${t('素材缺失', 'Missing asset', '素材がありません')}`);
@@ -153,7 +193,6 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
         context.tab = 'all'; query.search = ''; query.kind = null; query.typeFields = {}; query.tags = []; query.usage = null; query.characterId = null; query.sceneId = null; query.locale = null;
         search.value = ''; kind.value = ''; tags.value = ''; usage.value = ''; character.value = ''; scene.value = ''; language.value = ''; query.offset = 0; void refresh();
       }));
-      if (importAssets) empty.append(button(t('导入素材', 'Import assets', '素材を読み込む'), () => { void importAssets().then(() => refresh()).catch(error => { status.textContent = String(error); void refresh(); }); }));
       if (options.onGenerate) empty.append(button(t('创建素材任务', 'Create an asset task', '素材タスクを作成'), options.onGenerate));
       results.append(empty);
     }
@@ -162,6 +201,21 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
     pagination.append(previous, node('span', '', `${page.total ? query.offset + 1 : 0}–${query.offset + page.items.length} / ${page.total}`), next);
     void loadVisibleAssetThumbnails(services).catch(() => undefined);
   };
+  async function importSelection() {
+    if (!importAssets || importing || applying) return;
+    importing = true; apply.disabled = true; if (importButton) importButton.disabled = true;
+    if (!viewingImport) resultScroll = results.scrollTop;
+    try {
+      const receipt = await importAssets(); if (disposed) return;
+      // A cancelled native file choice has no receipt and leaves the current query and selection intact.
+      if (!receipt) { if (options.onImport) await refresh(); return; }
+      importReceipt = receipt; drawImportFeedback();
+      await refresh(); if (disposed) return;
+      if (receipt.succeeded.length) showImport(false); else results.scrollTop = resultScroll;
+    } catch (error) {
+      if (!disposed) { importFeedback.hidden = false; importFeedback.replaceChildren(); const message = node('p', '', error instanceof Error ? error.message : String(error)); message.setAttribute('role', 'alert'); importFeedback.append(message); }
+    } finally { importing = false; apply.disabled = applying || !selected; if (importButton) importButton.disabled = false; }
+  }
   async function refresh() {
     const request = ++generation; status.textContent = t('正在加载…', 'Loading…', '読み込み中…');
     try {
@@ -179,26 +233,26 @@ export function createAssetPicker(options: AssetPickerOptions, finish: (choice: 
     } catch (error) { if (!disposed && request === generation) status.textContent = error instanceof Error ? error.message : String(error); }
   }
   async function applySelection() {
-    if (!selected || applying || !options.allowedKinds.includes(selected.asset.kind)) return;
+    if (!selected || applying || importing || !options.allowedKinds.includes(selected.asset.kind)) return;
     if (options.allowedCapabilities?.length) {
       const listed = await services.assetTypeCatalog?.();
       const variant = selected.asset.variants.find(item => item.id === (selected!.variantId ?? selected!.asset.activeVariantId));
       const type = listed?.ok ? listed.value.find(item => item.descriptor.key === selected!.asset.kind && !item.unavailable && item.descriptor.typeVersion === (variant?.typeData?.typeVersion ?? 1) && (!variant?.typeData || item.provider?.id === variant.typeData.provider.id && item.provider.version === variant.typeData.provider.version)) : null;
       if (!type || !options.allowedCapabilities.every(capability => type.descriptor.capabilities.includes(capability) || variant?.groupCapabilities?.capabilities.includes(capability))) { status.textContent = t('素材类型不再支持此字段需要的能力', 'The asset type no longer supports the capabilities required by this field', 'この項目に必要な機能を素材の種類が提供していません'); return; }
     }
-    applying = true; apply.disabled = true; cancel.disabled = true;
+    applying = true; apply.disabled = true; cancel.disabled = true; if (importButton) importButton.disabled = true;
     try {
       const result = await options.onApply(selected);
       if (!result.ok) { status.textContent = result.error.message; return; }
       if (options.remember !== false) await recordAssetsPicked(services, options.projectId, [selected.assetId]);
       finish(selected);
     } catch (error) { status.textContent = error instanceof Error ? error.message : String(error); }
-    finally { applying = false; apply.disabled = !selected; cancel.disabled = false; }
+    finally { applying = false; apply.disabled = !selected; cancel.disabled = false; if (importButton) importButton.disabled = importing; }
   }
   for (const [key, label] of [['context', t('当前上下文', 'Context', '現在のコンテキスト')], ['recent', t('最近使用', 'Recent', '最近使用')], ['all', t('全部', 'All', 'すべて')]] as const) {
-    const value = button(label, () => { context.tab = key; query.offset = 0; void refresh(); }); tabButtons.set(key, value); tabs.append(value);
+    const value = button(label, () => { viewingImport = false; context.tab = key; query.offset = 0; void refresh(); }); tabButtons.set(key, value); tabs.append(value);
   }
-  const update = () => { if (query.kind !== (kind.value || null)) query.typeFields = {}; query.search = search.value; query.kind = (kind.value || null) as AssetKind | null; query.usage = usage.value || null;
+  const update = () => { viewingImport = false; if (query.kind !== (kind.value || null)) query.typeFields = {}; query.search = search.value; query.kind = (kind.value || null) as AssetKind | null; query.usage = usage.value || null;
     query.characterId = character.value || null; query.sceneId = scene.value || null; query.locale = language.value.trim() || null;
     query.tags = tags.value.split(/[,，]/).map(value => value.trim()).filter(Boolean); query.offset = 0; void refresh(); };
   for (const input of [kind, usage, character, scene, language, tags]) input.addEventListener('change', update);
@@ -226,6 +280,9 @@ export function openAssetPicker(options: AssetPickerOptions): Promise<AssetPicke
   return new Promise(resolve => {
     const dialog = node('dialog', `asset-picker-dialog${options.mode === 'full' ? ' asset-picker-full' : ''}`);
     const active = options.returnFocus ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    const view = active?.closest<HTMLElement>('[data-view]'), viewKey = view?.dataset.view;
+    const focusScope = options.scope?.isConnected ? options.scope : active?.closest<HTMLElement>('#app,.authoring-shell') ?? document.body;
+    markAuthoringFocus(view ?? focusScope); const focusKey = active?.dataset.focusKey;
     const scroll: { element: HTMLElement; top: number; left: number }[] = [];
     for (let element = active?.parentElement; element; element = element.parentElement) scroll.push({ element, top: element.scrollTop, left: element.scrollLeft });
     let choice: AssetPickerChoice | null = null;
@@ -233,8 +290,23 @@ export function openAssetPicker(options: AssetPickerOptions): Promise<AssetPicke
     dialog.addEventListener('cancel', event => { if (picker.applying) event.preventDefault(); });
     dialog.addEventListener('close', () => { picker.dispose(); dialog.remove();
       void loadVisibleAssetThumbnails(options.services).catch(() => undefined);
-      if (active?.isConnected) active.focus({ preventScroll: true });
-      for (const entry of scroll) { entry.element.scrollTop = entry.top; entry.element.scrollLeft = entry.left; } resolve(choice); }, { once: true });
+      const restore = () => {
+        const connectedScope = focusScope.isConnected ? focusScope : scroll.find(entry => entry.element.isConnected)?.element ?? document.body;
+        const scope = view?.isConnected ? view : viewKey ? [...connectedScope.querySelectorAll<HTMLElement>('[data-view]')].find(item => item.dataset.view === viewKey) : connectedScope;
+        if (scope) markAuthoringFocus(scope);
+        const target = active?.isConnected ? active : focusKey ? [...(scope?.querySelectorAll<HTMLElement>('[data-focus-key]') ?? [])].find(item => item.dataset.focusKey === focusKey) : null;
+        if (target && !target.matches(':disabled')) target.focus({ preventScroll: true });
+        const parents: HTMLElement[] = []; for (let element = target?.parentElement; element; element = element.parentElement) parents.push(element);
+        for (const [index, entry] of scroll.entries()) {
+          const replacement = parents[index];
+          const element = entry.element.isConnected ? entry.element : replacement?.tagName === entry.element.tagName && replacement.className === entry.element.className ? replacement : null;
+          if (element) { element.scrollTop = entry.top; element.scrollLeft = entry.left; }
+        }
+      };
+      restore();
+      // React fields can commit their replacement trigger after onApply resolves.
+      if (active && !active.isConnected && focusKey) requestAnimationFrame(() => { restore(); resolve(choice); }); else resolve(choice);
+    }, { once: true });
     const container = options.scope?.isConnected ? options.scope : document.getElementById('studio-portals') ?? document.body;
     prepareNativeDialog(dialog); container.append(dialog); dialog.showModal(); picker.focus();
   });

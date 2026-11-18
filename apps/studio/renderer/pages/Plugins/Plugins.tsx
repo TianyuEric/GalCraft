@@ -2,7 +2,7 @@ import { IssueNotice } from '../../components/issue-notice.js';
 import { Identity } from '../../components/identity.js';
 import { CodeBlock } from '../../components/code-block.js';
 import { Input } from '../../components/ui/input.js';
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ObjectTree } from "../../components/workbench/ObjectTree.js";
 import { InspectorSection } from "../../components/workbench/WorkbenchShell.js";
@@ -23,6 +23,7 @@ import { contributionStatus, contributionStatusLabels } from './contribution-sta
 import { PluginOverview, pluginCapabilityLabel } from './PluginOverview.js';
 import { pluginDisplayMetadata } from '@galcraft/plugins/contracts';
 import type { PluginManifest } from '@galcraft/plugins/contracts';
+import { AuthorContributions } from './author-contributions.js';
 
 export function Plugins({
   bridge,
@@ -31,6 +32,7 @@ export function Plugins({
   changed,
   authorHost,
   explorerContainer, inspectorContainer, documentActive = true, revealInspector,
+  missingDependency, openConnections,
 }: {
   bridge: WorkbenchBridge;
   locale: string;
@@ -41,6 +43,8 @@ export function Plugins({
   inspectorContainer?: HTMLElement | null;
   documentActive?: boolean;
   revealInspector?(): void;
+  missingDependency?: { id: string; version: string } | null;
+  openConnections?(): void;
 }) {
   const t = (zh: string, en: string, ja: string) => tr(locale, zh, en, ja);
   const display = (manifest: PluginManifest) => pluginDisplayMetadata(manifest, locale);
@@ -68,11 +72,23 @@ export function Plugins({
   const [side, setSide] = useState<"explorer" | "inspector">("explorer");
   const [inspection, setInspection] = useState<import('@galcraft/plugins').PackageInspection | null>(null);
   const [diagnostic, setDiagnostic] = useState<import('@galcraft/plugins').PluginManifest | null>(null);
+  const [repair, setRepair] = useState<{ id: string; version: string } | null>(null);
+  const customConfiguration = useRef<HTMLDivElement>(null);
   const openModal = (value: string) => { setError(""); setDiagnostic(value ? null : packageEntries.find(entry => entry.key === selected)?.manifest ?? null); setModal(value); };
+  const openInstall = (target: typeof repair = null) => {
+    setInspection(null);
+    setRepair(target);
+    openModal('install');
+  };
   const refresh = async () => setData(unwrap(await bridge.plugins.list()));
   useEffect(() => {
     void refresh().catch((e) => setError(String(e)));
-  }, []);
+  }, [bridge, projectId]);
+  useEffect(() => {
+    const node = customConfiguration.current;
+    if (documentActive && modal === 'contributions' && node) authorHost?.mountSlot('plugins.configuration', node, false);
+    return () => node?.replaceChildren();
+  }, [authorHost, documentActive, modal, data, locale]);
   const run = async (fn: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
@@ -106,9 +122,21 @@ export function Plugins({
   const diagnosticStudioService = !!diagnostic && studioServices.some(entry => entry.manifest.id === diagnostic.id && entry.manifest.version === diagnostic.version);
   const enabledVersion = data?.lock?.plugins.find(plugin => plugin.id === selectedEntry?.manifest.id)?.version;
   const changeLabel = enabledVersion === selectedEntry?.manifest.version ? t('停用此版本…','Disable this version…','このバージョンを無効化…') : enabledVersion ? t('切换到此版本…','Switch to this version…','このバージョンに切替…') : t('启用到作品…','Enable in project…','作品で有効化…');
+  const missingKey = (plugin: { id: string; version: string }) => `missing/${plugin.id}/${plugin.version}`;
   const missing = data?.lock?.plugins.filter(plugin => !data.entries.some(entry => entry.manifest.id === plugin.id && entry.manifest.version === plugin.version)) ?? [];
-  const selectedMissing = missing.find(plugin => `missing/${plugin.id}` === selected);
+  const selectedMissing = missing.find(plugin => missingKey(plugin) === selected);
+  const requestedMissingKey = missingDependency && missingKey(missingDependency);
+  const requestedPackageKey = missingDependency && packageEntries.find(entry => entry.manifest.id === missingDependency.id && entry.manifest.version === missingDependency.version)?.key;
+  useEffect(() => {
+    if (requestedMissingKey && data) selectPackage(requestedPackageKey || requestedMissingKey);
+  }, [requestedMissingKey, requestedPackageKey, !!data]);
+  const ensurePluginDocumentsSettled = () => {
+    if (authorHost?.hasUnappliedDocuments?.()) {
+      throw new Error(t('请先应用或关闭插件文档中的未应用修改，再更改作品插件。', 'Apply or close unapplied edits in plugin documents before changing project plugins.', '作品のプラグインを変更する前に、文書の変更を適用するか文書を閉じてください。'));
+    }
+  };
   const showInspector = () => { setSide('inspector'); revealInspector?.(); };
+  const authorToolsTitle = t('插件工具与文档', 'Plugin tools and documents', 'プラグインツールと文書');
   const selectPackage = (id: string) => {
     setSelected(id);
     const entry = packageEntries.find(item => item.key === id);
@@ -126,12 +154,12 @@ export function Plugins({
     return { id: entry.key, name: entry.display.name, icon: <Package size={15}/>, detail: <span className="plugin-tree-state"><span>{entry.manifest.version}{entry.registrations > 1 && ` · ${entry.registration}`}</span>{!entry.studioService && <Badge tone={enabled ? 'good' : ''}>{enabled ? t('已启用', 'Enabled', '有効') : t('未启用', 'Disabled', '無効')}</Badge>}</span> };
   };
   const explorer = <div className="plugin-explorer-content">
-    <div className="plugin-explorer-actions"><Button tone="primary" onClick={() => { setInspection(null); openModal('install'); }}><Plus size={16}/>{t('安装插件', 'Install plugin', 'プラグインを追加')}</Button><Button onClick={() => { setInspection(null); openModal('development'); }}><FolderCode size={16}/>{t('开发目录', 'Development directory', '開発ディレクトリ')}</Button></div>
+    <div className="plugin-explorer-actions"><Button tone="primary" onClick={() => openInstall()}><Plus size={16}/>{t('安装插件', 'Install plugin', 'プラグインを追加')}</Button><Button onClick={() => { setInspection(null); setRepair(null); openModal('development'); }}><FolderCode size={16}/>{t('开发目录', 'Development directory', '開発ディレクトリ')}</Button></div>
     {!data && !error && <div role="status" aria-label={t('正在读取插件', 'Loading plugins', 'プラグインを読み込み中')}><Skeleton className="loading-card"/></div>}
     {data && <ObjectTree label={t('本机插件与作品依赖', 'Installed plugins and dependencies', 'ローカルプラグインと作品の依存関係')}
       nodes={[...(studioServices.length ? [{ id: 'studio-services', name: t('Studio 默认装配', 'Provided by Studio', 'Studio 標準搭載'), icon: <Package size={15}/>, detail: String(studioServices.length), children: studioServices.map(packageNode) }] : []),
         { id: 'installed', name: t('本机已安装', 'Installed locally', 'ローカルにインストール済み'), icon: <Package size={15}/>, detail: String(installedEntries.length), children: installedEntries.map(packageNode) },
-        ...(missing.length ? [{ id: 'missing', name: t('缺失的作品依赖', 'Missing project dependencies', '不足している作品の依存関係'), children: missing.map(plugin => ({ id: `missing/${plugin.id}`, name: plugin.id, detail: plugin.version })) }] : [])]}
+        ...(missing.length ? [{ id: 'missing', name: t('缺失的作品依赖', 'Missing project dependencies', '不足している作品の依存関係'), children: missing.map(plugin => ({ id: missingKey(plugin), name: plugin.id, detail: plugin.version })) }] : [])]}
     selected={[selected]} onSelect={ids => selectPackage(ids.at(-1) ?? '')} onOpen={selectPackage}/>}
     {data && !data.entries.length && <p className="plugin-explorer-empty">{t('安装插件后，在作品中启用需要的版本。', 'Install a plugin, then enable the version this project needs.', 'インストール後、作品に必要なバージョンを有効にします。')}</p>}
   </div>;
@@ -147,18 +175,46 @@ export function Plugins({
       <details><summary>{t('包身份', 'Package identity', 'パッケージID')}</summary><code>{selectedEntry.manifest.id}</code></details></> : selectedMissing ? <><p>{t('作品锁定的版本未在本机安装。安装对应包后再检查当前作品。', 'The locked version is not installed locally. Install the matching package, then check this project.', '作品で固定したバージョンがありません。対応パッケージをインストールしてください。')}</p><p>{selectedMissing.version}</p><code>{selectedMissing.id}</code></> : <>{!!studioServices.length && <p>{t('Studio 默认装配', 'Provided by Studio', 'Studio 標準搭載')} · {studioServices.length}</p>}<p>{t('本机已安装', 'Installed locally', 'ローカルにインストール済み')} · {installedEntries.length}</p><p>{t('作品已启用', 'Enabled in project', '作品で有効')} · {data?.lock?.plugins.filter(plugin => !studioServices.some(entry => entry.manifest.id === plugin.id && entry.manifest.version === plugin.version)).length ?? 0}</p><p>{t('选择插件查看版本、贡献和装配状态。', 'Select a plugin to inspect its version, contributions and assembly status.', 'プラグインを選択してバージョン、コントリビューション、搭載状態を確認します。')}</p></>}
     </InspectorSection>
   </div>;
-  return (
+  return <div className="plugin-management-surface">
     <main className={`plugins-page plugin-desktop-workbench ${explorerContainer ? 'has-external-explorer' : ''} ${inspectorContainer ? 'has-external-inspector' : ''}`} data-side={side}>
       {explorerContainer ? documentActive && createPortal(explorer, explorerContainer) : <aside className="plugin-local-explorer" aria-label="Explorer"><header className="plugin-pane-heading">{t('插件', 'Plugins', 'プラグイン')}</header>{explorer}</aside>}
       <div className="plugin-workbench-document">
-        <header className="plugin-workbench-toolbar"><h1>{modal === 'install' ? t('安装插件包', 'Install package', 'パッケージを追加') : modal === 'development' ? t('加载开发目录', 'Load development directory', '開発ディレクトリを読み込む') : modal === 'change' ? t('插件变更影响', 'Plugin change impact', 'プラグイン変更の影響') : (diagnostic ? display(diagnostic).name : null) ?? t('插件', 'Plugins', 'プラグイン')}</h1><div className="gc-actions">{selectedEntry && !selectedEntry.studioService && modal !== "change" && <Button disabled={busy} tone="primary" onClick={reviewImpact}>{changeLabel}<ArrowRight size={14}/></Button>}{!explorerContainer && <Button tone="quiet" className="plugin-local-toggle" onClick={() => setSide('explorer')}>{t('插件列表', 'Plugins', 'プラグイン一覧')}</Button>}<Button tone="quiet" onClick={showInspector}>{t('插件属性', 'Plugin properties', 'プラグインのプロパティ')}</Button></div></header>
+        <header className="plugin-workbench-toolbar"><h1>{modal === 'install' ? t('安装插件包', 'Install package', 'パッケージを追加') : modal === 'development' ? t('加载开发目录', 'Load development directory', '開発ディレクトリを読み込む') : modal === 'change' ? t('插件变更影响', 'Plugin change impact', 'プラグイン変更の影響') : modal === 'contributions' ? authorToolsTitle : (diagnostic ? display(diagnostic).name : null) ?? t('插件', 'Plugins', 'プラグイン')}</h1><div className="gc-actions">{selectedEntry && !selectedEntry.studioService && !modal && <Button disabled={busy} tone="primary" onClick={reviewImpact}>{changeLabel}<ArrowRight size={14}/></Button>}{authorHost?.authorServices && modal !== 'contributions' && <Button tone="quiet" onClick={() => openModal('contributions')}>{authorToolsTitle}</Button>}{!explorerContainer && <Button tone="quiet" className="plugin-local-toggle" onClick={() => setSide('explorer')}>{t('插件列表', 'Plugins', 'プラグイン一覧')}</Button>}<Button tone="quiet" onClick={showInspector}>{t('插件属性', 'Plugin properties', 'プラグインのプロパティ')}</Button></div></header>
         <div className="plugin-document-scroll">
       {error && !modal && <div role="alert" className="workbench-error"><p>{error}</p><Button disabled={busy} onClick={() => void run(async () => {})}>{t('重新读取插件','Reload plugins','プラグインを再読込')}</Button></div>}
-      {selectedMissing && !modal && <Empty title={t('缺少作品依赖', 'Project dependency missing', '作品の依存関係がありません')} detail={t('从插件列表安装作品锁定的版本。', 'Install the locked version from the plugin explorer.', 'プラグイン一覧から固定されたバージョンをインストールします。')}/>}
-      {data && !data.entries.length && !selectedMissing && !modal && <Empty title={t('本机尚未安装插件','No plugins installed locally','ローカルプラグインはありません')} detail={t('安装插件包后，再审阅并启用到当前作品。','Install a package, then review and enable it in this project.','パッケージをインストールしてから、確認して作品で有効化します。')}><Button tone="primary" onClick={() => { setInspection(null); openModal('install'); }}>{t('安装插件','Install plugin','プラグインを追加')}</Button></Empty>}
+      {selectedMissing && !modal && <section className="plugin-editor">
+        <IssueNotice locale={locale} issue={{
+          code: 'PLUGIN_PACKAGE_MISSING', owner: 'M09', severity: selectedMissing.required ? 'error' : 'warning',
+          message: t('缺少作品锁定的插件包。作品内容保留；安装精确版本可恢复对应能力。', 'The locked plugin package is missing. Project content is preserved. Install the exact version to restore its capabilities.', '固定したプラグインがありません。作品内容は保持され、対応バージョンを導入すると機能を復元できます。'),
+          related: [], actions: [],
+        }}/>
+        <Identity label={t('作品锁定版本', 'Locked package', '固定バージョン')} value={`${selectedMissing.id}@${selectedMissing.version}`} locale={locale}/>
+        <Button tone="primary" onClick={() => openInstall(selectedMissing)}>{t('安装锁定版本', 'Install locked version', '固定バージョンをインストール')}</Button>
+      </section>}
+      {data && !data.entries.length && !selectedMissing && !modal && <Empty title={t('本机尚未安装插件','No plugins installed locally','ローカルプラグインはありません')} detail={t('安装插件包后，再审阅并启用到当前作品。','Install a package, then review and enable it in this project.','パッケージをインストールしてから、確認して作品で有効化します。')}><Button tone="primary" onClick={() => { openInstall(); }}>{t('安装插件','Install plugin','プラグインを追加')}</Button></Empty>}
       {data && !!data.entries.length && !selectedMissing && !diagnostic && !modal && <Empty title={t('选择插件', 'Select a plugin', 'プラグインを選択')} detail={t('查看贡献与诊断，或审阅当前作品的启用影响。', 'Inspect contributions or review the impact on this project.', 'コントリビューションと診断、または作品への影響を確認します。')}/>}
+      {modal === 'contributions' && authorHost?.authorServices && <section className="plugin-editor" aria-label={authorToolsTitle}>
+        <header className="plugin-editor-heading"><h2>{authorToolsTitle}</h2><Button tone="quiet" onClick={() => openModal('')}>{t('返回插件列表', 'Back to plugins', 'プラグイン一覧へ戻る')}</Button></header>
+        <AuthorContributions services={authorHost.authorServices} locale={locale} location="all" documents/>
+        {!authorHost.authorServices.tools('all').length && !authorHost.authorServices.documentTypes().length && <p>{t('启用插件后，此处显示其工具与可编辑文档。', 'Tools and editable documents from enabled plugins appear here.', '有効なプラグインのツールと編集可能な文書をここに表示します。')}</p>}
+        <div ref={customConfiguration}/>
+      </section>}
       {diagnostic && <section className="plugin-editor" aria-label={`${display(diagnostic).name} · ${t('贡献与诊断', 'Contributions and diagnostics', 'コントリビューションと診断')}`}>
         <PluginOverview manifest={diagnostic} enabledVersion={data?.lock?.plugins.find(plugin => plugin.id === diagnostic.id)?.version} studioService={diagnosticStudioService} locale={locale}/>
+        {diagnosticStudioService && openConnections && <Button onClick={openConnections}>{t('管理连接与工作流', 'Manage connections and workflows', '接続とワークフローを管理')}</Button>}
+        <h3>{t('包依赖', 'Package dependencies', 'パッケージの依存関係')}</h3>
+        {diagnostic.dependencies.length ? <ul className="plugin-package-dependencies">{diagnostic.dependencies.map(dependency => {
+          const locked = data?.lock?.plugins.find(item => item.id === dependency.id);
+          const unavailable = locked && missing.some(item => item.id === locked.id && item.version === locked.version);
+          return <li key={dependency.id}><code>{dependency.id}</code> · {dependency.range}
+            {locked && <> · {t('作品锁定', 'Project lock', '作品の固定版')} {locked.version}</>}
+            {unavailable && <Button tone="quiet" onClick={() => selectPackage(missingKey(locked))}>{t('查看缺失版本', 'View missing version', '不足バージョンを表示')}</Button>}
+          </li>;
+        })}</ul> : <p>{t('未声明包依赖。', 'No package dependencies declared.', '宣言されたパッケージ依存関係はありません。')}</p>}
+        {!!diagnostic.externalRuntimeDependencies?.length && <>
+          <h3>{t('外部运行时', 'External runtimes', '外部ランタイム')}</h3>
+          <ul className="plugin-package-dependencies">{diagnostic.externalRuntimeDependencies.map(key => <li key={key}><code>{key}</code></li>)}</ul>
+        </>}
         <h3>{t('贡献与诊断', 'Contributions and diagnostics', 'コントリビューションと診断')}</h3>
         <p>{t('此处显示编辑端状态；主进程服务和演出运行时在使用时加载，按需状态不代表已通过运行验证。', 'Editor status is shown here. Host services and runtime contributions load on demand; this does not confirm successful execution.', 'ここには編集環境の状態を表示します。ホストサービスと実行環境は必要時に読み込み、動作検証の完了を示しません。')}</p>
         <div className="plugin-document-list">{[...diagnostic.contributions.map(item => ({ key: item.key, kind: item.kind, target: item.targets.join(' / ') })), ...(diagnostic.studio ?? []).map(item => ({ key: item.key, kind: item.kind, target: item.slot }))].map(item => {
@@ -181,17 +237,22 @@ export function Plugins({
                   "開発ディレクトリを読み込む",
                 )
           }>
-          <header className="plugin-editor-heading"><h2>{modal === 'install' ? t('安装插件包', 'Install package', 'パッケージを追加') : t('加载开发目录', 'Load development directory', '開発ディレクトリを読み込む')}</h2><Button tone="quiet" disabled={busy} onClick={() => openModal('')}>{t('返回插件列表', 'Back to plugins', 'プラグイン一覧へ戻る')}</Button></header>
-          <Field label={t("本机路径", "Local path", "ローカルパス")}>
+          {repair && <Identity label={t('需要安装的精确版本', 'Required exact package', '必要な正確なバージョン')} value={`${repair.id}@${repair.version}`} locale={locale}/>}
+          <p className="plugin-install-help">{modal === "development"
+            ? t('选择插件的开发目录。加载后 Studio 将使用目录中的开发入口。', 'Choose the plugin’s development directory. Studio loads its development entry point.', 'プラグインの開発ディレクトリを選択すると、Studio が開発用のエントリーポイントを読み込みます。')
+            : t('选择 .galplugin、.zip，或输入解包后的目录。先检查包和版本，再确认安装。', 'Choose a .galplugin or .zip file, or enter an unpacked directory. Inspect the package and version before installing.', '.galplugin、.zip、または展開したディレクトリを指定し、パッケージとバージョンを確認してからインストールします。')}</p>
+          <div className="plugin-install-path">
+          <Field name="plugin-local-path" label={t("本机路径", "Local path", "ローカルパス")} required>
             <Input
+              disabled={busy}
               value={path}
               onChange={(e) => {
                 setPath(e.target.value);
                 setInspection(null);
+                setError('');
               }}
             />
           </Field>
-          <div className="gc-actions">
             <Button disabled={busy}
               onClick={() =>
                 void run(async () => {
@@ -234,16 +295,18 @@ export function Plugins({
               <Button disabled={busy} onClick={() => openModal("")}>{t("取消", "Cancel", "キャンセル")}</Button>
               {inspection === null ? <>
             <Button tone="primary"
-              disabled={busy || !path}
+              disabled={busy || !path.trim()}
               onClick={() =>
                 void run(async () => {
                   if (modal === "development") {
-                    unwrap(
+                    ensurePluginDocumentsSettled();
+                    const loaded = unwrap(
                       await bridge.plugins.loadDevelopment({
                         directory: path,
                         projectId,
                       }),
-                    );
+                    ) as import('@galcraft/plugins').PackageInspection;
+                    if (data?.lock?.plugins.some(plugin => plugin.id === loaded.manifest.id && plugin.version === loaded.manifest.version)) await changed();
                     openModal("");
                   } else
                     setInspection(
@@ -259,7 +322,7 @@ export function Plugins({
                 })
               }
             >
-              {t("检查", "Inspect", "確認")}
+              {modal === "development" ? t('加载开发目录', 'Load development directory', '開発ディレクトリを読み込む') : t("检查", "Inspect", "確認")}
             </Button>
               </> : <>
               <Button
@@ -267,6 +330,12 @@ export function Plugins({
                 disabled={busy}
                 onClick={() =>
                   void run(async () => {
+                    const manifest = inspection.manifest;
+                    if (repair && (manifest.id !== repair.id || manifest.version !== repair.version)) {
+                      throw new Error(t('此包与作品锁定版本不同。请选择上方所示的精确版本。', 'This package differs from the project lock. Choose the exact version shown above.', '作品の固定版と異なります。上に表示した正確なバージョンを選択してください。'));
+                    }
+                    const affectsProject = data?.lock?.plugins.some(plugin => plugin.id === manifest.id && plugin.version === manifest.version);
+                    if (affectsProject) ensurePluginDocumentsSettled();
                     unwrap(
                       await bridge.plugins.install({
                         kind: /\.(zip|galplugin)$/i.test(path)
@@ -275,6 +344,7 @@ export function Plugins({
                         path,
                       }),
                     );
+                    if (affectsProject) await changed();
                     openModal("");
                   })
                 }
@@ -323,6 +393,7 @@ export function Plugins({
             disabled={busy}
             onClick={() =>
               void run(async () => {
+                ensurePluginDocumentsSettled();
                 unwrap(
                   await bridge.documents.applyEdit(
                     plan.edit.planId,
@@ -344,5 +415,5 @@ export function Plugins({
       </div>
       {inspectorContainer ? documentActive && createPortal(inspector, inspectorContainer) : <aside className="plugin-local-inspector" aria-label="Inspector"><header className="plugin-pane-heading">{t('插件属性', 'Plugin properties', 'プラグインのプロパティ')}</header>{inspector}</aside>}
     </main>
-  );
+  </div>;
 }

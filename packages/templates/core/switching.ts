@@ -117,7 +117,14 @@ export function planTemplate(current: RuntimeTemplate, source: RuntimeTemplate, 
     const restore = [...hidden.values()].filter(page => referencedPages.has(page.key) && !next.pages.some(item => item.key === page.key));
     if (!restore.length) break; next.pages.push(...restore); restore.forEach(page => hidden.delete(page.key));
   }
-  for (const page of next.pages) { hidden.delete(page.key); for (const component of components(page.root)) Object.values(component.animations).forEach(id => referencedAnimations.add(id)); }
+  for (const page of next.pages) {
+    hidden.delete(page.key);
+    for (const component of components(page.root)) {
+      Object.values(component.animations).forEach(id => referencedAnimations.add(id));
+      for (const binding of component.interactions ?? []) for (const node of binding.blueprint?.nodes ?? [])
+        if (node.kind === 'animation') referencedAnimations.add(node.animationId);
+    }
+  }
   for (const animation of current.animations) if (referencedAnimations.has(animation.id) && !next.animations.some(item => item.id === animation.id)) next.animations.push(structuredClone(animation));
   for (const [locale, strings] of Object.entries(current.locales)) for (const [key, value] of Object.entries(strings))
     if (referencedStrings.has(key) && next.locales[locale]?.[key] === undefined) (next.locales[locale] ??= {})[key] = value;

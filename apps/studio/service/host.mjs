@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { ResourceRegistry } from '@galcraft/media-tools/resources';
 import { EngineCatalog } from '@galcraft/publishing/engine';
+import { studioApplicationRoot } from '../main/application-root.mjs';
 import { StudioHost } from '../main/host.mjs';
 import { AuthoringPreferences } from '../main/preferences.mjs';
 import { ProjectDocuments } from '../main/document-providers.mjs';
@@ -12,20 +13,20 @@ import { StudioAssets } from '../main/asset-providers.mjs';
 import { StudioPluginPackages } from '../main/plugin-packages.mjs';
 import { pluginServiceContext, pluginServicePorts, pluginDocumentReferences } from '../main/plugin-service-ports.mjs';
 import { StudioBackups } from '../main/backup-providers.mjs';
-import { StudioProduction } from '../main/production-providers.mjs';
+import { StudioProduction } from '../main/production-providers.mts';
 import { StudioBuilds } from '../main/build-providers.mjs';
 import { StudioUpgrades } from '../main/upgrade-providers.mjs';
 import { upgradeValidator } from '../main/upgrade-validation.mjs';
-import { EnginePreview } from '../main/engine-preview.mjs';
+import { EnginePreview } from '../main/engine-preview.mts';
 import { installBundledEngine } from '../main/bundled-engine.mjs';
 import { bundledEngineVersion } from '../main/bundled-engine-version.mjs';
 import { readBundledPlugins, readBundledServicePackages, installBundledPlugins } from '../main/bundled-plugins.mjs';
 import { SoundBanks } from '../main/soundbanks.mjs';
 import { soundBankBrowserPort } from '../main/soundbank-host.mjs';
 import { StudioCollaboration } from '../main/collaboration-providers.mjs';
-import { authoringPreview } from '../main/collaboration-preview.mjs';
-import { prepareStudioPageEdit } from '../main/page-editing.mjs';
-import { productionRuntimeDependencies } from '../main/production-runtimes.mjs';
+import { authoringPreview } from '../main/collaboration-preview.ts';
+import { prepareStudioPageEdit } from '../main/page-editing.ts';
+import { productionRuntimeDependencies } from '../main/production-runtimes.mts';
 import { createNodeSafeStorage } from './credentials.mjs';
 import { NodeUtilityTasks } from './workers.mjs';
 import { createBrowserCapture } from './browser-capture.mjs';
@@ -45,7 +46,7 @@ function openSystem(target) {
 
 /** The single domain assembly used by CLI, desktop, browser and MCP. */
 export async function createNodeStudioHost({ userData, origin, publish = () => {}, requestDialog, requestContext = () => undefined }) {
-  const root = resolve(process.env.GALCRAFT_STUDIO_ROOT ?? join(import.meta.dirname, '..'));
+  const root = resolve(process.env.GALCRAFT_STUDIO_ROOT ?? studioApplicationRoot());
   const packaged = !!process.env.GALCRAFT_BUNDLED_ROOT || existsSync(join(root, 'resources/engines'));
   const bundledRoot = process.env.GALCRAFT_BUNDLED_ROOT ?? (packaged ? join(root, 'resources') : join(root, '../../build/desktop'));
   const officialPackageRoot = packaged ? join(bundledRoot, 'plugins') : join(root, '../../plugins');
@@ -113,7 +114,7 @@ export async function createNodeStudioHost({ userData, origin, publish = () => {
     browser = createBrowserCapture({ origin, host: () => host });
     host.captureReadiness=browser.readiness;
     assets.verifyAssetPlayback = browser.verifyAssetPlayback;
-    host.collaboration = new StudioCollaboration({ userData, projects, assets, production: host.production, plugins, window, dialog, preview: input => authoringPreview(host.production, input, plugins), capture: browser.capture, host });
+    host.collaboration = new StudioCollaboration({ userData, projects, assets, production: host.production, plugins, window, dialog, preview: (input, signal) => authoringPreview(host.production, input, plugins, signal), capture: browser.capture, host });
     host.pageEditing = request => prepareStudioPageEdit({ documents: [...projects.currentSession.documents.values()], request, capture: browser.capture });
     assets.comfyMatting = (request, choice, collaboration, signal) => host.production.prepareComfyMatting(request, choice, collaboration, signal);
     host.inspectConnection = (_entry, selection) => host.production.testConnection(selection);

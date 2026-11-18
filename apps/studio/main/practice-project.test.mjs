@@ -93,6 +93,13 @@ describe('editable practice project', () => {
       for (const [page, part] of [['title', 'title.menu.flow'], ['story', 'story.toolbar.flow']])
         expect(parts(snapshot.template.pages.find(item => item.key === page).root).find(item => item.part === part)?.visible).toBe(true);
       expect(snapshot.template.pages.find(page => page.key === 'title').background.imageId).toBe(input.project.display.titleBackground);
+      const settings = parts(snapshot.template.pages.find(page => page.key === 'title').root).find(component => component.part === 'title.menu.settings');
+      expect(settings.interactions).toEqual([{
+        id: expect.any(String), event: 'click', actions: [], blueprint: {
+          revision: 1, entry: expect.any(String), edges: [], nodes: [{ id: expect.any(String), kind: 'action', action: { kind: 'open', page: 'settings' } }],
+        },
+      }]);
+      expect(settings.interactions[0].blueprint.entry).toBe(settings.interactions[0].blueprint.nodes[0].id);
       const choice = instructions.find(instruction=>instruction.opcode==='choose');
       expect(choice.args.options).toHaveLength(3);
       const playerLines = instructions.filter(instruction => instruction.opcode === 'say' && instruction.args.speaker.id === viewpoint.id);
@@ -177,6 +184,14 @@ describe('editable practice project', () => {
       expect(effects[2].args.soundId).toBe(effects[0].args.soundId);
       expect(effects[2].args.op).toBe('stop'); expect(effects[2].args.all).toBe(false);
       const preparation = snapshot.scenes.find(scene => scene.instructions.some(instruction => instruction.opcode === 'choose'));
+      const feishu = snapshot.characters.find(character => character.name === '绯书');
+      const smile = feishu.differences.find(difference => difference.name === '微笑');
+      const shelter = '我们挤在檐下，护住最后一卷胶片。';
+      const shelterLine = preparation.instructions.find(instruction => instruction.opcode === 'say' && instruction.args.text.startsWith(shelter));
+      expect(shelterLine.args.events).toMatchObject([
+        { kind: 'wait', offset: shelter.length, durationMs: 350 },
+        { kind: 'expression', offset: shelter.length, characterId: feishu.id, differenceId: smile.id, ...smile.figure },
+      ]);
       const bellIndex = preparation.instructions.findIndex(instruction => instruction.statementId === effects[1].statementId);
       expect(preparation.instructions[bellIndex + 1].args.durationMs).toBe(1500);
       expect(preparation.instructions[bellIndex + 2].statementId).toBe(effects[2].statementId);

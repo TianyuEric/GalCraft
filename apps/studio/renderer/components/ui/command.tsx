@@ -78,7 +78,7 @@ function CommandInput({
 					"placeholder:text-muted-foreground flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-hidden data-disabled:pointer-events-none data-disabled:opacity-50",
 					className
 				)}
-				data-disabled={disabled}
+				data-disabled={disabled ? "" : undefined}
 				disabled={disabled}
 				{...props}
 			/>

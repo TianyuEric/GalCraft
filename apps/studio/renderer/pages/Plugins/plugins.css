@@ -1,3 +1,4 @@
+.plugin-management-surface { flex:1; width:100%; height:100%; min-height:0; min-width:0; container-type:inline-size; }
 .plugin-desktop-workbench.plugins-page { padding:0; display:grid; grid-template-columns:224px minmax(0,1fr) 280px; height:100%; min-height:0; min-width:0; overflow:hidden; background:var(--card); }
 .plugin-desktop-workbench.has-external-explorer { grid-template-columns:minmax(0,1fr) 280px; }
 .plugin-desktop-workbench.has-external-inspector { grid-template-columns:224px minmax(0,1fr); }
@@ -32,11 +33,23 @@
 .plugin-dialog-actions { display:flex; flex-direction:column; align-items:stretch; gap:12px; }
 .plugin-dialog-actions .workbench-error { margin:0; max-height:112px; overflow:auto; overflow-wrap:anywhere; color:var(--danger-foreground); }
 .plugin-dialog-actions > .gc-actions { justify-content:flex-end; }
-@media (max-width:1100px) {
+@container (max-width:1100px) {
   .plugin-desktop-workbench:not(.has-external-explorer):not(.has-external-inspector) { grid-template-columns:210px minmax(0,1fr); }
   .plugin-desktop-workbench:not(.has-external-explorer):not(.has-external-inspector)[data-side="inspector"] { grid-template-columns:minmax(0,1fr) 280px; }
   .plugin-desktop-workbench:not(.has-external-explorer):not(.has-external-inspector)[data-side="explorer"] > .plugin-local-inspector,.plugin-desktop-workbench:not(.has-external-explorer):not(.has-external-inspector)[data-side="inspector"] > .plugin-local-explorer { display:none; }
   .plugin-workbench-toolbar .plugin-local-toggle { display:inline-flex; }
+}
+@container (max-width:570px) {
+  .plugin-desktop-workbench:not(.has-external-explorer):not(.has-external-inspector):is([data-side="explorer"],[data-side="inspector"]) {
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:minmax(104px,32%) minmax(0,1fr);
+  }
+  .plugin-desktop-workbench:not(.has-external-explorer):not(.has-external-inspector) > :is(.plugin-local-explorer,.plugin-local-inspector) {
+    grid-row:1;
+    border-inline:0;
+    border-bottom:1px solid var(--border);
+  }
+  .plugin-desktop-workbench:not(.has-external-explorer):not(.has-external-inspector) > .plugin-workbench-document { grid-row:2; }
 }
 
 .plugin-desktop-workbench .plugin-impact { padding:12px 0; border:0; border-bottom:1px solid var(--border); border-radius:0; background:transparent; }
@@ -46,6 +59,11 @@
 .plugin-desktop-workbench .plugin-version-change { gap:12px; padding:12px 0; }
 .plugin-desktop-workbench .impact-facts { gap:8px 12px; font-size:13px; margin:12px 0 0; }
 .plugin-editor > h3 { margin:24px 0 8px; font-size:16px; font-weight:600; }
+.plugin-editor .plugin-install-help { max-width: 64ch; margin: 0 0 16px; color: var(--muted-foreground); }
+.plugin-install-path { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; max-width: 720px; }
+.plugin-install-path .gc-field { flex: 1 1 260px; min-width: 0; margin: 0; }
+.plugin-install-path .gc-button { flex: none; }
+.plugin-package-dependencies { display:grid; gap:8px; font-size:13px; overflow-wrap:anywhere; padding-inline-start:20px; }
 .plugin-editor .plugin-document-list { max-height:320px; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
 .plugin-editor .plugin-document-list details { margin-top:8px; font-size:12px; }
 .plugin-editor .plugin-document-list article > div { min-width:0; }

@@ -81,7 +81,7 @@ export async function packPlugin(directory: string, outputDirectory: string) {
 }
 export type PluginTemplate = 'author-tool' | 'game-system' | 'resource-stage' | 'service-provider' | 'complete';
 export async function createPluginProject(input: { directory: string; id: string; template: PluginTemplate; sdkVersion?: string }) {
-  const files = scaffoldFiles(input.id, input.template, input.sdkVersion ?? '0.1.0');
+  const files = scaffoldFiles(input.id, input.template, input.sdkVersion ?? '0.2.0');
   await mkdir(input.directory, { recursive: true });
   if ((await readdir(input.directory)).length) throw new Error('Scaffold destination must be empty');
   for (const [path, contents] of Object.entries(files)) {

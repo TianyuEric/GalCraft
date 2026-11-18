@@ -6,7 +6,8 @@ export function markAuthoringFocus(root: HTMLElement): void {
     if (control.dataset.focusKey) continue;
     const statement = control.closest<HTMLElement>('[data-statement-id]')?.dataset.statementId ?? '';
     const field = control.closest<HTMLElement>('[data-field]')?.dataset.field ?? '';
-    const region = control.closest('.authoring-inspector') ? 'inspector' : control.closest('.authoring-nav') ? 'nav' : control.closest('.authoring-center') ? 'center' : control.closest('.authoring-editor > .authoring-toolbar') ? 'toolbar' : 'shell';
+    const pane = control.closest<HTMLElement>('[data-scene-view]');
+    const region = control.closest('.authoring-inspector') ? 'inspector' : control.closest('.authoring-nav') ? 'nav' : pane ? `center:${pane.dataset.sceneView}` : control.closest('.authoring-center') ? 'center' : control.closest('.authoring-editor > .authoring-toolbar') ? 'toolbar' : 'shell';
     const label = control.getAttribute('aria-label') ?? (control instanceof HTMLButtonElement ? control.textContent : '') ?? '';
     const base = `${region}/${statement}/${field}/${control.tagName}/${control instanceof HTMLInputElement ? control.type : ''}/${label}`;
     const ordinal = counts.get(base) ?? 0; counts.set(base, ordinal + 1);

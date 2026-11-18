@@ -94,7 +94,13 @@ export const ContributionDiagnosticsDark: Story = { ...ContributionDiagnostics, 
 
 export const English: Story = { args:{locale:"en"} };
 export const Japanese: Story = { args:{locale:"ja",theme:"dark"} };
-export const MissingDependency: Story = { args:{missing:true} };
+export const MissingDependency: Story = { args: { missing: true }, play: async ({ canvas }) => {
+  await userEvent.click(await canvas.findByRole('treeitem', { name: /org.galcraft.missing/ }));
+  await expect(canvas.getByText('org.galcraft.missing@0.1.0')).toBeVisible();
+  await userEvent.click(canvas.getByRole('button', { name: '安装锁定版本' }));
+  await expect(canvas.getByText('org.galcraft.missing@0.1.0')).toBeVisible();
+  await expect(canvas.getByRole('button', { name: '检查' })).toBeDisabled();
+} };
 
 export const DefaultServices: Story = { args: { defaultServices: true }, play: async ({ canvas }) => {
   const defaults = await canvas.findByRole('treeitem', { name: /Studio 默认装配/ });
@@ -125,7 +131,7 @@ export const VoiceStudioDefaultService: Story = { args: { defaultServices: true,
   await expect(canvas.getByRole('heading', { name: 'VoiceStudio', level: 2 })).toBeVisible();
   const overview = within(canvas.getByRole('region', { name: '插件用途与作品状态' }));
   await expect(overview.getByText(voiceStudioManifest.description, { exact: true })).toBeVisible();
-  await expect(canvas.getByText('Studio 随应用提供此服务，制作时按需加载。在“制作 → 服务连接”中配置连接。', { exact: true })).toBeVisible();
+  await expect(canvas.getByText('Studio 随应用提供此服务，制作时按需加载。在“连接与工作流”中配置连接。', { exact: true })).toBeVisible();
   await expect(canvas.queryByRole('button', { name: /启用到作品|停用此版本|切换到此版本/ })).toBeNull();
   const identities = canvas.getAllByText('贡献标识', { exact: true });
   await expect(identities).toHaveLength(voiceStudioManifest.contributions.length);

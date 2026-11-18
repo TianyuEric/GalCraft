@@ -3,7 +3,7 @@
     "schemaVersion": 2,
     "id": "org.galcraft.voicestudio",
     "name": "VoiceStudio",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "连接用户另行准备的 VoiceStudio 服务与模型，发现声音并制作角色配音、设计样音、参考克隆和逐字稿；能力依实际引擎而定。",
     "localizations": {
       "en": {
@@ -18,7 +18,7 @@
     "author": "GalCraft",
     "license": "MPL-2.0",
     "homepage": "https://github.com/debpalash/VoiceStudio",
-    "engineRange": "^0.1.0",
+    "engineRange": "^0.2.0",
     "sdkMajor": 0,
     "targets": [
       "web",

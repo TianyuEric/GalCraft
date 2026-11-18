@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { StudioProduction } from './production-providers.mjs';
+import { StudioProduction } from './production-providers.mts';
 
 it('freezes a local provider environment at review and supplies the same identity at execution', async () => {
   const production=Object.create(StudioProduction.prototype), config={providerKey:'test.motion/render'}, runtime={id:'toolchain',browser:'155',encoder:'9.0.2'}, seen=[];
@@ -18,6 +18,6 @@ it('releases the provider when the reviewed environment cannot be frozen', async
   const production=Object.create(StudioProduction.prototype); let released=0;
   production.generationProviders={describe:async()=>({providerKey:'test.motion/render',packageVersion:'0.1.0'})};
   production.acquireAdapter=async()=>({adapter:{inspect:async()=>({status:'verified'}),freeze:async()=>{throw Error('toolchain removed');}},release(){released++;}});
-  await expect(production.freezeProvider({}, {purpose:'test.motion/render'},null)).rejects.toThrow('toolchain removed');
+  await expect(production.freezeProvider({providerKey:'test.motion/render'}, {purpose:'test.motion/render'},null)).rejects.toThrow('toolchain removed');
   expect(released).toBe(1);
 });

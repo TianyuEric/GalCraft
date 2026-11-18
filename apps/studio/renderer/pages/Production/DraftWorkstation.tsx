@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { createId } from '@galcraft/contracts';
 import { operationSupportsConnection } from '@galcraft/authoring/production/operations';
 import type { Json } from '@galcraft/contracts';
-import type { GenerationInput, RecipeSelection, SpeechLine } from '@galcraft/authoring/production';
+import type { GenerationInput, MediaInput, RecipeSelection, SpeechLine } from '@galcraft/authoring/production';
 import { speechLines, resolveProductionFields } from '@galcraft/authoring/production/draft';
 import { inputTextSummary, previewTextInput, speechPreparationInstruction, type InputTextSummary } from '@galcraft/authoring/production/preview';
 import { Button, Choice, Field, Badge } from '../../components/controls.js';
@@ -23,9 +23,10 @@ import { VoiceLinesEditor } from './VoiceLinesEditor.js';
 import { NovelAIPromptEditor } from './NovelAIPromptEditor.js';
 import { ExtensionOperationForm, type ProductionEditorHost } from './ExtensionOperationForm.js';
 
-export function DraftWorkstation({ session: s, locale, services, busy, run, generated, navigate, active = true, inspectorContainer, revealInspector, productionHost }: {
+export function DraftWorkstation({ session: s, locale, services, busy, run, generated, navigate, returnToOrigin, active = true, inspectorContainer, revealInspector, productionHost }: {
   session: ProductionSession; locale: string; services: AuthoringServices; busy: boolean;
   run(action: () => Promise<void>): Promise<void>; generated(): void; navigate(page: string): void;
+  returnToOrigin?(): void;
   active?: boolean; inspectorContainer?: HTMLElement; revealInspector?(): void;
   productionHost?: ProductionEditorHost | null;
 }) {
@@ -33,6 +34,8 @@ export function DraftWorkstation({ session: s, locale, services, busy, run, gene
   const [inspector, setInspector] = useState(false);
   const [presetName, setPresetName] = useState<string | null>(null);
   const workstation = useRef<HTMLDivElement>(null), parameters = useRef<HTMLElement>(null), pendingFocus = useRef<string | null>(null);
+  const content = useRef<HTMLDivElement>(null), planHeading = useRef<HTMLHeadingElement>(null);
+  const inputScroll = useRef<number | null>(null);
   const fieldSelector = (key: string) => `[data-field="${CSS.escape(key)}"] :is(input,textarea,button)`;
   const showField = (key: string) => {
     pendingFocus.current = key;
@@ -52,7 +55,11 @@ export function DraftWorkstation({ session: s, locale, services, busy, run, gene
   const extension = operation.includes('/');
   const extensionVoice = extension && draft.activeUse === 'voice' && s.operationDefinition?.definition.adoption.kind === 'asset' && s.operationDefinition.definition.adoption.usages.includes('voice');
   const media = s.purpose !== 'text', image = s.purpose === 'image' || s.purpose === 'difference', speech = s.purpose === 'speech', music = s.purpose === 'music';
+  const wholeFigure = draft.activeUse === 'difference' && s.purpose === 'image';
+  const reference = (wholeFigure && Array.isArray(v.fields.references) ? v.fields.references[0] : v.fields.reference) as MediaInput | null | undefined;
+  const referenceAsset = s.data.assets.find(asset => asset.id === reference?.assetId);
   const page = operation === 'uiPlan' || operation === 'uiPatch';
+  const targetPage = s.data.pages.find(item => item.id === v.target.uiScope?.pageIds[0]);
   const lines = speechLines(v);
   const scheme = s.data.recipes.find(recipe => recipe.id === v.productionRecipeId);
   const parameterPreset = s.data.recipes.find(recipe => recipe.id === v.parameterPresetId);
@@ -82,6 +89,7 @@ export function DraftWorkstation({ session: s, locale, services, busy, run, gene
     const missing = t('请填写此项', 'Complete this field', '入力してください');
     const required = extension ? [] : speech ? lines.length ? [] : [v.fields.spokenText !== undefined ? 'spokenText' : 'text', 'language'] : music ? ['prompt', 'durationSec'] : image ? prepare ? ['instruction'] : s.purpose === 'difference' ? ['instruction', 'reference'] : ['positive'] : ['instruction'];
     for (const key of required) if (v.fields[key] === null || v.fields[key] === undefined || typeof v.fields[key] === 'string' && !String(v.fields[key]).trim()) next[key] = missing;
+    if (wholeFigure && (!reference?.assetId || !reference.variantId)) next.reference = t('请选择一个精确版本作为主参考图', 'Choose one exact version as the main reference', '主参照画像のバージョンを選択してください');
     if (image) for (const key of ['width', 'height', 'count']) if (!(Number(v.fields[key]) > 0)) next[key] = t('请输入大于零的数值', 'Enter a positive number', '正の値を入力してください');
     if (!v.connectionId) next.connection = t('请选择执行连接', 'Choose an execution connection', '実行する接続を選択');
     if (draft.activeUse === 'script' && operation !== 'discuss' && !v.target.sceneId) next.scene = t('请选择采用场景', 'Choose the adoption scene', '採用先のシーンを選択');
@@ -98,20 +106,43 @@ export function DraftWorkstation({ session: s, locale, services, busy, run, gene
     if (!validate()) return;
     await s.saveDraft(true);
     try { s.plan = unwrap(await s.bridge.production.plan({ draftId: draft.id, name: draft.name || t('制作任务', 'Production task', '制作タスク') })); } catch (error) { const message = String(error).replace(/^Error: /, ''); const key = Object.keys(v.fields).find(key => message.includes(key)); if (key) { setErrors(old => ({ ...old, [key]: message })); showField(key); } throw error; }
+    inputScroll.current = content.current?.scrollTop ?? 0;
     s.changed();
   });
   const plan = s.plan;
-  return <div ref={workstation} className={`production-workstation ${inspector ? 'show-inspector' : ''}`} data-inspector-external={!!inspectorContainer}>
+  const requestCount = plan?.sendSummary.reduce((sum, row) => sum + row.requests, 0) ?? 0;
+  useEffect(() => {
+    if (plan) {
+      if (content.current) content.current.scrollTop = 0;
+      planHeading.current?.focus({ preventScroll: true });
+    } else if (inputScroll.current !== null) {
+      if (content.current) content.current.scrollTop = inputScroll.current;
+      inputScroll.current = null;
+      workstation.current?.querySelector<HTMLButtonElement>('[data-production-review-request]')?.focus({ preventScroll: true });
+    }
+  }, [plan]);
+  return <div ref={workstation} className={`production-workstation ${inspector && !plan ? 'show-inspector' : ''}`} data-inspector-external={!!inspectorContainer} data-send-review={!!plan}>
     <section className="production-document">
-      <header className="production-document-toolbar"><Input aria-label={t('制作名称', 'Production name', '制作名')} value={draft.name ?? ''} placeholder={t('未命名制作', 'Untitled production', '名称未設定')} onChange={e => { draft.name = e.target.value; s.update({}); }}/><span role="status">{s.draftSaving ? t('保存中', 'Saving', '保存中') : s.draftDirty ? t('草稿未保存', 'Draft unsaved', '下書き未保存') : draft.revision ? t('草稿已保存', 'Draft saved', '下書き保存済み') : t('未开始编辑', 'Ready to edit', '編集待ち')}</span>{!inspectorContainer && <Button className="production-inspector-toggle" onClick={() => setInspector(!inspector)}>{t('参数', 'Parameters', 'パラメータ')}</Button>}</header>
-      <div className="production-document-content">
-        {s.origin && <p className="production-origin"><Button tone="quiet" onClick={() => navigate(s.origin!.page)}><ArrowLeft size={14}/>{t('返回来源', 'Return to origin', '元の画面に戻る')}</Button>{s.data.scenes.find(scene => scene.id === s.origin?.sceneId)?.name ?? (s.origin.pageIds.length ? t('页面设计', 'Page design', 'ページ編集') : t('独立制作', 'Independent production', '独立した制作'))}</p>}
-        {plan ? <section className="production-send-review" aria-label={t('本次执行', 'This execution', '今回の実行')}>
-          <h2>{t('本次执行', 'This execution', '今回の実行')} · {plan.sendSummary.reduce((sum, row) => sum + row.requests, 0)} {t('次请求', 'requests', '回のリクエスト')}</h2>
-          <p>{t('服务未提供报价。以下输入与配置已冻结；开始后生成候选。', 'The service has not quoted a price. These inputs and settings are frozen for generation.', '料金の見積もりはありません。下記の入力と設定を固定して候補を作成します。')}</p>
+      <header className="production-document-toolbar">
+        {plan ? <strong className="production-frozen-name">{plan.task.name}</strong> : <>
+          <Input aria-label={t('制作名称', 'Production name', '制作名')} value={draft.name ?? ''} placeholder={t('未命名制作', 'Untitled production', '名称未設定')} onChange={e => { draft.name = e.target.value; s.update({}); }}/>
+          <span role="status">{s.draftSaving ? t('保存中', 'Saving', '保存中') : s.draftDirty ? t('草稿未保存', 'Draft unsaved', '下書き未保存') : draft.revision ? t('草稿已保存', 'Draft saved', '下書き保存済み') : t('未开始编辑', 'Ready to edit', '編集待ち')}</span>
+          {(revealInspector || !inspectorContainer) && <Button className={inspectorContainer ? undefined : 'production-inspector-toggle'} onClick={inspectorContainer ? revealInspector : () => setInspector(!inspector)}>{t('参数', 'Parameters', 'パラメータ')}</Button>}
+        </>}
+      </header>
+      <div className="production-document-content" ref={content}><div className="production-form-content">
+        {s.origin && <p className="production-origin"><Button tone="quiet" disabled={busy} onClick={returnToOrigin ?? (() => navigate(s.origin!.page))}><ArrowLeft size={14}/>{t('返回来源', 'Return to origin', '元の画面に戻る')}</Button>{s.data.characters.find(character => character.id === s.origin?.characterId)?.name ?? s.data.assets.find(asset => asset.id === s.origin?.asset?.assetId)?.name ?? s.data.scenes.find(scene => scene.id === s.origin?.sceneId)?.name ?? (s.origin.pageIds.length ? t('页面设计', 'Page design', 'ページ編集') : t('独立制作', 'Independent production', '独立した制作'))}</p>}
+        {plan ? <section className="production-send-review" aria-label={t('发送计划', 'Request plan', '送信計画')}>
+          <h2 ref={planHeading} tabIndex={-1}>{t('发送计划', 'Request plan', '送信計画')}</h2>
+          <p>{t('已冻结以下输入和配置。确认开始后发送请求并生成候选。', 'The inputs and settings below are frozen. Starting generation sends the requests and creates candidates.', '以下の入力と設定は固定済みです。生成を開始するとリクエストを送信し、候補を作成します。')}</p>
+          <dl className="production-request-summary">
+            <div><dt>{t('请求数', 'Requests', 'リクエスト数')}</dt><dd>{requestCount.toLocaleString(locale)}</dd></div>
+            <div><dt>{t('预计费用', 'Estimated cost', '見積もり料金')}</dt><dd>{t('服务未提供报价', 'Quote unavailable', '見積もり未提供')}</dd></div>
+          </dl>
           {plan.task.items.map(item => { const value = item.input as GenerationInput; const summary = plan.sendSummary.find(row => row.itemId === item.id); return <article className="production-send-step" key={item.id}>
             <h3>{item.configSnapshot?.name ?? t('本地步骤', 'Local step', 'ローカル処理')} <Badge>{item.purpose}</Badge></h3>
-            {summary && <p>{summary.model} · {summary.requests} {t('次请求', 'requests', '回')} · {summary.textCharacters.toLocaleString(locale)} {t('字符','characters','文字')} · {inputTextSummary(value).attachments} {t('个附件','attachments','添付')}</p>}
+            {summary && <p>{summary.destination} · {summary.model} · {summary.requests} {t('次请求', 'requests', '回')} · {summary.textCharacters.toLocaleString(locale)} {t('字符','characters','文字')} · {inputTextSummary(value).attachments} {t('个附件','attachments','添付')}</p>}
+            {item.target.usage === 'difference' && value.purpose === 'image' && value.references.map(ref => <p key={ref.variantId}>{t('冻结主参考', 'Frozen main reference', '固定した主参照')} · {s.data.assets.find(asset => asset.id === ref.assetId)?.name ?? ref.assetId} · {ref.variantId} · {value.width} × {value.height}</p>)}
             {item.dependencies.length > 0 && <p>{t('等待作者选择上一准备步骤的候选后执行', 'Runs after you select a candidate from the preparation step', '前の準備候補を選択した後に実行')}</p>}
             <div className="production-request-prose">{value.purpose === 'text' ? <>{value.system && <p>{value.system}</p>}{value.messages.map((message, index) => <p key={index}>{message.text}</p>)}</> : <p>{value.purpose === 'speech' ? value.text : value.purpose === 'image' ? value.positive : value.purpose === 'music' ? value.prompt : value.purpose === 'difference' ? value.instruction : ''}</p>}</div>
             {summary?.media.map(path => <p key={path}>{path.split(/[\\/]/).at(-1)}</p>)}
@@ -128,12 +159,12 @@ export function DraftWorkstation({ session: s, locale, services, busy, run, gene
             {lines.length ? <div className="speech-lines-scroll"><table className="speech-lines"><thead><tr><th>{t('选中', 'Use', '選択')}</th><th>{t('角色 / 原文', 'Speaker / original', '話者 / 原文')}</th><th>{t('朗读文本', 'Spoken text', '読み上げ文')}</th><th>{t('语言 / 音色', 'Language / voice', '言語 / 声')}</th></tr></thead><tbody>{lines.map(value => <tr key={value.id}><td><input type="checkbox" aria-label={`${t('朗读', 'Read', '読む')} ${value.original}`} checked={value.selected} onChange={e => line(value.id, { selected: e.target.checked })}/></td><td><strong>{s.data.characters.find(character => character.id === value.characterId)?.name ?? t('旁白', 'Narration', 'ナレーション')}</strong><p>{value.original}</p></td><td><Textarea aria-label={t('朗读文本', 'Spoken text', '読み上げ文')} value={value.text} rows={3} onChange={e => line(value.id, { text: e.target.value })}/></td><td><Input aria-label={t('语言', 'Language', '言語')} value={value.language} onChange={e => line(value.id, { language: e.target.value })}/><Input aria-label={t('行音色', 'Line voice', '行の声')} value={value.voiceId ?? ''} placeholder={t('使用共同音色', 'Use common voice', '共通の声を使用')} onChange={e => line(value.id, { voiceId: e.target.value || null })}/></td></tr>)}</tbody></table></div> : <>{text(v.fields.spokenText !== undefined ? 'spokenText' : 'text', t('朗读文本或逐行清单', 'Text or line list', '読み上げ文または行リスト'), 8)}<Button onClick={() => updateLines(String(v.fields.spokenText ?? v.fields.text ?? '').split(/\r?\n/).filter(value => value.trim()).map(value => ({ id: createId(s.data), original: value, text: value, statementId: null, sceneId: null, characterId: null, language: String(v.fields.language || 'ja'), voiceId: null, selected: true })))}><Plus size={14}/>{t('按非空行拆分', 'Split nonempty lines', '空行を除いて分割')}</Button></>}
             <p>{lines.filter(value => value.selected).length || (String(v.fields.text ?? '').trim() ? 1 : 0)} {t('个配音项；实际请求数在检查后显示', 'speech items; actual requests appear after checking', '音声項目・確認後に実際のリクエスト数を表示')}</p>
           </section> : music ? <>{text('prompt', t('音乐描述', 'Music description', '音楽の説明'), 8)}{v.fields.instrumental === false && text('lyrics', t('歌词', 'Lyrics', '歌詞'))}</> : image ? <>
-            {s.purpose === 'image' && <Field label={t('输入方式', 'Input method', '入力方法')}><Choice label={t('输入方式', 'Input method', '入力方法')} value={prepare ? 'prepare' : 'direct'} options={[{ value: 'direct', label: t('直接填写提示', 'Direct prompt', '直接プロンプト') }, { value: 'prepare', label: t('辅助整理描述', 'Prepare a prompt', '説明からプロンプトを作成') }]} onChange={mode => togglePreparation(mode === 'prepare')}/></Field>}
+            {s.purpose === 'image' && !wholeFigure && <Field label={t('输入方式', 'Input method', '入力方法')}><Choice label={t('输入方式', 'Input method', '入力方法')} value={prepare ? 'prepare' : 'direct'} options={[{ value: 'direct', label: t('直接填写提示', 'Direct prompt', '直接プロンプト') }, { value: 'prepare', label: t('辅助整理描述', 'Prepare a prompt', '説明からプロンプトを作成') }]} onChange={mode => togglePreparation(mode === 'prepare')}/></Field>}
             {prepare || s.purpose === 'difference' ? text('instruction', t(s.purpose === 'difference' ? '需要改变与保留的内容' : '视觉描述', 'Visual description or changes', '画像の説明または変更')) : text('positive', t('正向提示', 'Positive prompt', '生成プロンプト'), 8)}
             {text('negative', t('负向提示（可选）', 'Negative prompt (optional)', '除外プロンプト（任意）'), 3)}
-            <Button onClick={() => chooseReference()}><ImagePlus size={15}/>{t(s.purpose === 'difference' ? '选择基准图' : '选择参考图', 'Choose reference image', '参照画像を選択')}</Button>
+            <div data-field="reference"><Button onClick={() => chooseReference()}><ImagePlus size={15}/>{t(wholeFigure ? '选择主参考图' : s.purpose === 'difference' ? '选择基准图' : '选择参考图', 'Choose reference image', '参照画像を選択')}</Button></div>
             {errors.reference && <p role="alert" className="field-error">{errors.reference}</p>}
-            {v.fields.reference && <p>{t('参考图已附加', 'Reference image attached', '参照画像を添付済み')} <Button tone="quiet" onClick={() => { s.field('reference', null); s.field('references', []); }}>{t('移除', 'Remove', '削除')}</Button></p>}
+            {reference && <p>{referenceAsset?.name ?? t('参考图', 'Reference image', '参照画像')} · {reference.variantId} <Button tone="quiet" onClick={() => { s.field('reference', null); s.field('references', []); }}>{t('移除', 'Remove', '削除')}</Button></p>}
           </> : <>
             {draft.activeUse === 'script' && <Field label={t('创作方式', 'Creation mode', '制作方法')}><Choice label={t('创作方式', 'Creation mode', '制作方法')} value={String(v.fields.creationMode ?? 'write')} options={[{ value: 'write', label: t('写剧情', 'Write story', '執筆') }, { value: 'performance', label: t('补演出 · 保护台词与分支', 'Stage · preserve dialogue and branches', '演出・台詞と分岐を保護') }, { value: 'discuss', label: t('讨论 · 暂不写入', 'Discuss · no adoption yet', '相談・まだ採用しない') }]} onChange={mode => { s.field('creationMode', mode); s.setOperation(mode === 'write' ? 'script' : mode as 'performance' | 'discuss'); }}/></Field>}
             {text('instruction', t(page ? '页面修改要求' : operation === 'svg' ? 'SVG 图形要求' : '本轮创作要求', 'This round’s request', '今回の制作要望'), 10)}
@@ -141,10 +172,18 @@ export function DraftWorkstation({ session: s, locale, services, busy, run, gene
           {(s.purpose === 'text' || prepare) && <section className="production-explicit-context" data-field="context">{errors.context && <p role="alert" className="field-error">{errors.context}</p>}<header><h3>{t('明确选择的参考资料', 'Explicitly selected context', '明示的に選択した資料')}</h3><Button onClick={() => void run(() => s.captureContext())}>{t('读取当前范围', 'Read the selected scope', '選択範囲を読む')}</Button></header><ContextTable parts={v.context} change={context => s.update({ context })} locale={locale} requestSummary={textSummary} estimated={textSteps.some(step=>step.preview?.estimated)} pendingStep={prepare} requestSteps={textSteps.flatMap(step=>step.preview?[{label:step.label,characters:inputTextSummary(step.preview.input).textCharacters}]:[])}/></section>}
           {!!Object.keys(v.fields).filter(key => !['instruction', 'positive', 'negative', 'width', 'height', 'count', 'language', 'text', 'prompt', 'durationSec', 'creationMode', 'promptConnectionId', 'promptModel', 'speechLines', 'references', 'reference', 'omittedPorts', 'voiceId', 'speed', 'emotion', 'instrumental', 'lyrics', 'maxOutputTokens', 'referenceAudio', 'referenceText', 'referenceLanguage', 'seed'].includes(key) && v.fields[key] !== null && v.fields[key] !== '').length && <Disclosure><span>{t('保留的其他参数', 'Retained additional parameters', '保持した追加パラメータ')}</span><CodeBlock code={JSON.stringify(v.fields, null, 2)} locale={locale}/><p>{t('原有值保存在草稿中。当前执行输入按所选操作编译。', 'Original values remain in the draft. The selected operation compiles the execution input.', '元の値を下書きに保持。選択した操作から実行入力を作成します。')}</p></Disclosure>}
         </>}
-      </div>
-      <footer className="production-document-actions"><Button disabled={busy || s.draftSaving} onClick={() => void run(() => s.saveDraft(true))}><Save size={14}/>{t('保存草稿', 'Save draft', '下書きを保存')}</Button>{plan ? <><Button onClick={() => { s.plan = null; s.changed(); }}>{t('返回修改', 'Edit input', '入力を編集')}</Button><Button tone="primary" disabled={busy} onClick={() => void run(async () => { const task = unwrap(await s.bridge.production.submit(plan.planId)); s.taskId = task.id; draft.submittedTaskId = task.id; s.plan = null; s.selected.clear(); s.changed(); generated(); })}><Play size={14}/>{t('开始生成', 'Start generation', '生成を開始')} · {plan.sendSummary.reduce((sum, row) => sum + row.requests, 0)}</Button></> : <Button tone="primary" disabled={busy || scheme?.production?.executor === 'planned'} onClick={check}><Check size={14}/>{t('检查并开始', 'Check and start', '確認して開始')}</Button>}</footer>
+      </div></div>
+      <footer className="production-document-actions">
+        {plan ? <>
+          <Button disabled={busy} onClick={() => { s.plan = null; s.changed(); }}><ArrowLeft size={14}/>{t('返回修改', 'Edit input', '入力を編集')}</Button>
+          <Button tone="primary" disabled={busy} onClick={() => void run(async () => { const task = unwrap(await s.bridge.production.submit(plan.planId)); s.taskId = task.id; draft.submittedTaskId = task.id; s.plan = null; s.selected.clear(); s.changed(); generated(); })}><Play size={14}/>{t('开始生成', 'Start generation', '生成を開始')}</Button>
+        </> : <>
+          <Button disabled={busy || s.draftSaving} onClick={() => void run(() => s.saveDraft(true))}><Save size={14}/>{t('保存草稿', 'Save draft', '下書きを保存')}</Button>
+          <Button data-production-review-request tone="primary" disabled={busy || scheme?.production?.executor === 'planned'} onClick={check}><Check size={14}/>{t('查看发送计划', 'Review request plan', '送信計画を確認')}</Button>
+        </>}
+      </footer>
     </section>
-    {placeInspector(<aside ref={parameters} className="production-inspector" hidden={!active} aria-busy={busy}><fieldset className="production-inspector-fields" disabled={busy}>{!inspectorContainer && <Button className="production-inspector-toggle" onClick={() => setInspector(false)}>{t('返回输入', 'Back to input', '入力に戻る')}</Button>}<h2>{t('本次制作参数', 'Production parameters', '今回の制作設定')}</h2>
+    {placeInspector(<aside ref={parameters} className="production-inspector" hidden={!active || !!plan} aria-busy={busy}><fieldset className="production-inspector-fields" disabled={busy || !!plan}>{!inspectorContainer && <Button className="production-inspector-toggle" onClick={() => setInspector(false)}>{t('返回输入', 'Back to input', '入力に戻る')}</Button>}<h2>{t('本次制作参数', 'Production parameters', '今回の制作設定')}</h2>
       {media && <Field label={t('制作方案', 'Production scheme', '制作方法')}><Choice label={t('制作方案', 'Production scheme', '制作方法')} value={v.productionRecipeId ?? ''} options={[{ value: '', label: t('直接使用连接', 'Use connection directly', '接続を直接使用') }, ...s.data.recipes.filter(recipe => recipe.production?.operation === operation && recipe.uses.includes(draft.activeUse)).map(recipe => ({ value: recipe.id, label: `${localizeRecipe(recipe, locale).name}${recipe.production?.executor === 'planned' ? t(' · 规划', ' · planned', '・計画') : ''}` }))]} onChange={id => { const recipe = s.data.recipes.find(item => item.id === id); s.update({ productionRecipeId: id || null }); if (recipe?.production) { s.update({ fields: resolveProductionFields(v, recipe, parameterPreset?.parameterPreset?.recipeId === recipe.id ? parameterPreset : null) }); } s.applyDefaults(); s.changed(); }}/></Field>}
       {scheme?.production?.executor === 'planned' && <p role="status">{localizeRecipe(scheme, locale).description}</p>}
       {scheme?.production?.defaults.score !== undefined && (Object.hasOwn(v.parameterOverrides ?? {}, 'score') || v.explicitFields?.includes('score')) && <section className="production-parameter-presets"><p role="status">{t('正在使用已修改乐谱；切换方案保留整份乐谱。', 'Using your modified score. Switching schemes retains the entire score.', '編集済みの楽譜を使用しています。制作方法を変えても楽譜全体を保持します。')}</p><Button tone="quiet" onClick={() => s.resetParameter('score', scheme.production!.defaults.score!)}>{t('替换当前乐谱 · 跟随所选方案', 'Replace current score · follow selected scheme', '楽譜を置換・選択した制作方法に従う')}</Button></section>}
@@ -164,9 +203,14 @@ export function DraftWorkstation({ session: s, locale, services, busy, run, gene
       {prepare && <><h3>{t('文字准备步骤', 'Text preparation step', 'テキスト準備')}</h3><Field label={t('文字准备连接', 'Text preparation connection', 'テキスト準備の接続')} name="promptConnection" error={errors.promptConnection}><Choice label="Prompt connection" value={String(v.fields.promptConnectionId ?? '')} options={[{ value: '', label: '—' }, ...s.data.connections.filter(item => item.purposes.includes('text')).map(item => ({ value: item.id, label: item.name }))]} onChange={id => { const item = s.data.connections.find(item => item.id === id); s.field('promptConnectionId', id || null); s.field('promptModel', item?.model ?? null); }}/></Field></>}
       {(speech || music || s.purpose === 'difference') && <Disclosure><span>{t('可选文字准备', 'Optional text preparation', '任意のテキスト準備')}</span><label className="check-row"><input type="checkbox" checked={prepare} onChange={e => togglePreparation(e.target.checked)}/>{t('添加可审阅的文字准备步骤', 'Add a reviewed text preparation step', '確認するテキスト準備を追加')}</label>{prepare && text('instruction', t('准备要求', 'Preparation request', '準備の要望'), 3)}</Disclosure>}
       <section className="production-adoption-target"><Button tone="quiet" onClick={() => void run(() => s.reviewAdoptionTarget())}>{t('复核采用位置', 'Review adoption target', '採用先を再確認')}</Button><h3>{t('采用目标（本地）', 'Adoption target (local)', '採用先（ローカル）')}</h3><p>{t('采用位置不会扩大发送内容。', 'The target does not add request context.', '採用先によって送信内容は増えません。')}</p>
-        {draft.activeUse !== 'ui' && <Field label={t('采用场景', 'Adoption scene', '採用先シーン')} name="scene" error={errors.scene}><Choice label="Scene" value={v.target.sceneId ?? ''} options={[{ value: '', label: t('仅制作 / 入库', 'Generate / library only', '制作 / ライブラリのみ') }, ...s.data.scenes.map(scene => ({ value: scene.id, label: scene.name }))]} onChange={id => { if (draft.activeUse === 'script') void run(() => s.setQuickScene(id || null)); else s.update({ target: { ...v.target, sceneId: id || null } }); }}/></Field>}
-        {page && <Field label={t('页面范围', 'Page scope', 'ページ範囲')} name="scope" error={errors.scope}><Choice label="Page" value={v.target.uiScope?.pageIds[0] ?? ''} options={[{ value: '', label: t('选择页面', 'Choose page', 'ページを選択') }, ...s.data.pages.map(item => ({ value: item.id, label: item.labels?.[locale] ?? item.key }))]} onChange={id => void run(async () => { s.update({ target: { ...v.target, uiScope: { pageIds: id ? [id] : [], componentIds: [] } } }); await s.captureContext(); })}/></Field>}
-        {draft.activeUse === 'figure' && <Field label={t('角色', 'Character', 'キャラクター')}><Choice label="Character" value={v.target.characterId ?? ''} options={[{ value: '', label: '—' }, ...s.data.characters.map(item => ({ value: item.id, label: item.name }))]} onChange={id => s.update({ target: { ...v.target, characterId: id || null } })}/></Field>}
+        {draft.activeUse !== 'ui' && <Field label={t('采用场景', 'Adoption scene', '採用先シーン')} name="scene" error={errors.scene}><Choice label="Scene" value={v.target.sceneId ?? ''} options={[{ value: '', label: t('仅制作 / 入库', 'Generate / library only', '制作 / ライブラリのみ') }, ...s.data.scenes.map(scene => ({ value: scene.id, label: scene.name }))]} onChange={id => { if (draft.activeUse === 'script') void run(() => s.setQuickScene(id || null, false)); else s.update({ target: { ...v.target, sceneId: id || null } }); }}/></Field>}
+        {draft.activeUse === 'ui' && <Field label={t('页面范围', 'Page scope', 'ページ範囲')} name="scope" error={errors.scope}><Choice label="Page" value={v.target.uiScope?.pageIds[0] ?? ''} options={[{ value: '', label: t('选择页面', 'Choose page', 'ページを選択') }, ...s.data.pages.map(item => ({ value: item.id, label: item.labels?.[locale] ?? item.key }))]} onChange={id => s.update({ target: { ...v.target, uiScope: { pageIds: id ? [id] : [], componentIds: [] } } })}/></Field>}
+        {!!targetPage?.components?.length && <Field label={t('组件范围', 'Component scope', 'コンポーネント範囲')}><Choice label={t('组件范围', 'Component scope', 'コンポーネント範囲')} value={v.target.uiScope?.componentIds.length === 1 ? v.target.uiScope.componentIds[0] : v.target.uiScope?.componentIds.length ? 'selection' : ''} options={[
+          { value: '', label: t('整页', 'Whole page', 'ページ全体') },
+          ...(v.target.uiScope && v.target.uiScope.componentIds.length > 1 ? [{ value: 'selection', label: `${v.target.uiScope.componentIds.length} ${t('个已选组件', 'selected components', '個の選択済みコンポーネント')}` }] : []),
+          ...targetPage.components.map(component => ({ value: component.id, label: component.name })),
+        ]} onChange={id => { if (id !== 'selection') s.update({ target: { ...v.target, uiScope: { pageIds: [targetPage.id], componentIds: id ? [id] : [] } } }); }}/></Field>}
+        {['figure', 'difference'].includes(draft.activeUse) && <Field label={t('采用角色', 'Adoption character', '採用先キャラクター')}><Choice label={t('采用角色', 'Adoption character', '採用先キャラクター')} value={v.target.characterId ?? ''} options={[{ value: '', label: '—' }, ...s.data.characters.map(item => ({ value: item.id, label: item.name }))]} onChange={id => s.update({ target: { ...v.target, characterId: id || null } })}/></Field>}
       </section>
       {!!scheme?.production?.parameters.length && <Disclosure><span>{t('方案参数默认值', 'Scheme parameter defaults', '制作方法の既定値')}</span>{localizeRecipe(scheme, locale).production!.parameters.map(parameter => <div className="production-parameter-default" key={parameter.key}><span>{parameter.label} · {v.fields.sizeMode === 'project' && ['width', 'height'].includes(parameter.key) ? t('随作品', 'Project value', '作品の値') : Object.hasOwn(v.parameterOverrides ?? {}, parameter.key) ? t('本次覆盖', 'Override', '今回の値') : parameterPreset ? t('参数预设', 'Parameter preset', 'プリセット') : t('方案默认', 'Scheme default', '既定値')}</span><Button tone="quiet" aria-label={`${t('恢复默认', 'Reset default', '既定値に戻す')} ${parameter.label}`} onClick={() => s.resetParameter(parameter.key, scheme.production!.defaults[parameter.key] ?? parameter.defaultValue)}><RotateCcw size={14}/></Button></div>)}</Disclosure>}
       {media && <p className="field-help">{t('发送字段由执行能力校验；不支持的值会定位并要求明确排除，原值继续留在草稿。', 'The executor validates sent fields. Unsupported values require explicit exclusion and remain in the draft.', '実行能力が送信項目を検証。非対応の値は明示的に除外し、下書きに保持します。')}</p>}

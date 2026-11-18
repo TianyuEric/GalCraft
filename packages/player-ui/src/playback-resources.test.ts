@@ -10,7 +10,7 @@ it('holds the mounted reading frame and timers silently until all resource prepa
   const content = { inert: false, textContent: 'Current reading frame' }, portal = { inert: false };
   const view = Object.assign(Object.create(PlayerView.prototype), { content, portal, resourcePreparations: 0,
     deferredResourceRender: false, startup: { active: false }, transition: { busy: false }, navigation: { page: 'story' },
-    disposed: false, options: { data: { current: () => null } } }) as PlayerView;
+    disposed: false, options: { data: { current: () => null }, stage: { sceneRuleActive: false } } }) as PlayerView;
   const render = vi.spyOn(view, 'render');
   const releaseFirst = view.holdResourcePreparation(), releaseSecond = view.holdResourcePreparation();
   view.render();

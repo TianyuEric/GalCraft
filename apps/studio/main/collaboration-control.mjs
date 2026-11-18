@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { CollaborationScopeSchema, createId, issueFromError, issueSummary } from '@galcraft/contracts';
 import { CollaborationError } from '@galcraft/collaboration';
-import { StudioProjectLibrary } from './project-library.mjs';
+import { StudioProjectLibrary } from './project-library.mts';
 import { sessionSummary } from './collaboration-contracts.mjs';
 import { OfficialTemplates } from '@galcraft/templates';
 import {toolSummary} from './collaboration-catalog.mjs';

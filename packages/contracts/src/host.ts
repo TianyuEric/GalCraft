@@ -1,7 +1,10 @@
 import { z } from 'zod';
-import { DomainSchema, IdSchema, JsonSchema, RevisionSchema, UtcTimeSchema, VersionSchema } from './common.js';
+import { DomainSchema, IdSchema, IssueSchema, JsonSchema, RevisionSchema, TargetSchema, UtcTimeSchema, VersionRefSchema, VersionSchema } from './common.js';
+import { SaveObjectRefSchema, SaveReceiptSchema } from './documents.js';
+import { BuildReceiptSchema } from './release.js';
 import type { CancelResult, Id, Issue, Json, Lock, Operation, Ref, Result, Revision, Source, Target, VersionRef } from './common.js';
-import type { Asset, AssetIdsResult, AssetPage, AssetPickerPage, AssetPickerQuery, AssetQuery, AssetTypeCatalogEntry, AssetTypeEditInput } from './assets.js';
+import type { Asset, AssetIdsResult, AssetPage, AssetPickerPage, AssetPickerQuery, AssetQuery, AssetReference, AssetTypeCatalogEntry, AssetTypeEditInput } from './assets.js';
+import { AssetKindSchema } from './assets.js';
 import type { DocumentView, EditInput, EditPlan, EditReceipt, FileConflict, PluginDocumentInstance, SavePlan, SaveReceipt, SaveScope, UndoPlan, DiscardScope, DiscardPlan } from './documents.js';
 import type { CapabilityReport, ConnectionConfig, ConnectionSelection } from './generation.js';
 import type { Snapshot } from './runtime.js';
@@ -70,14 +73,98 @@ export const EditorAnchorSchema = z.strictObject({
   statementId: IdSchema.nullable(), field: z.string().nullable(), offset: RevisionSchema, documentOffset: RevisionSchema,
 });
 export type EditorAnchor = z.infer<typeof EditorAnchorSchema>;
+const SceneViewSchema = z.enum(['cards', 'writing', 'script']);
+const WorkspaceScrollSchema = z.strictObject({ statementId: IdSchema.nullable(), offsetPx: finite, scrollLeft: finite });
+const WorkspaceScenePaneSchema = z.strictObject({
+  view: SceneViewSchema, caret: EditorAnchorSchema, scroll: WorkspaceScrollSchema,
+  selection: z.strictObject({ documentId: IdSchema, statementIds: z.array(IdSchema), primaryId: IdSchema.nullable(),
+    textRange: z.strictObject({ start: RevisionSchema, end: RevisionSchema }).nullable() }).nullable(),
+});
+const WorkspaceStatementSourceSchema = z.strictObject({
+  sceneId: IdSchema, documentId: IdSchema, statementId: IdSchema, eventId: IdSchema.optional(),
+  projectId: IdSchema.optional(), revision: RevisionSchema.optional(),
+});
+const WorkspaceAssetQuerySchema = z.strictObject({
+  kind: z.string().nullable(), text: z.string(), offset: RevisionSchema, limit: z.number().int().positive(),
+  assetIds: z.array(IdSchema).optional(),
+  typeFields: z.record(z.string(), JsonSchema).optional(), folder: z.array(z.string()).nullable().optional(),
+  sort: z.enum(['name', 'size', 'modified']).optional(), direction: z.enum(['asc', 'desc']).optional(),
+  allowedKinds: z.array(AssetKindSchema).optional(), characterId: IdSchema.nullable().optional(),
+  sceneId: IdSchema.nullable().optional(), locale: z.string().nullable().optional(), tags: z.array(z.string()).optional(),
+  usage: z.string().nullable().optional(), reference: z.enum(['any', 'used', 'unused']).optional(),
+  review: z.enum(['any', 'needsReview']).optional(), indexRevision: RevisionSchema.nullable().optional(),
+});
+const WorkspaceAssetVersionSchema = z.strictObject({ assetId: IdSchema, variantId: IdSchema });
+const WorkspaceAssetStateSchema = z.strictObject({
+  query: WorkspaceAssetQuerySchema, selectionQuery: WorkspaceAssetQuerySchema.nullable(),
+  selectedIds: z.array(IdSchema), selectionRevision: RevisionSchema.nullable(), primaryId: IdSchema.nullable(),
+  primaryVersions: z.array(WorkspaceAssetVersionSchema), previewVersions: z.array(WorkspaceAssetVersionSchema),
+  inspectorPin: WorkspaceAssetVersionSchema.nullable(), scroll: finite.nonnegative(),
+});
+const WorkspaceDocumentIdentitySchema = z.strictObject({ id: z.string(), title: z.string(), kind: z.enum(['scene', 'page', 'asset', 'project', 'character', 'characters', 'scene-graph', 'startup', 'route']), objectId: z.string().optional() });
+const WorkspaceOperationProblemSchema = z.strictObject({
+  id: z.string().min(1), attemptId: z.string().min(1), issue: IssueSchema, group: z.string(),
+  source: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('document'), document: WorkspaceDocumentIdentitySchema }),
+    z.strictObject({ kind: z.literal('model') }),
+    z.strictObject({ kind: z.literal('build'), planId: z.string(), target: TargetSchema.optional() }),
+  ]),
+});
 export const WorkspaceResumeSchema = z.strictObject({
-  schemaVersion: z.literal(1), projectId: IdSchema, documentId: IdSchema, sceneId: IdSchema,
-  documentRevision: RevisionSchema, view: z.enum(['cards', 'writing', 'script']),
+  schemaVersion: z.literal(1), projectId: IdSchema, documentId: IdSchema.nullable(), sceneId: IdSchema.nullable(),
+  documentRevision: RevisionSchema, view: SceneViewSchema,
   caret: EditorAnchorSchema, previousStatementId: IdSchema.nullable(), nextStatementId: IdSchema.nullable(),
-  scroll: z.strictObject({ statementId: IdSchema.nullable(), offsetPx: finite, scrollLeft: finite }), updatedAt: UtcTimeSchema,
+  scroll: WorkspaceScrollSchema, updatedAt: UtcTimeSchema,
   workbench: z.strictObject({
-    documents: z.array(z.strictObject({ id: z.string(), title: z.string(), kind: z.enum(['scene', 'page', 'asset', 'project', 'characters', 'scene-graph', 'startup', 'route']), objectId: z.string().optional() })),
+    documents: z.array(WorkspaceDocumentIdentitySchema),
     active: z.string(),
+    sceneSplits: z.array(z.strictObject({ sceneId: IdSchema, views: z.tuple([SceneViewSchema, SceneViewSchema])
+      .refine(([left, right]) => left !== right) })).optional(),
+    sceneContexts: z.array(WorkspaceScenePaneSchema.extend({ sceneId: IdSchema, revision: RevisionSchema, beside: z.array(WorkspaceScenePaneSchema) })).optional(),
+    pageViews: z.array(z.strictObject({ key: z.string().min(1), selected: z.array(IdSchema),
+      mode: z.enum(['layout', 'style', 'behavior', 'preview']), state: z.enum(['normal', 'hover', 'pressed', 'focus', 'disabled', 'selected', 'locked', 'empty']),
+      sample: z.string(), zoom: z.enum(['fit', '100']), locale: z.string().nullable(), scrollTop: finite.nonnegative(), scrollLeft: finite.nonnegative().optional(), split: z.boolean(),
+    })).optional(),
+    outline: z.strictObject({ query: z.string(), scrollTop: finite.nonnegative(), selected: z.array(IdSchema) }).optional(),
+    problems: z.strictObject({
+      query: z.string(), severity: z.enum(['all', 'error', 'warning']), selected: z.string().nullable(), scrollTop: finite.nonnegative(),
+      expanded: z.string().nullable().optional(),
+      showIgnored: z.boolean().optional(), ignoredAttempts: z.array(z.string().min(1)),
+      hiddenImportBatches: z.array(IdSchema).optional(),
+      operations: z.array(WorkspaceOperationProblemSchema).optional(),
+      saveFailures: z.array(z.strictObject({ key: z.string(), attemptId: z.string(), issues: z.array(IssueSchema), versions: z.array(VersionRefSchema),
+        objects: z.array(SaveObjectRefSchema), objectKeys: z.array(z.string()), all: z.boolean(), source: WorkspaceDocumentIdentitySchema.optional() })).optional(),
+      outputFailure: z.strictObject({ kind: z.enum(['save', 'build']), id: z.string(), issue: IssueSchema, cancelled: z.boolean() }).optional(),
+      release: z.strictObject({ issues: z.array(IssueSchema), failures: z.array(IssueSchema), state: z.enum(['checking', 'complete', 'failed', 'stale']) }).optional(),
+      productionFeedback: z.array(z.strictObject({ key: z.string(), kind: z.enum(['request', 'read']), attemptId: z.string(), issue: IssueSchema,
+        surface: z.literal('connections').optional(),
+        editorId: z.string().min(1).optional(),
+        target: z.strictObject({ kind: z.enum(['task', 'draft']), id: IdSchema }).nullable() })).optional(),
+    }).optional(),
+    productionDirectory: z.strictObject({
+      query: z.string(), filter: z.enum(['all', 'active', 'review', 'failed']), scrollTop: finite.nonnegative(),
+      taskPage: z.number().int().nonnegative(), draftPage: z.number().int().nonnegative(),
+      taskHistoryOpen: z.boolean(), draftHistoryOpen: z.boolean(),
+      record: z.strictObject({ kind: z.enum(['task', 'draft']), id: IdSchema }).nullable(),
+    }).optional(),
+    characterQuery: z.string().optional(),
+    stageSource: WorkspaceStatementSourceSchema.extend({ statementId: IdSchema.nullable() }).optional(),
+    inspectorSource: WorkspaceStatementSourceSchema.optional(),
+    semanticSearch: z.strictObject({
+      mode: z.enum(['text', 'dialogue', 'variable', 'asset', 'bgm']), term: z.string(),
+      target: z.union([IdSchema, z.literal('')]), targetLabel: z.string(), scope: z.enum(['project', 'scene']),
+      variableAccess: z.enum(['read', 'write', 'both']), offset: RevisionSchema, hasSearched: z.boolean(),
+      searchScrollTop: finite.nonnegative(),
+    }).optional(),
+    dockLayout: JsonSchema.optional(),
+    assets: WorkspaceAssetStateSchema.optional(),
+    output: z.strictObject({
+      saved: z.strictObject({ receipt: SaveReceiptSchema, source: z.string().optional() }).optional(),
+      built: z.strictObject({ planId: z.string(), receipt: BuildReceiptSchema }).optional(),
+      scrollTop: finite.nonnegative(),
+    }).optional(),
+    projectCenterOrigin: z.string().optional(),
+    connectionOrigin: z.strictObject({ kind: z.enum(['task', 'draft']), id: IdSchema }).optional(),
   }).optional(),
 });
 export type WorkspaceResume = z.infer<typeof WorkspaceResumeSchema>;
@@ -94,6 +181,8 @@ export type StageGuidePreferences = z.infer<typeof StageGuidePreferencesSchema>;
 export const StudioPreferencesSchema = z.strictObject({
   schemaVersion: z.literal(1), theme: z.enum(['light', 'dark']), palette: z.enum(['neutral', 'blue']).transform(() => 'blue' as const).default('blue'), locale: z.enum(['zh-CN', 'en', 'ja']),
   layout: z.strictObject({ left: finite, right: finite, bottom: finite, diagnosticsVisible: z.boolean() }),
+  namedDockLayouts: z.record(z.string(), JsonSchema).optional(),
+  resumeProject: z.strictObject({ projectId: IdSchema, directory: z.string().min(1) }).optional(),
   editor: z.strictObject({ fontFamily: z.string(), fontSize: finite, wordWrap: z.boolean(),
     view: z.enum(['cards', 'writing', 'script']), autoCollapse: z.boolean(), cascadeSeparator: z.string() }),
   onboardingDismissed: z.boolean(), recentCommands: z.array(z.string()),
@@ -109,7 +198,13 @@ export type ProjectCreationInput = { path: string; name: string; template: 'empt
   width: number; height: number; engineVersion: string; closeChoice?: 'save' | 'discard' };
 export type ProjectLibraryEntry = { projectId: Id; directory: string; name: string; description: string; engineVersion: string;
   lastOpenedAt: string | null; pinned: boolean; status: 'available' | 'missing' | 'invalid' };
-export type AssetImportReceipt = { succeeded: Asset[]; failed: { path: string; issue: Issue }[] };
+export type AssetImportBatch = {
+  id: Id; projectId: Id; revision: number; createdAt: string; updatedAt: string;
+  succeeded: { id: Id; name: string }[]; failed: { path: string; issue: Issue }[];
+  attempts: { id: Id; createdAt: string; succeeded: Id[]; failed: { path: string; issue: Issue }[] }[];
+};
+export type AssetImportReceipt = { succeeded: Asset[]; failed: { path: string; issue: Issue }[];
+  batch?: { id: Id; attemptId: Id; revision: number } };
 export type AssetVerificationProgress = { operationId: Id; projectId: Id; sessionId: string; target: Target;
   phase: 'preparing' | 'checking' | 'applying' | 'complete' | 'failed'; completed: number; total: number | null; issueCount: number;
   assetId?: Id; variantId?: Id; name?: string; message?: string };
@@ -154,6 +249,8 @@ export interface StudioBridge {
   onCloseRequested?(callback: () => Promise<'save' | 'discard' | 'cancel'>): () => void;
   engines: {
     listCreationVersions(): Promise<Result<string[]>>;
+    health?(): Promise<Result<{ version: string; issues: Issue[] }>>;
+    repair?(): Promise<Result<{ version: string; issues: Issue[] } | null>>;
     importLive2D(withMotionSync: boolean): Promise<Result<{ sdkRelease: string; coreVersion: string; motionSyncCoreVersion: string | null } | null>>;
     resolvePreview(snapshot: Snapshot): Promise<Result<{ handleId: Id; engineVersion: string; url: string;
       live2d?: { url: string; expected: { coreVersion: string; motionSyncCoreVersion: string | null } } }>>;
@@ -161,6 +258,8 @@ export interface StudioBridge {
   };
   plugins: {
     commandSpecs?():Promise<Result<import('./dsl.js').CommandSpec[]>>;
+    commandContracts?(): Promise<Result<{ commands: import('./dsl.js').CommandSpec[];
+      conditions: { key: string; fields: import('./dsl.js').FieldSpec[] }[] }>>;
     inspectPackage(source: { kind: 'archive' | 'directory'; path: string }): Promise<Result<unknown>>;
     install(source: { kind: 'archive' | 'directory'; path: string }): Promise<Result<unknown>>;
     loadDevelopment(input: { directory: string; projectId: Id }): Promise<Result<unknown>>;
@@ -250,6 +349,10 @@ export interface StudioBridge {
   };
   assets: {
     typeCatalog(): Promise<Result<AssetTypeCatalogEntry[]>>;
+    prepareVariantSwitch?(input: { assetId: Id; variantId: Id; expectedRevision: Revision }): Promise<Result<{
+      planId: Id; expected: VersionRef[]; beforeVariantId: Id; afterVariantId: Id; affectedReferences: (AssetReference & { label?: string })[];
+    }>>;
+    applyVariantSwitch?(input: { planId: Id; expected: VersionRef[] }): Promise<Result<EditReceipt>>;
     editTypeData(input: AssetTypeEditInput): Promise<Result<{ assetId: Id; variantId: Id; edit: EditReceipt }>>;
     saveAnimation(input: { name: string; animation: NativeAnimation; assetId?: Id; expectedRevision?: number }): Promise<Result<{ assetId: Id; variantId: Id; edit: EditReceipt }>>;
     weatherTexture(preset: import('./weather-presets.js').StageWeatherPresetKey): Promise<Result<Asset>>;
@@ -276,10 +379,10 @@ export interface StudioBridge {
     rename(changes: { id: Id; name: string }[]): Promise<Result<EditReceipt>>;
     planBatchRename(input: { assetIds: Id[]; template: string;
       values: { assetId: Id; chapter: string; character: string; usage: string }[] }): Promise<Result<{
-        planId: Id; names: { assetId: Id; before: string; after: string }[];
+        planId: Id; names: { assetId: Id; before: string; after: string; variantId?: Id }[];
         conflicts: { name: string; assetIds: Id[] }[]; indexRevision: number }>>;
     applyBatchRename(planId: Id): Promise<Result<EditReceipt>>;
-    remove(ids: Id[]): Promise<Result<EditReceipt>>;
+    remove(ids: Id[], expected?: { projectId: Id; indexRevision: Revision }): Promise<Result<EditReceipt>>;
     preview(assetId: Id, variantId?: Id): Promise<Result<{ uri: string; mime: string; playback: { loopStartSec: number | null; loopEndSec: number | null } }>>;
     thumbnails(requests: { assetId: Id; variantId?: Id }[]): Promise<Result<{ assetId: Id; variantId: Id; uri: string }[]>>;
     stopPreview(): Promise<Result<void>>;
@@ -289,12 +392,13 @@ export interface StudioBridge {
     removeBackground(input: RemoveBackgroundInput): Promise<Result<{ status: 'unchanged' | 'reused' | 'needsReview' | 'prepared'; preparationId?: Id; previewUri?: string; maskVariantId?: Id; transparentVariantId?: Id; references?: BackgroundReference[] }>>;
     confirmBackground(preparationId: Id, scope: BackgroundAdoptionScope): Promise<Result<{ save: SaveReceipt; transparentVariantId: Id; assetId: Id }>>;
     discardBackground(preparationId: Id): Promise<Result<void>>;
-    import(paths: string[]): Promise<Result<AssetImportReceipt>>;
+    import(paths: string[], options?: { batchId?: Id; projectId?: Id }): Promise<Result<AssetImportReceipt> & { batch?: AssetImportReceipt['batch'] }>;
+    listImportBatches(projectId?: Id): Promise<Result<AssetImportBatch[]>>;
   };
   language: {
     pluginQuery?(input: { refs?: Ref[]; sceneId?: Id; statementIds?: Id[] }): Promise<Result<Json>>;
     pluginPrepare?(input: Json): Promise<Result<EditInput>>;
-    compile(input: unknown): Promise<Result<{ snapshot: Snapshot | null; lastValid: Snapshot | null; current: boolean; issues: Issue[] }>>;
+    compile(input: unknown, options?: { publish: boolean }): Promise<Result<{ snapshot: Snapshot | null; lastValid: Snapshot | null; current: boolean; issues: Issue[] }>>;
     lastValid(projectId: Id): Promise<Result<Snapshot | null>>;
     querySemantic(input: SemanticQuery): Promise<Result<SemanticPage>>;
     locate(source: Source, fieldPath?: string | null): Promise<Result<SourceLocation | null>>;

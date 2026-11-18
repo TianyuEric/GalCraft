@@ -52,7 +52,7 @@ describe('Studio host boundaries', () => {
 
   it('keeps credentials encrypted and checks the selected purpose before delegating', async () => {
     const config = {
-      id: '22222222-2222-4222-8222-222222222222', revision: 0, name: '本地连接', protocol: 'comfyUI', baseUrl: 'http://127.0.0.1:8188',
+      id: '22222222-2222-4222-8222-222222222222', revision: 1, name: '本地连接', protocol: 'comfyUI', baseUrl: 'http://127.0.0.1:8188',
       credentialId: null, auth: 'bearer', apiKeyHeader: null, model: 'test', purposes: ['image'],
       timeoutSecByPurpose: { text: 120, image: 600, difference: 600, speech: 600, music: 600, matting: 600 },
       concurrency: 1, parameters: {}, workflowBindingId: null, serverFileRoot: null,

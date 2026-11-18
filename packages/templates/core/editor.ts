@@ -5,6 +5,7 @@ import { readTemplateDocuments } from './documents.js';
 import { components, templateEdit } from './editing.js';
 import { copyComponentText, setComponentText } from './component-text.js';
 import { resolveComponentTree, type ResolvedComponent } from './layout.js';
+import { convertPageBinding, validatePageBlueprint } from './blueprints.js';
 
 export { BasicComponentCatalog } from './catalog.js';
 export { PageEditInputSchema, PageEditOperationSchema, ComponentChangesSchema, StyleEditInputSchema } from '@galcraft/contracts';
@@ -43,10 +44,19 @@ export function validatePageStructure(template: RuntimeTemplate): Issue[] {
       if (component.repeat && !['list', 'container'].includes(definition?.kind ?? '')) issue('UI_REPEAT_CONTAINER', `Repeat requires a list or container: ${component.id}`);
       for(const binding of [...Object.values(component.bindings??{}),...(component.repeat?[component.repeat.source]:[])])if(binding.source==='local'&&!(binding.path.split(/[/.]/)[0]! in (page.localState??{})))issue('UI_LOCAL_MISSING',`Page local value is not declared: ${binding.path}`);
       for (const id of Object.values(component.animations)) if (!template.animations.some(animation => animation.id === id)) issue('UI_ANIMATION_MISSING', `Missing UI animation: ${id}`);
-      for (const interaction of component.interactions ?? []) for (const action of interaction.actions) {
-        const destination = action.kind === 'open' ? action.page : action.kind === 'official' && action.action.kind === 'open' ? action.action.page : null;
-        if (destination && !template.pages.some(target => target.key === destination)) issue('UI_PAGE_MISSING', `Missing page: ${destination}`);
-        if ((action.kind === 'setLocal' || action.kind === 'toggleLocal') && !(action.key in (page.localState ?? {}))) issue('UI_LOCAL_MISSING', `Page local value is not declared: ${action.key}`);
+      const bindingIds = new Set<Id>();
+      for (const interaction of component.interactions ?? []) {
+        if (interaction.id) {
+          if (bindingIds.has(interaction.id)) issue('BLUEPRINT_BINDING_DUPLICATE', `Duplicate binding on ${component.id}: ${interaction.id}`);
+          bindingIds.add(interaction.id);
+        }
+        if (interaction.blueprint) for (const diagnostic of validatePageBlueprint(interaction.blueprint, page, template))
+          issue(diagnostic.code, `${component.id}/${interaction.id}/${diagnostic.nodeId ?? diagnostic.edgeId ?? ''}: ${diagnostic.message}`);
+        for (const action of interaction.actions) {
+          const destination = action.kind === 'open' ? action.page : action.kind === 'official' && action.action.kind === 'open' ? action.action.page : null;
+          if (destination && !template.pages.some(target => target.key === destination)) issue('UI_PAGE_MISSING', `Missing page: ${destination}`);
+          if ((action.kind === 'setLocal' || action.kind === 'toggleLocal') && !(action.key in (page.localState ?? {}))) issue('UI_LOCAL_MISSING', `Page local value is not declared: ${action.key}`);
+        }
       }
     }
   }
@@ -106,6 +116,27 @@ export function preparePageEdit(input: { documents: readonly DocumentView[]; req
     if (operation.kind === 'page.update') { if (operation.titleKey !== undefined) target.titleKey = operation.titleKey; if (operation.background) target.background = operation.background; if (operation.layout) Object.assign(target.layout, operation.layout); if (operation.localState) target.localState = operation.localState; continue; }
     if (operation.kind === 'component.add') { const owner = container(target, operation.parentId); if (!operation.component && !operation.componentKind) throw new Error('UI_COMPONENT_KIND_REQUIRED'); const value = operation.component ?? createBasicComponent(operation.componentKind!, { ...(operation.id ? { id: operation.id } : {}), ...(operation.name !== undefined ? { name: operation.name } : {}) }); if (operation.changes) updateComponent(value, operation.changes); owner.children.splice(operation.index ?? owner.children.length, 0, value); created.components.push(...components(value).map(item => item.id)); affected.componentIds.add(value.id); continue; }
     if (operation.kind === 'component.update') { const value=component(target,operation.componentId);if(value.layout.mode!=='absolute'&&operation.changes.layout?.mode==='absolute')freezeFlow(target,value);updateComponent(value, operation.changes); continue; }
+    if (operation.kind === 'blueprint.convert') {
+      const value = component(target, operation.componentId), bindings = value.interactions ?? [];
+      const binding = bindings[operation.bindingIndex];
+      if (!binding || JSON.stringify(binding) !== JSON.stringify(operation.binding)) throw new Error('BLUEPRINT_BINDING_STALE: Reread the current binding and its position.');
+      bindings[operation.bindingIndex] = convertPageBinding(binding, bindings.slice(operation.bindingIndex + 1), bindings.slice(0, operation.bindingIndex));
+      continue;
+    }
+    if (operation.kind === 'blueprint.create' || operation.kind === 'blueprint.apply') {
+      const value = component(target, operation.componentId), bindings = value.interactions ??= [];
+      const index = bindings.findIndex(binding => binding.id === operation.bindingId);
+      const existing = bindings[index];
+      if (operation.kind === 'blueprint.create') {
+        if (existing || operation.graph.revision !== 0) throw new Error('BLUEPRINT_BINDING_STALE: A new binding requires an unused identity and revision 0.');
+        bindings.push({ id: operation.bindingId, event: operation.event, actions: [], blueprint: { ...operation.graph, revision: 1 } });
+      } else {
+        if (!existing?.blueprint || existing.blueprint.revision !== operation.graph.revision)
+          throw new Error('BLUEPRINT_BINDING_STALE: Reread the current blueprint revision before applying.');
+        bindings[index] = { ...existing, blueprint: { ...operation.graph, revision: operation.graph.revision + 1 } };
+      }
+      continue;
+    }
     if (operation.kind === 'component.text') { setComponentText(template, component(target, operation.componentId), operation.locale, operation.text); continue; }
     if (operation.kind === 'component.clear') { const value = component(target, operation.componentId); for (const path of operation.paths) { const keys = path.split('.'); if (!['normal', 'states', 'content', 'bindings', 'animations'].includes(keys[0]!) || keys.length < 2) throw new Error(`UI_INHERIT_PATH: ${path}`); let record = value as unknown as Record<string, unknown>; for (const key of keys.slice(0, -1)) { const next = record[key]; if (!next || typeof next !== 'object') { record = {}; break; } record = next as Record<string, unknown>; } delete record[keys.at(-1)!]; } continue; }
     if (operation.kind === 'component.duplicate') { const original = component(target, operation.componentId), owner = container(target, operation.parentId ?? parent(target, original.id)?.id ?? target.root.id); const copy = structuredClone(original), originals = components(original); for (const [index, item] of components(copy).entries()) { item.id = createId(); copyComponentText(template.locales, originals[index]!, item); created.components.push(item.id); } copy.name = `${copy.name ?? copy.part} copy`; owner.children.splice(operation.index ?? owner.children.length, 0, copy); continue; }
@@ -130,7 +161,7 @@ export function preparePageEdit(input: { documents: readonly DocumentView[]; req
   // Removed pages leave the project and its undo history in one M02 transaction.
   const retainedPages = new Set(template.pages.map(item => `ui/pages/${item.id}.json`));
   for (const document of input.documents) if (Object.keys(document.files).some(path => path.startsWith('ui/pages/') && !retainedPages.has(path))) {
-    edit.expected.push({ ref: { kind: 'document', id: document.documentId }, revision: document.revision });
+    if (!edit.expected.some(version => version.ref.id === document.documentId)) edit.expected.push({ ref: { kind: 'document', id: document.documentId }, revision: document.revision });
     edit.patches.push({ kind: 'document', documentId: document.documentId, op: 'delete', before: { documentId: document.documentId, format: document.format, files: document.files } as Json, after: null });
   }
   return { template, edit, affected: Object.fromEntries(Object.entries(affected).map(([key, values]) => [key, [...values]])) as PageEditPlan['affected'], created, issues };

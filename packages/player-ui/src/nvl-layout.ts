@@ -10,7 +10,7 @@ export function measureNvlPage(body: HTMLElement, runs: readonly ReadingRun[], i
     font: computed.font, fontSize: computed.fontSize, fontFamily: computed.fontFamily, fontWeight: computed.fontWeight,
     lineHeight: computed.lineHeight, letterSpacing: computed.letterSpacing });
   body.append(probe);
-  const total = runs.reduce((count, run) => count + graphemes(run.text).length, 0), height = body.clientHeight;
+  const total = graphemes(runs.map(run => run.text).join('')).length, height = body.clientHeight;
   if (height <= 0 || body.clientWidth <= 0) { probe.remove(); throw new Error('NVL reading area has no available size'); }
   const fits = (start: number, end: number) => {
     probe.replaceChildren(...sliceDialogueRuns(runs, start, end).map(segment => {

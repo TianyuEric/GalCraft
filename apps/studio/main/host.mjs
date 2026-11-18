@@ -3,7 +3,7 @@ import { createStudioHandlers } from './ipc-handlers.mjs';
 
 import { AuthoringPreferences, ConnectionVault } from './preferences.mjs';
 import { AssetPickerRecent } from './asset-picker-recent.mjs';
-import { StudioProjectLibrary } from './project-library.mjs';
+import { StudioProjectLibrary } from './project-library.mts';
 import { PluginDocuments } from './plugin-documents.mjs';
 import { PluginPlayerUi } from './plugin-authoring.mjs';
 import { fail, fromError } from './result.mjs';
@@ -26,7 +26,10 @@ export class StudioHost {
     this.operations = operations;
     this.language = language;
     this.plugins = plugins;
-    this.pluginDocuments = projects && plugins ? new PluginDocuments(projects, plugins) : null;
+    this.pluginDocuments = projects?.list && plugins?.acquireDefinitions
+      ? new PluginDocuments({ get currentSession() { return projects.currentSession; }, list: projects.list.bind(projects) },
+        { acquireDefinitions: plugins.acquireDefinitions.bind(plugins) })
+      : null;
     this.pluginPlayerUi = projects && plugins ? new PluginPlayerUi(projects, plugins) : null;
     this.backups = backups;
     this.projectLibrary = backups?.projectLibrary ?? new StudioProjectLibrary({ userData });

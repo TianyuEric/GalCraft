@@ -2,7 +2,7 @@ import { createId } from '@galcraft/contracts';
 
 import { copyFile, mkdir, readFile, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
-import { assetFieldReferences, assetReferenceTarget, BuildInputSchema, IssueSchema, readPluginDocumentInstances, round5AssetBindings } from '@galcraft/contracts';
+import { assetFieldReferences, assetReferenceTarget, BuildInputSchema, IssueSchema, readPluginDocumentInstances, round5AssetBindings, stageCommandAssetBindings } from '@galcraft/contracts';
 import { AssetCatalog, AssetTypeRegistry, assetFilePath } from '@galcraft/assets';
 import { templateIssues } from '@galcraft/templates';
 import { ReleaseBuilder, buildIssue, sameSavedVersions } from '@galcraft/publishing/build';
@@ -18,6 +18,9 @@ import { collectEngineConversions } from './engine-conversions.mjs';
 import { collectLive2DRuntime } from './live2d-release.mjs';
 import { authorSigningCertificates, signAuthorExecutable } from './author-signing.mjs';
 import { StudioBuildTargets } from './build-targets.mjs';
+import { matchesSavedBuild, savedBuildVersions } from './build-saved-input.mts';
+import { dependencyIssue } from './restore-dependency.mts';
+import { BuildReceipts } from './build-receipts.mts';
 
 const escape = text => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
 export class StudioBuilds {
@@ -27,6 +30,7 @@ export class StudioBuilds {
     this.targetBuilders = new StudioBuildTargets(pluginPackages, () => projects.currentSession, toolchainProgress);
     this.builder = new ReleaseBuilder(verify, changed, signAuthorExecutable, (input, signal) => this.targetBuilders.build(input, signal));
     this.inputRoot = inputRoot;
+    this.receipts = new BuildReceipts(join(pluginRoot, '..', 'build-receipts'));
     this.plans = new Map();
     this.latestPlans = new Map();
   }
@@ -39,15 +43,18 @@ export class StudioBuilds {
     if (nested(output, projectRoot) || nested(projectRoot, output)) return fail('BUILD_OUTPUT_PROJECT', '发行目录应位于作品目录之外', 'M11');
     const checked = await this.builder.checkOutput(input); if (!checked.ok) return checked;
     return session.withSavedSnapshot(async documents => {
-      const savedVersions = documents.map(document => ({ ref: { kind: 'document', id: document.documentId }, revision: document.revision }));
+      const savedVersions = savedBuildVersions(documents);
       if (!sameSavedVersions(savedVersions, input.savedVersions)) return fail('BUILD_VERSION_MISMATCH', '所选保存版本已经变化，请重新检查', 'M11');
       const compiled = this.language.lastValid(input.projectId);
       if (!compiled.ok || !compiled.value || compiled.value.snapshotId !== input.snapshotId) return fail('BUILD_SNAPSHOT_MISSING', '请选择有效的已保存快照', 'M11');
       const snapshot = structuredClone(compiled.value), allFiles = Object.assign({}, ...documents.map(document => document.files));
+      const savedRevision = new Map(savedVersions.map(item => [item.ref.id, item.revision]));
+      if (snapshot.documents.some(document => savedRevision.get(document.documentId) !== document.revision))
+        return fail('BUILD_SNAPSHOT_REVISION', '编译结果与所选保存版本不一致，请重新检查', 'M11');
       const project = JSON.parse(allFiles['project.json']).data;
       const resolved = await this.engineCatalog.resolveProjectEngine(project, snapshot.lock, input.target);
-      if (!resolved.ok) return resolved;
-      const engine = resolved.value, files = [], textFiles = {}, issues = templateIssues(snapshot.template).map(message => buildIssue('BUILD_TEMPLATE', message)), capabilities = [];
+      if (!resolved.ok) return { ...resolved, error: dependencyIssue(resolved.error, snapshot.lock.engine), issues: resolved.issues.map(issue => dependencyIssue(issue, snapshot.lock.engine)) };
+      const engine = resolved.value, files = [], textFiles = {}, issues = [...checked.warnings, ...templateIssues(snapshot.template).map(message => buildIssue('BUILD_TEMPLATE', message))], capabilities = [];
       const playerArch = input.target === 'windows' ? await readWindowsExecutableArchitecture(join(engine.directory, engine.manifest.entries.playerWindows)) : undefined;
       if (input.targetBuilder || ['android', 'ios'].includes(input.target)) issues.push(...await this.targetBuilders.validate(input));
       capabilities.push({ provider: 'galcraft.engine', feature: engine.manifest.version, target: input.target,
@@ -68,6 +75,11 @@ export class StudioBuilds {
         }
       };
       const commandRegistry = createCommandRegistry(snapshot.engineVersion, this.language.currentInput(input.projectId)?.pluginCommands ?? []);
+      const sourceFields = new Map();
+      for (const item of snapshot.sourceMap) {
+        const fields = sourceFields.get(item.statementId) ?? [];
+        fields.push(item); sourceFields.set(item.statementId, fields);
+      }
       const commandRefs = (value, specs, source) => {
         for (const { ref, path } of assetFieldReferences(value, specs)) {
           const target = assetReferenceTarget(ref, index.data.assets);
@@ -78,13 +90,28 @@ export class StudioBuilds {
       };
       for (const scene of snapshot.scenes) for (const instruction of scene.instructions) {
         const spec = commandRegistry.get(instruction.opcode);
-        if (!spec) issues.push(buildIssue('BUILD_COMMAND_MISSING', instruction.opcode));
-        else commandRefs(instruction.args, spec.fields, instruction.source);
-        if (instruction.opcode === 'say' && instruction.args.voiceByLocale) Object.values(instruction.args.voiceByLocale).forEach(id => { if (id) add(id, null, instruction.source); });
+        if (!spec) issues.push({ ...buildIssue('BUILD_COMMAND_MISSING', instruction.opcode), source: instruction.source });
+        else commandRefs(instruction.args, spec.fields.filter(field =>
+          !(instruction.opcode === 'say' && field.path === 'events' || ['changeBg', 'changeScene'].includes(instruction.opcode) && field.path === 'ruleImage')), instruction.source);
+        if (instruction.opcode === 'say' && instruction.args.voiceByLocale)
+          Object.values(instruction.args.voiceByLocale).forEach(id => { if (id) add(id, null, instruction.source); });
+        for (const binding of stageCommandAssetBindings(instruction.opcode, instruction.args)) {
+          const fields = sourceFields.get(instruction.statementId) ?? [];
+          const source = binding.eventId
+            ? fields.find(item => item.source.eventId === binding.eventId && /\.(?:assetId|differenceId)$/.test(item.field))?.source
+            : fields.find(item => item.field === binding.path.join('.'))?.source;
+          add(binding.assetId, binding.variantId, source ?? instruction.source);
+        }
       }
       if(snapshot.template.pages.some(page=>['cg','music'].includes(page.key))&&!snapshot.scenes.some(scene=>scene.instructions.some(instruction=>instruction.opcode==='end'&&typeof instruction.args.endingId==='string'&&instruction.args.endingId.trim())))issues.push({...buildIssue('GALLERY_ENDING_REQUIRED','鉴赏页面需要至少一个带结局标识的 end'),severity:'warning'});
-      visit([snapshot.project, snapshot.scenes.map(scene=>scene.scene), snapshot.characters, snapshot.gallery, snapshot.flows, snapshot.template]);
-      for(const binding of [...round5AssetBindings({project:snapshot.project}),...snapshot.scenes.flatMap(scene=>round5AssetBindings({scene:scene.scene})),...snapshot.characters.flatMap(character=>round5AssetBindings({character}))])add(binding.assetId,binding.variantId);
+      visit([snapshot.project, snapshot.scenes.map(({ scene: { decorLayers, ...scene } }) => scene), snapshot.characters, snapshot.gallery, snapshot.flows, snapshot.template]);
+      for (const { scene } of snapshot.scenes) {
+        const path = `scenes/${scene.id}/scene.json`;
+        const document = documents.find(item => Object.hasOwn(item.files, path));
+        for (const binding of round5AssetBindings({ scene })) add(binding.assetId, binding.variantId,
+          document && { documentId: document.documentId, revision: document.revision, field: binding.field });
+      }
+      for(const binding of [...round5AssetBindings({project:snapshot.project}),...snapshot.characters.flatMap(character=>round5AssetBindings({character}))])add(binding.assetId,binding.variantId);
       input.keepAssets.forEach(id => add(id)); if (input.font.fallbackAssetId) add(input.font.fallbackAssetId);
       const prefix = `${input.target === 'windows' ? 'windows' : 'web'}/`;
       for (const file of engine.manifest.files.filter(file => file.path.startsWith(prefix))) files.push({ path: file.path.slice(prefix.length), size: file.size, source: join(engine.directory, file.path), role: 'runtime' });
@@ -143,7 +170,7 @@ export class StudioBuilds {
           }
           if (manifest.entry.runtime && !dependency.targets.includes(input.target)) capabilities.push({ provider: dependency.id, feature: 'runtime', target: input.target,
             treatment: dependency.required ? 'blocked' : 'skipped', reason: `锁定运行插件 ${dependency.id}@${dependency.version} 未声明该目标`, sources: [], required: dependency.required });
-        } catch (error) { issues.push(buildIssue('BUILD_PLUGIN', `${dependency.id}@${dependency.version}: ${error}`)); }
+        } catch (error) { issues.push(dependencyIssue(buildIssue('BUILD_PLUGIN', `${dependency.id}@${dependency.version}: ${error}`), dependency)); }
       }
       let runtimeIds = new Set();
       try { runtimeIds = runtimePluginClosure(snapshot.lock, manifests, input.target); } catch (error) { issues.push(buildIssue('BUILD_PLUGIN_CLOSURE', String(error))); }
@@ -164,7 +191,7 @@ export class StudioBuilds {
             capabilities.push({ provider: manifest.id, feature: declaration.key.slice(manifest.id.length + 1), target: input.target, treatment: available ? 'native' : required ? 'blocked' : 'skipped', required,
               reason: available ? `Windows ${playerArch} 原生提供者；实际调用结果由宿主返回` : `该目标没有原生提供者，可选动作采用声明的替代行为`, sources: instructions.map(instruction => instruction.source) });
           }
-        } catch (error) { issues.push(buildIssue('BUILD_PLUGIN', `${dependency.id}@${dependency.version}: ${error}`)); }
+        } catch (error) { issues.push(dependencyIssue(buildIssue('BUILD_PLUGIN', `${dependency.id}@${dependency.version}: ${error}`), dependency)); }
       }
       snapshot.lock.plugins = runtimeDependencies;
       for (const scenario of snapshot.flowInitials ?? []) {
@@ -173,6 +200,7 @@ export class StudioBuilds {
       }
       const runtimeTable = registry.prepareContributions(snapshot.lock, input.target, ['runtime']); if (!runtimeTable.ok) issues.push(...runtimeTable.issues);
       const collected = new AssetCatalog(index, assetTypes).collectAssets(references, input.target); issues.push(...collected.issues);
+      const activeVariants = new Map(index.data.assets.map(asset => [asset.id, asset.activeVariantId]));
       for (const asset of collected.assets) {
         if (asset.provider) {
           const key = assetTypes.resolveResourceProviderKey(asset.provider), declaration = runtimeTable.ok ? runtimeTable.value.byKey[key] : null;
@@ -185,10 +213,9 @@ export class StudioBuilds {
           treatment: status === 'converted' ? 'converted' : status === 'direct' ? 'native' : 'blocked',
           reason: status === 'converted' ? `已采用兼容版本：${indexed?.name ?? asset.assetId}` :
             status === 'direct' ? `已验证原版：${indexed?.name ?? asset.assetId}` : `目标尚未验证：${indexed?.name ?? asset.assetId}`,
-          sources: references.filter(ref => ref.assetId === asset.assetId && (ref.variantId === null || ref.variantId === asset.variantId))
+          sources: references.filter(ref => ref.assetId === asset.assetId && (ref.variantId ?? activeVariants.get(ref.assetId)) === asset.variantId)
             .flatMap(ref => ref.source ? [ref.source] : []), required: true });
       }
-      const activeVariants = new Map(index.data.assets.map(asset => [asset.id, asset.activeVariantId]));
       const selectedAssets = [...collected.assets].sort((left, right) => Number(left.variantId !== activeVariants.get(left.assetId)) - Number(right.variantId !== activeVariants.get(right.assetId)));
       snapshot.assets = selectedAssets.map(asset => {
         const metadata = structuredClone(asset.metadata);
@@ -248,7 +275,7 @@ export class StudioBuilds {
         try { compatibilityFiles.push({ file, bytes: [...await readFile(file)] }); }
         catch (error) { issues.push(buildIssue('COMPATIBILITY_FILE', `${file}: ${error}`)); }
       }
-      const planned = this.builder.planBuild(input, { project, snapshot, savedVersions, engine, files, textFiles, capabilities, issues, entry, gameDirectory: 'game', instructions, compatibilityFiles, live2dRuntime, windowsBrand });
+      const planned = this.builder.planBuild(input, { project, snapshot, savedVersions, engine, files, textFiles, capabilities, issues, entry, gameDirectory: 'game', instructions, compatibilityFiles, live2dRuntime, windowsBrand, outputBaseline: checked.value });
       if (planned.ok) { this.plans.set(planned.value.planId, { input: structuredClone(input), lock: structuredClone(compiled.value.lock) }); this.latestPlans.set(input.projectId, planned.value.planId); }
       return planned;
     });
@@ -257,10 +284,11 @@ export class StudioBuilds {
     const plan = this.plans.get(id), session = this.projects.currentSession;
     if (!plan || !session || session.projectId !== plan.input.projectId || this.latestPlans.get(plan.input.projectId) !== id) return fail('BUILD_PLAN_STALE', '请重新检查当前作品的发行计划', 'M11');
     return session.withSavedSnapshot(async documents => {
-      const versions = documents.map(document => ({ ref: { kind: 'document', id: document.documentId }, revision: document.revision }));
-      const current = this.language.lastValid(plan.input.projectId);
-      if (!sameSavedVersions(versions, plan.input.savedVersions) || !current.ok || current.value?.snapshotId !== plan.input.snapshotId || JSON.stringify(current.value.lock) !== JSON.stringify(plan.lock)) return fail('BUILD_PLAN_STALE', '保存快照或精确依赖已变化，请重新检查', 'M11');
-      return this.builder.build(id);
+      if (!matchesSavedBuild(documents, plan.input, plan.lock)) return fail('BUILD_PLAN_STALE', '保存快照或精确依赖已变化，请重新检查', 'M11');
+      const built = await this.builder.build(id);
+      if (!built.ok) return built;
+      try { await this.receipts.record(id, built.value); return built; }
+      catch (error) { return { ...built, warnings: [...built.warnings, { ...buildIssue('BUILD_RECEIPT_PERSIST', String(error)), severity: 'warning' }] }; }
     });
   }
   cancel(id) { return ok(this.builder.cancel(id)); }
@@ -273,9 +301,15 @@ export class StudioBuilds {
     try { return ok(await authorSigningCertificates()); }
     catch (error) { return fail('BUILD_CERTIFICATES_UNAVAILABLE', String(error), 'M11'); }
   }
-  receipt(id) { return this.builder.receipt(id); }
+  receipt(id) {
+    const projectId = this.projects.currentSession?.projectId;
+    if (!projectId) return ok(null);
+    const current = this.builder.receipt(id);
+    if (current.ok && current.value?.projectId === projectId) return current;
+    return ok(this.receipts.read(id, projectId));
+  }
   compatibility(id) { return this.builder.compatibility(id); }
-  resolveDirectory(id) { return this.builder.resolveDirectory(id); }
-  async test(id) { const receipt = this.builder.receipt(id); return receipt.ok && receipt.value ? this.testRelease(receipt.value) : fail('BUILD_RECEIPT_MISSING', '尚无发行回执', 'M11'); }
-  async instructions(id) { const receipt = this.builder.receipt(id); return receipt.ok && receipt.value ? this.openInstructions(receipt.value.instructionsPath) : fail('BUILD_RECEIPT_MISSING', '尚无发行回执', 'M11'); }
+  resolveDirectory(id) { const receipt = this.receipt(id); return receipt.ok ? receipt.value?.outputDirectory ?? null : null; }
+  async test(id) { const receipt = this.receipt(id); return receipt.ok && receipt.value ? this.testRelease(receipt.value) : fail('BUILD_RECEIPT_MISSING', '尚无发行回执', 'M11'); }
+  async instructions(id) { const receipt = this.receipt(id); return receipt.ok && receipt.value ? this.openInstructions(receipt.value.instructionsPath) : fail('BUILD_RECEIPT_MISSING', '尚无发行回执', 'M11'); }
 }

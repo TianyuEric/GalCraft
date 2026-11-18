@@ -5,6 +5,7 @@ import { TemplateLibrary } from '@galcraft/templates/library';
 import { collectTemplateAssets, collectTemplateVariants, createTemplateSource, instantiateTemplate, mapTemplateExternalReferences, packTemplate, prepareTemplateSwitch, readTemplateDocuments, restoreHiddenTemplatePage, rewriteTemplateCss, templateStyleIssues } from '@galcraft/templates';
 import { prepareTemplateAssets } from '@galcraft/assets';
 import { fail, ok } from './result.mjs';
+import { templateGalleryVersions } from './page-editing.ts';
 
 const absolute = path => { if (!isAbsolute(path)) throw new Error('TEMPLATE_ABSOLUTE_PATH_REQUIRED'); return path; };
 const filesOf = documents => Object.assign({}, ...documents.map(document => document.files));
@@ -59,7 +60,8 @@ export class StudioTemplates {
       for(const id of collectTemplateAssets(selected.template))if(!selected.assets.some(asset=>asset.id===id))throw new Error(`TEMPLATE_ASSET_METADATA_MISSING: ${id}`);
       const styleIssues=templateStyleIssues(selected.template,selected.files);if(styleIssues.length)throw new Error(styleIssues.join('\n'));
       let source=mapTemplateExternalReferences(selected.template,selected.externalReferences,input.mappings??{},variables);
-      for(const ref of selected.externalReferences.filter(ref=>ref.kind!=='variable')){const id=input.mappings?.[ref.key];if(id&&!documents.some(document=>Object.values(document.files).some(raw=>raw.includes(`"id": "${id}"`)||raw.includes(`"id":"${id}"`))))throw new Error(`TEMPLATE_REFERENCE_TARGET_MISSING: ${ref.key}`);}
+      const galleryVersions=templateGalleryVersions(documents,selected.externalReferences,input.mappings??{});
+      for(const ref of selected.externalReferences.filter(ref=>ref.kind!=='variable'&&ref.kind!=='gallery')){const id=input.mappings?.[ref.key];if(id&&!documents.some(document=>Object.values(document.files).some(raw=>raw.includes(`"id": "${id}"`)||raw.includes(`"id":"${id}"`))))throw new Error(`TEMPLATE_REFERENCE_TARGET_MISSING: ${ref.key}`);}
       const sourceFiles=Object.fromEntries(Object.entries(selected.files).filter(([path])=>path.startsWith('ui/styles/')).map(([path,bytes])=>[path,new TextDecoder().decode(bytes)]));
       // The conflict preview is read-only; independent resource preparation follows resolved choices.
       const preview=prepareTemplateSwitch(documents,source,input.options??{},sourceFiles);
@@ -73,6 +75,7 @@ export class StudioTemplates {
         for(const[path,text]of Object.entries(sourceFiles))sourceFiles[path]=rewriteTemplateCss(text,new Map(),id=>prepared.assetMap[id]??id);
       }
       const plan=prepareTemplateSwitch(documents,source,input.options??{},sourceFiles);
+      for(const version of galleryVersions)if(!plan.edit.expected.some(existing=>existing.ref.id===version.ref.id))plan.edit.expected.push(version);
       if(prepared){plan.edit.patches.push(...prepared.indexPatches);plan.edit.expected.push(...prepared.expected);plan.edit.preparedAssets.push(...prepared.preparedAssets);}
       // Keep the actual package source, not the merged or cross-work mapped instance.
       plan.sourceRecord.source=structuredClone(selected.template);plan.sourceRecord.sourceFiles=Object.fromEntries(Object.entries(selected.files).filter(([path])=>path.startsWith('ui/styles/')).map(([path,bytes])=>[path,new TextDecoder().decode(bytes)]));

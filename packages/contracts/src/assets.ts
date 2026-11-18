@@ -136,7 +136,7 @@ export type ResolvedAsset = z.infer<typeof ResolvedAssetSchema>;
 export type AssetQuery = { kind: AssetKind | null; folder: string[] | null; characterId: Id | null; sceneId: Id | null;
   locale: string | null; search: string; tags: string[]; reference: 'any' | 'used' | 'unused';
   review: 'any' | 'needsReview'; sort: 'name' | 'size' | 'modified'; direction: 'asc' | 'desc';
-  offset: number; limit: number; indexRevision: Revision | null; allowedKinds?: AssetKind[]; allowedCapabilities?: string[]; typeFields?: Record<string, Json>; usage?: string | null };
+  offset: number; limit: number; indexRevision: Revision | null; assetIds?: Id[]; allowedKinds?: AssetKind[]; allowedCapabilities?: string[]; typeFields?: Record<string, Json>; usage?: string | null };
 export type AssetPage = { items: Asset[]; total: number; offset: number; indexRevision: Revision };
 export type AssetIdsResult = { ids: Id[]; indexRevision: Revision };
 export type AssetPickerContext = { projectId: Id; allowedKinds: AssetKind[]; allowedCapabilities?: string[]; characterId: Id | null; sceneId: Id | null;

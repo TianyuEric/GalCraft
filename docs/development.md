@@ -2,6 +2,8 @@
 
 本文维护源码开发环境与命令。创作者使用方式见[在线手册](https://galcraft.dev/docs/zh-CN/studio-guide/)，工程边界见[架构](architecture.md)。
 
+工程文档描述当前源码；已发布应用与下载入口以各自发行说明为准。开发版本和目标发行版本分别管理，组件按自身变化定版，详见[版本边界](reference/runtime-and-publishing.md#版本边界)。
+
 ## 环境与安装
 
 源码开发和 CI 固定使用 Node.js **24.21.0**、pnpm **12.3.4**。根 `package.json` 和 `pnpm-lock.yaml` 共同维护环境与依赖；开发者在仓库根执行命令。Studio 首发运行平台为 Windows x64。
@@ -25,7 +27,7 @@ pnpm --filter @galcraft/studio desktop
 |---|---|---|
 | 作品中日文字体 | `tools/fonts/prepare.mjs` 从固定 Noto CJK 源码提交取得 SC/JP Regular OTF、OFL 及来源说明，写入 `tools/fonts/cache/` | `GALCRAFT_FONT_DIR` 指向包含 `fonts.json`、所列字体、许可及 `UPSTREAM.md` 的目录 |
 | FFmpeg、ffprobe | `tools/media/prepare.mjs` 按 `tools/media/manifest.json` 下载 BtbN Windows x64 LGPL 构建，使用系统 `tar.exe` 解包，准备 `tools/media/runtime/bin/` | `GALCRAFT_MEDIA_TOOL_DIR` 指向匹配当前平台与架构的两个可执行文件目录 |
-| 品牌与引擎 | 工具从仓库品牌输入生成资源，并在 `build/desktop/engines/0.1.0/` 组装默认引擎 | 开发者通过完整准备命令更新产物 |
+| 品牌与引擎 | 工具从仓库品牌输入生成资源，并在 `build/desktop/engines/<精确引擎版本>/` 组装默认引擎 | 开发者通过完整准备命令更新产物，核对所属引擎清单版本 |
 
 字体准备使用固定来源版本；媒体清单维护实际下载来源和许可。指定外部目录后，准备流程核对所需文件与原生目标。下载、解包或路径出错时，开发者修正终端指出的网络、文件或工具条件，再运行完整桌面命令。第三方来源和分发条件见[第三方声明](../THIRD_PARTY_NOTICES.md)。
 
@@ -54,17 +56,26 @@ pnpm --filter @galcraft/studio desktop
 | `pnpm dev` | 启动 renderer 的 Vite 开发服务，适合局部界面调试 |
 | `pnpm --filter @galcraft/studio desktop` | 构建并启动完整 Electron 宿主 |
 | `pnpm --filter @galcraft/studio desktop:prepare` | 更新应用、默认插件、媒体、字体及默认引擎 |
-| `pnpm storybook` | 启动正式组件预览，默认端口 6007 |
-| `pnpm storybook:build` | 构建正式 Storybook |
+| `pnpm storybook` | 启动 Components/Product 预览，端口 6007 |
+| `pnpm storybook:build` | 构建 Components/Product 至 `apps/studio/dist-storybook/` |
+| `pnpm storybook:review` | 启动独立 Review，端口 6008；显式装配审核场景与本机扩展 |
+| `pnpm storybook:review:build` | 构建独立 Review 至 `apps/studio/dist-storybook-review/` |
 | `pnpm --filter <包名> typecheck` | 检查受影响包的实际类型边界 |
+| `pnpm --filter @galcraft/studio typecheck:host` | 检查 Studio Electron、服务入口、preload 合同与 Worker 等宿主类型边界 |
 | `pnpm typecheck` | 检查全部 workspace 类型及架构依赖边界 |
 | `pnpm build` | 构建提供 build 脚本的 workspace 包 |
 
 本机服务拥有文件、凭据与长任务；renderer 开发页面需要所属宿主桥接才能执行这些能力。完整编辑保存、资源访问、制作和发行结论使用实际宿主。组件表现可在正式 Storybook 观察。
 
+默认 Storybook 只发现 Components/Product，独立 Review 使用 `.storybook/review/` 配置。需要本机审核扩展时在 Review 入口显式设置 `STORYBOOK_LOCAL_CONFIG`，默认入口不读取它。整机预览位于 `Product/Studio/Workbench/Studio`，其稳定 ID 为 `product-studio-authoring-pages`，已有自动化按该 ID 定位。
+
 ## 修改与验证
 
 开发者先确定所属模块、实际提供方和消费者，再修改当前行为。跨进程接口同时维护契约、实际处理方、preload、桌面/浏览器传输及消费者。renderer 使用浏览器可用出口；`@galcraft/authoring/production` 总出口包含 Node 实现，renderer 从中导入类型，运行操作目录使用 `@galcraft/authoring/production/operations`。
+
+Studio 的 `typecheck` 同时执行 renderer 和宿主检查，Windows Player 维护自己的宿主类型检查。业务 TS/MTS 文件必须进入实际编译和检查路径；保留的 JS 提供方、CJS preload 与启动/构建脚本按当前运行环境维护，检查范围由所属 tsconfig 决定，不能仅凭文件后缀宣称完整业务已类型化。
+
+所有可见 UI 调整先在受影响 Story 展示并取得用户确认，再承接为正式基线。本地预览可直接修改一份共享实现；重大新工作流使用独立 Review，并在同一实现接入宿主后复核真实能力。完整流程见[审核与晋升](ui/components.md#审核与晋升)，共用视觉和工作台规则由 [UI 规范](ui/README.md)维护。
 
 开发者按变化选择最小有效检查：文档核对正文、示例与链接；组件查看受影响 Story 或页面；焦点、拖动与滚动使用真实浏览器；磁盘、原生工具和生命周期使用对应宿主；包出口、IPC 或独立插件变化检查实际消费者与组装。根类型检查已包含架构检查。自动化入口与材料准备见[测试](testing.md)，打包、签名与候选分发见[发行](releasing.md)。
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createId } from '@galcraft/contracts';
 import type { BuildInput, Json } from '@galcraft/contracts';
 import type { WorkbenchBridge } from '../Production/bridge.js';
@@ -21,47 +21,66 @@ export function MobileTargetOptions({ target, value, onChange, builds, chooseDir
   builds: WorkbenchBridge['builds']; chooseDirectory(): Promise<string | null>; locale?: string;
 }) {
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
-  const [catalog, setCatalog] = useState<Catalog>([]), [error, setError] = useState(''), [busy, setBusy] = useState(false), [licenses, setLicenses] = useState(false);
+  const [catalog, setCatalog] = useState<Catalog | null>(null), [catalogError, setCatalogError] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false), [licenses, setLicenses] = useState(false);
   const [progress, setProgress] = useState<TargetBuilderProgress | null>(null), [tools, setTools] = useState<TargetToolchain | null>(null);
   const operation = useRef<string | null>(null);
   const unwrap = <T,>(result: import('@galcraft/contracts').Result<T>) => { if (!result.ok) throw new Error(result.error.message); return result.value; };
-  useEffect(() => { let live = true; void builds.targets().then(result => { if (live) { if (result.ok) setCatalog(result.value.filter(item => item.description.target === target)); else setError(result.error.message); } });
+  useEffect(() => {
+    let live = true;
+    void builds.targets().then(result => {
+      if (!live) return;
+      setCatalog(unwrap(result));
+      setCatalogError('');
+    }).catch(reason => { if (live) setCatalogError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { live = false; }; }, [builds, target]);
   useEffect(() => builds.subscribeToolchainProgress?.(event => { if (event.operationId === operation.current) setProgress(event); }), [builds]);
-  const selected = catalog.find(item => item.builder.key === value.builder?.key && item.builder.pluginId === value.builder.pluginId && item.builder.version === value.builder.version);
+  const builders = catalog?.filter(item => item.description.target === target) ?? [];
+  const selected = builders.find(item => item.builder.key === value.builder?.key && item.builder.pluginId === value.builder.pluginId && item.builder.version === value.builder.version);
   const update = (key: string, next: Json) => { onChange({ ...value, options: { ...value.options, [key]: next } }); setTools(null); };
   const options = value.options;
   const toolchain = (options.toolchain ?? { directory: '' }) as Record<string, Json>;
+  const toolsHint = useId();
+  const hasToolDirectory = Boolean(String(toolchain.directory ?? '').trim());
   const updateTool = (key: string, next: string) => update('toolchain', { ...toolchain, [key]: next });
   const run = async (action: () => Promise<void>) => { setBusy(true); setError(''); try { await action(); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { operation.current = null; setProgress(null); setBusy(false); } };
   return <section className="publish-mobile" aria-label={t('移动目标设置', 'Mobile target settings', 'モバイル対象設定')}>
     <h3>{target === 'android' ? 'Android' : 'iOS'}</h3>
     <Field label={t('目标构建器', 'Target builder', '対象ビルダー')}><Choice label={t('目标构建器', 'Target builder', '対象ビルダー')}
+      disabled={busy || !builders.length}
       value={selected ? `${selected.builder.pluginId}@${selected.builder.version}/${selected.builder.key}` : ''}
-      onChange={key => { const entry = catalog.find(item => `${item.builder.pluginId}@${item.builder.version}/${item.builder.key}` === key); onChange({ ...value, builder: entry?.builder ?? null, options: target === 'android' && !toolchain.directory && entry?.description.toolchain ? { ...value.options, toolchain: entry.description.toolchain as unknown as Json } : value.options }); }}
-      options={[{ value: '', label: t('选择已安装的构建器', 'Choose an installed builder', 'インストール済みビルダーを選択') }, ...catalog.map(item => ({ value: `${item.builder.pluginId}@${item.builder.version}/${item.builder.key}`, label: `${item.description.name} · ${item.builder.version}` }))]}/></Field>
-    {!catalog.length && <p>{t('此目标没有可用构建器，请在插件页安装目标包。', 'Install a target package in Plugins to build this target.', 'プラグインで対象パッケージをインストールしてください。')}</p>}
+      onChange={key => { const entry = builders.find(item => `${item.builder.pluginId}@${item.builder.version}/${item.builder.key}` === key); onChange({ ...value, builder: entry?.builder ?? null, options: target === 'android' && !toolchain.directory && entry?.description.toolchain ? { ...value.options, toolchain: entry.description.toolchain as unknown as Json } : value.options }); }}
+      options={[{ value: '', label: t('选择已安装的构建器', 'Choose an installed builder', 'インストール済みビルダーを選択') }, ...builders.map(item => ({ value: `${item.builder.pluginId}@${item.builder.version}/${item.builder.key}`, label: `${item.description.name} · ${item.builder.version}` }))]}/></Field>
+    {catalogError ? <p role="alert" className="workbench-error">{catalogError}</p>
+      : !catalog ? <p role="status">{t('正在读取已安装的构建器…', 'Reading installed builders…', 'インストール済みのビルダーを読み込み中…')}</p>
+      : !builders.length ? <p>{t('此目标没有可用构建器，请在插件页安装目标包。', 'Install a target package in Plugins to build this target.', 'プラグインで対象パッケージをインストールしてください。')}</p>
+      : !selected && value.builder && <p>{t('原选构建器版本已不可用，请重新选择。', 'The previously selected builder version is unavailable. Choose an installed builder.', '以前選択したビルダーのバージョンを利用できません。インストール済みのビルダーを選択してください。')}</p>}
     {selected && <>
-      <Field label={target === 'android' ? t('应用 ID', 'Application ID', 'アプリ ID') : 'Bundle ID'}><Input value={String(options[target === 'android' ? 'applicationId' : 'bundleId'] ?? '')} onChange={event => update(target === 'android' ? 'applicationId' : 'bundleId', event.target.value)}/></Field>
-      <Field label={t('构建序号', 'Build number', 'ビルド番号')}><Input inputMode="numeric" value={String(options[target === 'android' ? 'versionCode' : 'buildNumber'] ?? '')} onChange={event => update(target === 'android' ? 'versionCode' : 'buildNumber', target === 'android' ? Number(event.target.value) : event.target.value)}/></Field>
-      <Field label={t('屏幕方向', 'Orientation', '画面の向き')}><Choice label={t('屏幕方向', 'Orientation', '画面の向き')} value={String(options.orientation ?? 'landscape')} onChange={value => update('orientation', value)} options={[{ value: 'landscape', label: t('固定横屏', 'Landscape', '横向き固定') }, { value: 'sensorLandscape', label: t('横屏随设备旋转', 'Both landscape orientations', '横向きで回転') }]}/></Field>
       <Field label={t('输出类型', 'Output', '出力形式')}><Choice label={t('输出类型', 'Output', '出力形式')} value={String(options.output ?? '')} onChange={output => {onChange({...value,options:{...options,output,...(target==='android'?{signingMode:output==='aab'?'author':'test'}:{})}});setTools(null);}} options={target === 'android' ? [{value:'androidProject',label:t('完整 Android 工程','Complete Android project','完全な Android プロジェクト')},{ value: 'apk', label: 'APK' }, { value: 'aab', label: 'AAB' }] : [{ value: 'xcodeProject', label: t('完整 Xcode 工程', 'Complete Xcode project', '完全な Xcode プロジェクト') }, { value: 'archive', label: t('Xcode 归档 · 需要 macOS', 'Xcode archive · requires macOS', 'Xcode アーカイブ・macOS が必要') }]}/></Field>
+      <div className="publish-mobile-identity">
+        <Field label={target === 'android' ? t('应用 ID', 'Application ID', 'アプリ ID') : 'Bundle ID'}><Input value={String(options[target === 'android' ? 'applicationId' : 'bundleId'] ?? '')} onChange={event => update(target === 'android' ? 'applicationId' : 'bundleId', event.target.value)}/></Field>
+        <Field label={t('构建序号', 'Build number', 'ビルド番号')}><Input inputMode="numeric" value={String(options[target === 'android' ? 'versionCode' : 'buildNumber'] ?? '')} onChange={event => update(target === 'android' ? 'versionCode' : 'buildNumber', target === 'android' ? Number(event.target.value) : event.target.value)}/></Field>
+      </div>
+      <Field label={t('屏幕方向', 'Orientation', '画面の向き')}><Choice label={t('屏幕方向', 'Orientation', '画面の向き')} value={String(options.orientation ?? 'landscape')} onChange={value => update('orientation', value)} options={[{ value: 'landscape', label: t('固定横屏', 'Landscape', '横向き固定') }, { value: 'sensorLandscape', label: t('横屏随设备旋转', 'Both landscape orientations', '横向きで回転') }]}/></Field>
       {target === 'ios' ? <>
         <p>{t('工程包含共同 Player、作品快照、资源和原生桥。Windows 可直接导出；归档与签名在 macOS 使用 Xcode 完成。', 'The project includes the shared Player, snapshot, assets and native bridge. Export on Windows; archive and sign using Xcode on macOS.', '共通 Player、スナップショット、素材、ネイティブブリッジを含みます。Windows で出力し、macOS の Xcode で署名します。')}</p>
         {options.output === 'archive' && <Field label={t('Apple 开发团队 ID', 'Apple development team ID', 'Apple 開発チーム ID')}><Input value={String(options.developmentTeam ?? '')} onChange={event => update('developmentTeam', event.target.value)}/></Field>}
       </> : options.output==='androidProject'?<p>{t('导出完整工程，在 Android Studio 中配置工具与签名。此输出无需检测或下载 SDK/JDK，也不执行 Gradle。','Export a complete project and configure tools and signing in Android Studio. This output does not detect or download SDK/JDK, or run Gradle.','完全なプロジェクトを出力し、Android Studio でツールと署名を設定します。SDK/JDK の確認・取得や Gradle 実行は行いません。')}</p>:<>
         <h4>{t('Android 构建环境', 'Android build environment', 'Android ビルド環境')}</h4>
         <p>{t('JDK、SDK 与 Gradle 缓存独立保存。准备环境会复用兼容工具，取消后已完成组件仍可使用。', 'JDK, SDK and Gradle cache stay outside Studio. Compatible tools are reused; completed components remain available after cancellation.', 'JDK、SDK、Gradle キャッシュは Studio の外に保存。対応ツールを再利用し、中止後も完了した構成を保持します。')}</p>
-        <Field label={t('工具下载位置', 'Tool download location', 'ツール保存先')}><Input value={String(toolchain.directory ?? '')} onChange={event => updateTool('directory', event.target.value)}/></Field>
+        <div className="publish-mobile-path"><Field label={t('工具下载位置', 'Tool download location', 'ツール保存先')}><Input disabled={busy} value={String(toolchain.directory ?? '')} onChange={event => updateTool('directory', event.target.value)}/></Field>
         <Button disabled={busy} onClick={() => void run(async () => { const path = await chooseDirectory(); if (path) updateTool('directory', path); })}>{t('选择工具目录', 'Choose tools directory', 'ツールフォルダーを選択')}</Button>
+        </div>
         <details><summary>{t('复用已有 JDK / SDK', 'Reuse existing JDK / SDK', '既存の JDK / SDK を使用')}</summary>
           <Field label={t('JDK 路径', 'JDK path', 'JDK パス')}><Input value={String(toolchain.javaHome ?? '')} onChange={event => updateTool('javaHome', event.target.value)}/></Field>
           <Field label={t('Android SDK 路径', 'Android SDK path', 'Android SDK パス')}><Input value={String(toolchain.sdkRoot ?? '')} onChange={event => updateTool('sdkRoot', event.target.value)}/></Field>
         </details>
         <label className="publish-mobile-license"><input type="checkbox" checked={licenses} onChange={event => setLicenses(event.target.checked)}/><span>{t('我已阅读并同意', 'I have read and accept the', '次の内容を確認し同意します：')} <a href="https://developer.android.com/studio/terms" target="_blank" rel="noreferrer">Android SDK {t('许可条款', 'license terms', 'ライセンス条項')}</a></span></label>
+        {(!hasToolDirectory || !licenses) && <p id={toolsHint} role="status">{!hasToolDirectory
+          ? t('先选择工具目录，再检测已有环境或准备工具。', 'Choose a tools directory before detecting or preparing the environment.', 'フォルダーを選択してから、環境を確認または準備してください。')
+          : t('可以检测已有环境。准备工具前，请先同意 Android SDK 许可条款。', 'You can detect existing tools now. Accept the Android SDK license terms before preparing tools.', '既存の環境を確認できます。ツールの準備には Android SDK のライセンス条項への同意が必要です。')}</p>}
         <div className="gc-actions">
-          <Button disabled={busy || !toolchain.directory} onClick={() => void run(async () => { setTools(unwrap(await builds.detectToolchain({ builder: selected.builder, input: { directory: String(toolchain.directory), ...(toolchain.javaHome ? { javaHome: String(toolchain.javaHome) } : {}), ...(toolchain.sdkRoot ? { sdkRoot: String(toolchain.sdkRoot) } : {}) } }))); })}>{t('检测环境', 'Detect tools', '環境を確認')}</Button>
-          <Button disabled={busy || !licenses || !toolchain.directory} onClick={() => void run(async () => { const operationId = createId(); operation.current = operationId; setProgress({ phase: 'detecting', message: t('准备环境', 'Preparing tools', '環境を準備'), completed: 0, total: null });
+          <Button aria-describedby={!hasToolDirectory ? toolsHint : undefined} disabled={busy || !hasToolDirectory} onClick={() => void run(async () => { setTools(unwrap(await builds.detectToolchain({ builder: selected.builder, input: { directory: String(toolchain.directory), ...(toolchain.javaHome ? { javaHome: String(toolchain.javaHome) } : {}), ...(toolchain.sdkRoot ? { sdkRoot: String(toolchain.sdkRoot) } : {}) } }))); })}>{t('检测环境', 'Detect tools', '環境を確認')}</Button>
+          <Button aria-describedby={!hasToolDirectory || !licenses ? toolsHint : undefined} disabled={busy || !licenses || !hasToolDirectory} onClick={() => void run(async () => { const operationId = createId(); operation.current = operationId; setProgress({ phase: 'detecting', message: t('准备环境', 'Preparing tools', '環境を準備'), completed: 0, total: null });
             setTools(unwrap(await builds.prepareToolchain({ builder: selected.builder, operationId, input: { directory: String(toolchain.directory), ...(toolchain.javaHome ? { javaHome: String(toolchain.javaHome) } : {}), ...(toolchain.sdkRoot ? { sdkRoot: String(toolchain.sdkRoot) } : {}), acceptLicenses: licenses } }))); operation.current = null;
           })}>{t('准备环境', 'Prepare tools', '環境を準備')}</Button>
           {busy && operation.current && <Button onClick={() => void builds.cancelToolchain(operation.current!).then(result => { if (!result.ok) setError(result.error.message); })}>{t('取消准备', 'Cancel preparation', '準備を中止')}</Button>}

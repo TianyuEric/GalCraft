@@ -114,7 +114,7 @@
 .authoring-command-icon[data-command-kind='bgm'], .authoring-command-icon[data-command-kind='playEffect'] { color:var(--command-audio); background:color-mix(in srgb,var(--command-audio) 12%,var(--command-card)); }
 .authoring-command-icon[data-command-kind='changeBg'], .authoring-command-icon[data-command-kind='changeFigure'] { color:var(--command-media); background:color-mix(in srgb,var(--command-media) 12%,var(--command-card)); }
 .authoring-command-icon[data-command-kind='choose'], .authoring-command-icon[data-command-kind='changeScene'] { color:var(--command-control); background:color-mix(in srgb,var(--command-control) 12%,var(--command-card)); }
-#app .authoring-writing-list .authoring-writing-input { min-height: 68px; width: 100%; resize: vertical; line-height: 1.8; padding: 8px 10px; margin: 0; background: transparent; border: 1px solid transparent; border-radius: 5px; }
+#app .authoring-writing-list .authoring-writing-input { min-height:36px; width:100%; resize:vertical; line-height:1.5; padding:6px 8px; margin:0; background:transparent; border:1px solid transparent; border-radius:5px; }
 #app .authoring-writing-list .authoring-speaker-select { margin-left: 0; max-width: 100%; width:100%; }
 .authoring-drop-gap { height: 18px; }
 .authoring-center > .authoring-toolbar { position: sticky; bottom: -24px; border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-top: 18px; box-shadow: 0 3px 12px #15365108; }
@@ -167,10 +167,10 @@
 @media(max-width: 1000px) { #app button.authoring-panel-toggle { display: inline-flex; } #app .authoring-grid[data-panel='left'] > .authoring-panel-shade, #app .authoring-grid[data-panel='right'] > .authoring-panel-shade { display: block; } }
 @media(prefers-reduced-motion: reduce) { :is(#app, #studio-portals) select::picker-icon, :is(#app, #studio-portals) details > summary::before { transition: none; } }
 
-#app .authoring-card[data-view=writing][data-command=say] { display:grid;grid-template-columns:24px 120px minmax(0,1fr);gap:12px;padding:12px 4px;border:0;border-bottom:1px solid var(--border);border-radius:0;box-shadow:none;background:transparent;margin:0; }
+#app .authoring-card[data-view=writing][data-command=say] { display:grid;grid-template-columns:24px minmax(80px,120px) minmax(0,1fr);gap:8px;padding:4px;border:0;border-bottom:1px solid var(--border);border-radius:0;box-shadow:none;background:transparent;margin:0; }
 .authoring-card[data-view=writing][data-command=say] > :is(strong,.authoring-command-icon,.authoring-card-summary,.authoring-card-text,.authoring-parameter-tags) { display:none; }
-#app .authoring-card[data-view=writing][data-command=say] .authoring-writing-input { grid-column:3;grid-row:1;min-width:0;font-size:15px;line-height:1.85; }
-.authoring-card[data-view=writing] .authoring-speaker-select { align-self:start;margin-top:8px; }
+#app .authoring-card[data-view=writing][data-command=say] .authoring-writing-input { grid-column:3;grid-row:1;min-width:0;font-size:var(--studio-editor-font-size,14px);font-family:var(--studio-editor-font-family,var(--font-sans)); }
+.authoring-card[data-view=writing] .authoring-speaker-select { align-self:start;margin-top:2px; }
 #app .authoring-card[data-view=writing]:not([data-command=say]) { padding:8px 4px;border:0;border-bottom:1px dashed var(--border);border-radius:0;box-shadow:none;min-height:0;background:transparent;font-size:12px;color:var(--muted-foreground); }
 .authoring-card[data-view=writing]:not([data-command=say]) .authoring-card-chips { display:none; }
 #app .authoring-card[data-view=writing].selected { box-shadow:inset 3px 0 var(--primary);background:color-mix(in srgb,var(--primary) 3%,var(--background)); }
@@ -213,6 +213,10 @@
 .authoring-direction-thumbnail { width:72px;height:46px;object-fit:contain;border-radius:5px;border:1px solid var(--border);flex:none; }.authoring-card-list .authoring-card > .authoring-command-icon:has(+.authoring-speaker-name){background:transparent;width:22px;}.authoring-card-list .authoring-card-summary{flex:1 1 240px;}
 .authoring-card[data-view=cards],.authoring-card[data-view=cards] * { user-select:none; }
 .authoring-writing-input { user-select:text; }
+.authoring-dialogue-markers { display:flex; flex-wrap:wrap; gap:4px; }
+.authoring-card[data-view=writing] .authoring-dialogue-markers { grid-column:2 / -1; }
+.authoring-card button.authoring-dialogue-marker { min-height:28px; padding:2px 8px; font-size:var(--text-xs, 12px); }
+.authoring-dialogue-marker[aria-pressed=true] { color:var(--primary); border-color:currentColor; }
 .authoring-number-presets { grid-column:1/-1; }
 
 #app .authoring-card[data-view=writing]:not([data-command=say]) { flex-wrap:nowrap;gap:8px; }.authoring-card[data-view=writing]:not([data-command=say]) .authoring-command-icon{width:24px;height:24px;background:transparent;}.authoring-card[data-view=writing]:not([data-command=say]) strong{min-width:48px;font-size:11px;}#app .authoring-card[data-view=writing]:not([data-command=say]) .authoring-card-summary{flex:1 1 0;font-size:12px;white-space:nowrap;display:block;overflow:hidden;text-overflow:ellipsis;}

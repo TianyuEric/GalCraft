@@ -30,7 +30,7 @@ async function files(root, prefix = '') {
 }
 const groovy = value => JSON.stringify(value).replaceAll('$', '\\$');
 export const builder = {
-  key: 'org.galcraft.android/build', version: '0.1.0', target: 'android',
+  key: 'org.galcraft.android/build', version: '0.1.1', target: 'android',
   async describe() { return { key: this.key, version: this.version, name: 'Android', target: this.target, architectures: ['arm64', 'x64'],
     environments: [{ os: 'win32', arch: 'x64', outputs: ['androidProject','apk', 'aab'] }, { os: 'darwin', arch: 'x64', outputs: ['androidProject','apk', 'aab'] }, { os: 'darwin', arch: 'arm64', outputs: ['androidProject','apk', 'aab'] }, { os: 'linux', arch: 'x64', outputs: ['androidProject','apk', 'aab'] }],
     outputs:[{key:'androidProject',requiresTools:false,signingModes:[],defaultSigningMode:null},{key:'apk',requiresTools:true,signingModes:['test','author'],defaultSigningMode:'test'},{key:'aab',requiresTools:true,signingModes:['author','test'],defaultSigningMode:'author'}],

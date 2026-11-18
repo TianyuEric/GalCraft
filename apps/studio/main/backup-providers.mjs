@@ -9,9 +9,9 @@ import { generationReadiness } from '@galcraft/authoring/production';
 import { PluginHost } from '@galcraft/plugins';
 import { acquirePluginDefinition, loadPluginModule } from '@galcraft/plugins/host';
 import { readTemplateDocuments, readTemplateSource } from '@galcraft/templates';
-import { EngineManifestSchema } from '@galcraft/publishing/engine';
 import { fail, ok } from './result.mjs';
-import { StudioProjectLibrary } from './project-library.mjs';
+import { StudioProjectLibrary } from './project-library.mts';
+import { dependencyIssue, installRestoreEngine } from './restore-dependency.mts';
 
 export class StudioBackups {
   constructor({ userData, projects, engineCatalog, officialPackages = {}, routes = () => ({}), projectLibrary }) {
@@ -56,10 +56,10 @@ export class StudioBackups {
       validateDependencies: async (project, lock, bundled, documents) => {
         this.documents = documents ?? []; this.projectId = project.projectId;
         const engine = await engineCatalog.resolveProjectEngine(project, lock, 'web');
-        const issues = engine.ok ? [] : engine.issues;
+        const issues = engine.ok ? [] : engine.issues.map(issue => dependencyIssue(issue, lock.engine));
         try {const template=readTemplateDocuments(this.documents);readTemplateSource(this.documents);
           if(template.id!==lock.template.id||template.version!==lock.template.version)throw new Error('The embedded template instance does not match its exact dependency.');
-        } catch(error){issues.push(problem('TEMPLATE_INSTANCE_INVALID',String(error)));}
+        } catch(error){issues.push(dependencyIssue(problem('TEMPLATE_INSTANCE_INVALID',String(error)), lock.template));}
         return [...issues, ...await this.preparePlugins(lock, bundled)];
       },
       pluginDocuments: path => {
@@ -92,10 +92,10 @@ export class StudioBackups {
       const installed = await this.plugins.store.inspectDirectory(join(this.pluginRoot, dependency.id, dependency.version));
       if (!installed.ok) {
         const source = bundled ? join(bundled, 'plugin', dependency.id, dependency.version) : this.officialPackages[dependency.id]?.[dependency.version];
-        if (source) { const result = await this.plugins.install({ kind: 'directory', path: source }); if (!result.ok) { issues.push(...result.issues); continue; } }
+        if (source) { const result = await this.plugins.install({ kind: 'directory', path: source }); if (!result.ok) { issues.push(...result.issues.map(issue => dependencyIssue(issue, dependency))); continue; } }
       }
       const directory = join(this.pluginRoot, dependency.id, dependency.version), inspected = await this.plugins.store.inspectDirectory(directory);
-      if (!inspected.ok) { if (dependency.required) issues.push(...inspected.issues); continue; }
+      if (!inspected.ok) { if (dependency.required) issues.push(...inspected.issues.map(issue => dependencyIssue(issue, dependency))); continue; }
       try {
         const lease = await acquirePluginDefinition(directory, inspected.value);
         this.pluginReleases.push(lease.release);
@@ -111,7 +111,7 @@ export class StudioBackups {
           definitions.commands.push(...offered.commands);
         }
         if (!inspected.value.entry.definition && inspected.value.contributions.some(item => item.kind === 'document')) issues.push({ ...problem('PLUGIN_DEFINITION_LEGACY', `${dependency.id}@${dependency.version} 需要提供独立定义入口才能校验和重写作品文档`), severity: 'warning' });
-      } catch (error) { issues.push(problem('PLUGIN_DEFINITION', `${dependency.id}@${dependency.version}: ${String(error)}`)); }
+      } catch (error) { issues.push(dependencyIssue(problem('PLUGIN_DEFINITION', `${dependency.id}@${dependency.version}: ${String(error)}`), dependency)); }
     }
     this.contributions = definitions;
     return issues;
@@ -142,20 +142,15 @@ export class StudioBackups {
           const source = { kind: 'directory', path: directory }, inspected = value(await this.plugins.inspectPackage(source));
           if (inspected.manifest.id !== dependency.id || inspected.manifest.version !== dependency.version) throw new Error(`请选择 ${dependency.id}@${dependency.version} 的精确插件包`);
           value(await this.plugins.install(source));
+        } else if (dependency.kind === 'engine') {
+          await installRestoreEngine(this.engineCatalog, dependency, directory);
         } else {
           const raw = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
-          const manifest = dependency.kind === 'engine' ? EngineManifestSchema.parse(raw) : raw;
-          if (manifest.id !== dependency.id || manifest.version !== dependency.version) throw new Error(`请选择 ${dependency.id}@${dependency.version} 的精确依赖目录`);
-          if (dependency.kind === 'engine' && !manifest.targets.includes('web')) throw new Error('恢复作品需要包含 Web 创作与预览能力的精确引擎包');
-          if (dependency.kind === 'engine') for (const file of manifest.files) {
-            const details = await stat(join(directory, file.path));
-            if (!details.isFile() || details.size !== file.size) throw new Error(`引擎文件与清单不符：${file.path}`);
-          }
-          const target = dependency.kind === 'engine' ? join(this.userData, 'engines', dependency.version) : join(this.userData, 'templates', dependency.id, dependency.version);
+          if (raw.id !== dependency.id || raw.version !== dependency.version) throw new Error(`请选择 ${dependency.id}@${dependency.version} 的精确依赖目录`);
+          const target = join(this.userData, 'templates', dependency.id, dependency.version);
           if (await stat(target).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; })) throw new Error(`本机依赖目录已存在，请检查该目录后重新检查恢复：${target}`);
           await mkdir(dirname(target), { recursive: true });
           await cp(directory, target, { recursive: true, errorOnExist: true, force: false });
-          if (dependency.kind === 'engine') value(await this.engineCatalog.resolveEngine(dependency.version, 'web'));
         }
         return this.service.checkRestore(input.operationDirectory);
       } catch (error) { return fail('RESTORE_DEPENDENCY_IMPORT', String(error), 'M02'); }

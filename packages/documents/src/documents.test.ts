@@ -18,12 +18,12 @@ const requireValue = <T>(result: { ok: boolean; value?: T }): T => {
   expect(result.ok).toBe(true);
   return result.value!;
 };
-async function fresh(): Promise<ProjectSession> {
+async function fresh(script = 'S0'): Promise<ProjectSession> {
   await rm(root, { recursive: true, force: true });
   const session = await ProjectSession.createProject(root, projectId, [
     { documentId: sceneId, revision: 1, format: 'dsl', files: {
       [`scenes/${sceneId}/scene.json`]: envelope(sceneId, { id: sceneId, name: 'S' }),
-      [`scenes/${sceneId}/script.gal`]: 'S0',
+      [`scenes/${sceneId}/script.gal`]: script,
     } },
     { documentId: roleId, revision: 1, format: 'json', files: { [`characters/${roleId}.json`]: envelope(roleId, { name: 'R0' }) } },
     { documentId: otherId, revision: 1, format: 'json', files: { [`scenes/${otherId}.json`]: envelope(otherId, { name: 'B0' }) } },
@@ -58,7 +58,7 @@ it.each([[0, 1], [1, 2], [0, 1, 2], [0, 2]].map(selected => ({ selected })))('re
 });
 function edit(session: ProjectSession, ids: string[], patches: Parameters<ProjectSession['planEdit']>[0]['patches']) {
   const expected = ids.map(id => ({ ref: { kind: 'document' as const, id }, revision: session.readDocument(id)!.revision }));
-  const plan = requireValue(session.planEdit({ label: 'edit', origin: 'field', expected, patches, preparedAssets: [], requiredRefs: [] }));
+  const plan = requireValue(session.planEdit({ label: 'edit', origin: patches.some(patch => patch.kind === 'text') ? 'script' : 'field', expected, patches, preparedAssets: [], requiredRefs: [] }));
   return requireValue(session.applyEdit(plan.planId, expected));
 }
 afterEach(async () => {
@@ -68,6 +68,37 @@ afterEach(async () => {
 });
 
 describe('M02 document session', () => {
+  it('persists the newest last valid source even when repeated invalid bytes match the saved source', async () => {
+    let session = await fresh();
+    const path = `scenes/${sceneId}/script.gal`, invalid = 'say {text:';
+    const first = 'label {name:"First",labelId:"LabelA"} @StateA;';
+    const second = 'label {name:"Second",labelId:"LabelA"} @StateA;';
+    const replace = (after: string) => {
+      const before = session.readRaw(sceneId)!.raw;
+      edit(session, [sceneId], [{ kind: 'text', documentId: sceneId, edits: [{ start: 0, end: before.length, before, after }] }]);
+    };
+    const save = async () => requireValue(await session.save(requireValue(session.planSave({ kind: 'current', documentId: sceneId })).planId));
+    expect(session.readAuthoringDocument(sceneId)?.lastValidSceneSource).toBeUndefined();
+    replace(first); const firstRevision = session.readRaw(sceneId)!.revision;
+    replace(invalid); await save();
+    replace(second); const secondRevision = session.readRaw(sceneId)!.revision;
+    replace(invalid);
+    expect(session.readAuthoringDocument(sceneId)).toMatchObject({ dirty: true, lastValidSceneSource: { revision: secondRevision, text: second } });
+    const discarded = requireValue(session.applyDiscard(requireValue(session.planDiscard({ documentId: sceneId })).planId));
+    expect(session.readAuthoringDocument(sceneId)).toMatchObject({ dirty: false, lastValidSceneSource: { revision: firstRevision, text: first } });
+    requireValue(session.undo(requireValue(session.planUndo(sceneId, discarded.operationId)).planId));
+    expect(session.readAuthoringDocument(sceneId)).toMatchObject({ dirty: true, lastValidSceneSource: { revision: secondRevision, text: second } });
+    requireValue(await session.dispose('keep'));
+    session = await openSession();
+    expect(session.readAuthoringDocument(sceneId)?.lastValidSceneSource).toEqual({ revision: firstRevision, text: first });
+    requireValue(await session.recover('restore'));
+    expect(session.readAuthoringDocument(sceneId)).toMatchObject({ dirty: true, lastValidSceneSource: { revision: secondRevision, text: second } });
+    await save(); requireValue(await session.dispose('saved'));
+    session = await openSession();
+    expect(session.readAuthoringDocument(sceneId)).toMatchObject({ dirty: false, lastValidSceneSource: { revision: secondRevision, text: second } });
+    expect(session.readDocument(sceneId, 'saved')?.files[path]).toBe(invalid);
+    expect(await readFile(join(root, path), 'utf8')).toBe(invalid);
+  });
   it('discards the explicit selected object collection without including other batch members', async () => {
     const session = await fresh();
     edit(session, [roleId, otherId], [roleId, otherId].map((documentId, index) => ({ kind: 'json', documentId, changes: [{ path: '/data/name', before: index ? 'B0' : 'R0', after: index ? 'B1' : 'R1', op: 'set' }] })));
@@ -606,10 +637,10 @@ describe('M02 document session', () => {
   });
 
   it('keeps disk source when choosing a separate conflict copy and preserves invalid DSL verbatim', async () => {
-    const session = await fresh();
+    const valid = '// Saved source', session = await fresh(valid);
     await mkdir(join(root, 'assets'), { recursive: true });
     await writeFile(join(root, 'assets', 'index.json'), '{"asset":"retained"}');
-    edit(session, [sceneId], [{ kind: 'text', documentId: sceneId, edits: [{ start: 0, end: 2, before: 'S0', after: '{bad' }] }]);
+    edit(session, [sceneId], [{ kind: 'text', documentId: sceneId, edits: [{ start: 0, end: valid.length, before: valid, after: '{bad' }] }]);
     await writeFile(join(root, 'scenes', sceneId, 'script.gal'), 'S2');
     const plan = requireValue(session.planSave({ kind: 'current', documentId: sceneId }));
     expect((await session.save(plan.planId)).ok).toBe(false);
@@ -617,6 +648,9 @@ describe('M02 document session', () => {
     try {
       requireValue(await session.resolveConflict(plan.planId, 'copy', copy));
       expect(await readFile(join(copy, 'scenes', sceneId, 'script.gal'), 'utf8')).toBe('{bad');
+      const copied = await ProjectSession.open(copy, projectId);
+      expect(copied.readAuthoringDocument(sceneId)?.lastValidSceneSource).toEqual({ revision: 1, text: valid });
+      requireValue(await copied.dispose('saved'));
       expect(await readFile(join(copy, 'assets', 'index.json'), 'utf8')).toBe('{"asset":"retained"}');
       expect(await readFile(join(copy, 'characters', `${roleId}.json`), 'utf8')).toContain('R0');
       expect(await readFile(join(root, 'scenes', sceneId, 'script.gal'), 'utf8')).toBe('S2');
@@ -628,9 +662,9 @@ describe('M02 document session', () => {
   });
 
   it('restores both files of a dirty scene and its associated save group from a draft', async () => {
-    const session = await fresh();
+    const initial = '// S0', session = await fresh(initial);
     edit(session, [sceneId, roleId], [
-      { kind: 'text', documentId: sceneId, edits: [{ start: 0, end: 2, before: 'S0', after: 'S1' }] },
+      { kind: 'text', documentId: sceneId, edits: [{ start: 0, end: initial.length, before: initial, after: 'S1' }] },
       { kind: 'json', documentId: sceneId, changes: [{ path: '/data/name', before: 'S', after: 'S-new', op: 'set' }] },
       { kind: 'json', documentId: roleId, changes: [{ path: '/data/name', before: 'R0', after: 'R1', op: 'set' }] },
     ]);
@@ -735,7 +769,7 @@ describe('M02 document session', () => {
     const session = await fresh();
     const required = [{ kind: 'asset' as const, id: presetId }];
     const expected = [{ ref: { kind: 'document' as const, id: sceneId }, revision: 1 }];
-    const input = { label: 'asset', origin: 'field' as const, expected,
+    const input = { label: 'asset', origin: 'script' as const, expected,
       patches: [{ kind: 'text' as const, documentId: sceneId, edits: [{ start: 0, end: 2, before: 'S0', after: 'S1' }] }],
       preparedAssets: [], requiredRefs: required };
     const plan = requireValue(session.planEdit(input));

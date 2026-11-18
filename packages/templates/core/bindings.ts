@@ -2,6 +2,7 @@ import type { Json, Variable } from '@galcraft/contracts';
 export type UIBindingField = {source:'data'|'local'|'variable'|'item'|'event';value:string;label:string;type:'string'|'number'|'boolean'|'collection';access:'read'|'readWrite';scope:'playerPreferences'|'project'|'page'|'listItem'|'event'|'progress'|'local'|'longTerm';sceneId?:string};
 /** Descriptors mirror Player.instanceContext. They contain paths and types, never player records. */
 export const UIBindingFields:readonly UIBindingField[] = [
+  { value: 'save.canContinue', label: '有可继续存档', type: 'boolean', source: 'data', access: 'read', scope: 'page' },
   ...[{value:'project.name',label:'作品名称'},{value:'project.description',label:'作品介绍'}].map(field=>({...field,type:'string' as const,source:'data' as const,access:'read' as const,scope:'project' as const})),
   ...(['master','bgm','sfx','voice','ui','video'] as const).map((bus,i)=>({value:`preferences.volumes.${bus}`,label:['总音量','音乐音量','音效音量','配音音量','界面音量','视频音量'][i]!,type:'number' as const,source:'data' as const,access:'readWrite' as const,scope:'playerPreferences' as const})),
   ...(['textSpeed','fontScale','textboxOpacity','historyOpacity','autoWaitMs'] as const).map((key,i)=>({value:`preferences.${key}`,label:['文字速度','字号倍率','阅读框不透明度','历史不透明度','自动等待毫秒'][i]!,type:'number' as const,source:'data' as const,access:'readWrite' as const,scope:'playerPreferences' as const})),

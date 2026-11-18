@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { AssetTypeRegistry, createAssetIndex, assetFilePath } from '@galcraft/assets';
 import { validatePluginData } from '@galcraft/plugins/contracts';
 import { ProductionService, reviewProductionCandidates } from '@galcraft/authoring/production';
-import { ProductionMediaImporter } from './production-media-importer.mjs';
+import { ProductionMediaImporter } from './production-media-importer.mts';
 const roots = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 const ok = value => ({ ok: true, value, warnings: [] });

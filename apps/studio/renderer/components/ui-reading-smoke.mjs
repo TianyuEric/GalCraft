@@ -56,9 +56,11 @@ try {
     await page.getByRole('button', { name: '短通知', exact: true }).click();
     const toast = page.locator('.studio-toast').last();
     await toast.waitFor();
-    const dimensions = await toast.evaluate(el => ({ width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height, font: getComputedStyle(el.querySelector('.studio-toast-title')).fontSize }));
+    await toast.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)));
+    const dimensions = await toast.evaluate(el => { const rect = el.getBoundingClientRect(); return { width: rect.width, height: rect.height, top: rect.top, center: rect.x + rect.width / 2, viewport: document.documentElement.clientWidth, font: getComputedStyle(el.querySelector('.studio-toast-title')).fontSize }; });
     assert.equal(dimensions.font, '14px');
-    assert(dimensions.width <= 191 && dimensions.height <= 38);
+    assert(dimensions.width <= 480 && dimensions.top >= 48 && dimensions.top <= 64);
+    assert(Math.abs(dimensions.center - dimensions.viewport / 2) <= 1);
     await toast.locator('button[aria-label="关闭通知"]').click();
     await page.getByRole('button', { name: '长通知', exact: true }).click();
     await shot(`toast-${theme}`);

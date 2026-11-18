@@ -10,9 +10,7 @@ export function validateFields(fields: readonly FieldSpec[], values: Record<stri
     if (empty) return field.required ? issue(t(`请填写${name}`, `Enter ${name}`, `${name}を入力してください`)) : [];
     if (field.type === 'object' && typeof value === 'object' && !Array.isArray(value)) {
       const object = value as Record<string, unknown>;
-      const imageAnimation = ['imageMouth', 'imageBlink'].includes(field.path);
-      const children = (field.children ?? []).map(child => imageAnimation && ['open', 'closed'].includes(child.path)
-        ? { ...child, required: object.enabled === true } : field.path === 'motion' && object.op === 'stop' ? { ...child, required: false } :
+      const children = (field.children ?? []).map(child => field.path === 'motion' && object.op === 'stop' ? { ...child, required: false } :
           field.path === 'target' && (object.kind === 'scene' && child.path === 'sceneId' || object.kind === 'page' && child.path === 'pageId') ? { ...child, required: true } : child);
       return validateFields(children, object, label, locale, path + '.');
     }

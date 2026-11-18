@@ -2,6 +2,7 @@ import type { CapabilityReport, Issue, Result } from '@galcraft/contracts';
 import { enrichIssue, DiagnosticError } from '@galcraft/contracts';
 import type { GenerationInput, TaskItem, WorkflowBinding } from './types.js';
 import { isExtensionInput, validateOperationInput, validateOperationEdges } from './operations.js';
+import { imageUsageFor } from './draft.js';
 export const ok = <T>(value: T): Result<T> => ({ ok: true, value, warnings: [] });
 export const issue = (code: string, message: string): Issue => enrichIssue({ code, message, severity: 'error', owner: 'M10', related: [], actions: ['edit', 'retry'] });
 export const fail = <T = never>(code: string, message: string): Result<T> => { const error = issue(code, message); return { ok: false, error, issues: [error] }; };
@@ -18,7 +19,7 @@ export function topological<T extends { id: string; dependencies: { itemId: stri
   };
   items.forEach(item => visit(item.id)); return sorted;
 }
-import { validateInput, validateWorkflow, workflowSupportsPurpose } from '@galcraft/generation-services/validation';
+import { validateInput, validateWorkflow, workflowMapsMainImage, workflowSupportsPurpose } from '@galcraft/generation-services/validation';
 export { validateInput, validateWorkflow } from '@galcraft/generation-services/validation';
 export function validateItems(items: TaskItem[]): void {
   topological(items);
@@ -32,9 +33,16 @@ export function validateItems(items: TaskItem[]): void {
       if (!item.operationSnapshot.definition.textPreparationKey && item.operationSnapshot.definition.providerKey !== item.configSnapshot?.providerKey) throw new Error('The operation does not match its generation provider');
     }
     if (item.purpose !== input.purpose || !(item.configSnapshot?.purposes.includes(input.purpose) || item.operationSnapshot?.definition.connection && item.configSnapshot?.purposes.includes(item.operationSnapshot.definition.connection.purpose as import('@galcraft/contracts').Purpose))) throw new Error('The task and connection purposes differ');
-    if (input.purpose === 'image' && input.usage !== item.target.usage) throw new Error('The image usages differ');
+    if (input.purpose === 'image') {
+      if (input.usage !== imageUsageFor(item.target.usage)) throw new Error('The image usages differ');
+      if (item.target.usage === 'difference' && (input.references?.length !== 1 ||
+        !input.references[0]?.assetId || !input.references[0].variantId || !input.references[0].mime.startsWith('image/'))) {
+        throw new Error('Choose one exact project image version as the main reference');
+      }
+    }
     if (item.configSnapshot.protocol === 'comfyUI') {
       if (!item.workflowSnapshot || !workflowSupportsPurpose(item.workflowSnapshot, input.purpose, input.purpose === 'image' ? input.usage : null)) throw new Error('A matching workflow purpose and image use are required');
+      if (input.purpose === 'image' && item.target.usage === 'difference' && !workflowMapsMainImage(item.workflowSnapshot)) throw new Error('Choose a workflow that maps and uploads the main reference image');
       validateWorkflow(item.workflowSnapshot);
     }
   }

@@ -1,5 +1,5 @@
 {
-  "name": "@galcraft/official-android", "version": "0.1.0", "private": true, "type": "module",
+  "name": "@galcraft/official-android", "version": "0.1.1", "private": true, "type": "module",
   "main": "./index.mjs", "exports": { ".": "./index.mjs" },
   "files": ["index.mjs", "package", "README.md"],
   "scripts": { "build": "node build.mjs", "typecheck": "node --check src/services.mjs && node --check src/toolchain.mjs", "test": "node --test src/mobile.test.mjs" },

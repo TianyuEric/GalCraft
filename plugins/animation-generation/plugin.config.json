@@ -3,7 +3,7 @@
     "schemaVersion": 2,
     "id": "org.galcraft.animation-generation",
     "name": "GCA 动画制作",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "使用已配置的兼容文字连接新建、局部修改或重写 GCA 动画，并在审阅后采用候选。",
     "localizations": {
       "en": {
@@ -18,7 +18,7 @@
     "author": "GalCraft",
     "license": "MPL-2.0",
     "homepage": null,
-    "engineRange": "^0.1.0",
+    "engineRange": "^0.2.0",
     "sdkMajor": 0,
     "targets": [
       "web",

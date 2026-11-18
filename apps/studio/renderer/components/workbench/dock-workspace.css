@@ -1,0 +1,213 @@
+.gc-dock {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--border);
+}
+
+.gc-dock-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  padding: 20px;
+  text-align: center;
+  color: var(--foreground-secondary);
+  background: var(--workbench-editor);
+  pointer-events: none;
+}
+
+.gc-dock-content {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  background: var(--workbench-editor);
+}
+
+.gc-dock-content[hidden] { display: none !important; }
+.gc-dock-content > div { height: 100%; min-height: 0; }
+.gc-dock-content:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+
+.gc-dock-header {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-right: 4px;
+  gap: 1px;
+  border-bottom: 1px solid var(--border);
+  background: var(--workbench-explorer);
+}
+
+.gc-dock-tool-title {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-inline: 12px 4px;
+}
+
+.gc-dock-tool-title > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--muted-foreground);
+}
+
+.gc-dock-tool-title > h2 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--foreground);
+  font: 500 14px/20px var(--font-sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gc-dock-splitter {
+  position: absolute;
+  z-index: 5;
+  background: var(--border);
+  touch-action: none;
+}
+
+.gc-dock-splitter.horizontal { cursor: col-resize; }
+.gc-dock-splitter.vertical { cursor: row-resize; }
+.gc-dock-splitter:is(:hover, :focus-visible) { background: var(--primary); }
+
+.gc-dock-bottom-rail { position:absolute; bottom:0; height:28px; display:flex; align-items:center; gap:4px; background:var(--workbench-explorer); border-top:1px solid var(--border); z-index:18; overflow-x:auto; scrollbar-width:none; }
+.gc-dock-bottom-rail > .gc-dock-button { gap:4px; min-block-size:24px; padding-block:2px; white-space:nowrap; }
+.gc-dock-bottom-rail > .gc-dock-button > svg { inline-size:14px; block-size:14px; }
+.gc-dock-content.is-temporary { box-shadow:var(--shadow); border:1px solid var(--border); }
+.gc-dock-missing-view { padding:24px; max-width:60ch; font:400 14px/20px var(--font-sans); }
+.gc-dock-drop-hint { position:absolute; z-index:30; bottom:36px; left:50%; transform:translateX(-50%); padding:8px 12px; background:var(--popover); border:1px solid var(--primary); border-radius:4px; color:var(--primary); font:400 12px/16px var(--font-sans); pointer-events:none; }
+/* Geometry reference: NarraLeaf Studio (08c973cd6), LeftSidebarSelector,
+   RightSidebarSelector, SidebarPanelDropIcon and ResizableHandle. */
+.gc-dock-zone-rail {
+  position: absolute;
+  inset-block: 0;
+  z-index: 18;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-block: 8px;
+  overflow: auto;
+  scrollbar-width: none;
+  background: var(--workbench-activity);
+}
+
+.gc-dock-zone-rail.is-left {
+  left: 0;
+  border-right: 1px solid var(--border);
+}
+
+.gc-dock-zone-rail.is-right {
+  right: 0;
+  border-left: 1px solid var(--border);
+}
+
+.gc-dock-zone-rail > .gc-dock-button {
+  inline-size: 40px;
+  block-size: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--foreground-secondary);
+  cursor: default;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.gc-dock-zone-rail > .gc-dock-button > svg {
+  inline-size: 16px;
+  block-size: 16px;
+}
+
+.gc-dock-zone-rail > .gc-dock-button:hover {
+  background: var(--surface-hover);
+  color: var(--foreground);
+}
+
+.gc-dock-zone-rail > .gc-dock-button[aria-pressed='true'] {
+  background: var(--selection);
+  color: var(--foreground);
+}
+
+.gc-dock-splitter.gc-dock-side-sash {
+  z-index: 6;
+  background-color: var(--border);
+  transition: background-color 150ms ease;
+}
+
+.gc-dock-side-sash::before,
+.gc-dock-side-sash::after {
+  content: '';
+  position: absolute;
+}
+
+.gc-dock-side-sash::before {
+  inset: 0 -3px;
+}
+
+.gc-dock-side-sash::after {
+  inset: 0 -6px;
+  pointer-events: none;
+  background: linear-gradient(to right, transparent, color-mix(in srgb, var(--primary) 9%, transparent), transparent);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.gc-dock-splitter.gc-dock-side-sash:is(:hover, :focus-visible) {
+  background-color: color-mix(in srgb, var(--primary) 50%, var(--border));
+}
+
+.gc-dock-splitter.gc-dock-side-sash:active {
+  background-color: var(--primary);
+}
+
+.gc-dock-side-sash:is(:hover, :focus-visible, :active)::after {
+  opacity: 1;
+}
+
+.gc-dock-side-sash:focus-visible {
+  outline: 1px solid var(--ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gc-dock-zone-rail > .gc-dock-button,
+  .gc-dock-splitter.gc-dock-side-sash,
+  .gc-dock-side-sash::after {
+    transition: none;
+  }
+}
+
+.gc-dock-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-block-size: 28px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--foreground);
+  background: transparent;
+  font: 500 12px/16px var(--font-sans);
+  cursor: default;
+}
+
+.gc-dock-button:hover { background: var(--surface-hover); }
+.gc-dock-button[aria-pressed='true'] { background: var(--selection); color: var(--primary); }
+.gc-dock-button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.gc-dock-button > svg { flex: none; }
+.gc-dock-header > .gc-dock-header-button { inline-size: 28px; block-size: 28px; padding: 0; color: var(--muted-foreground); }
+.gc-dock[data-dragging] { user-select: none; }

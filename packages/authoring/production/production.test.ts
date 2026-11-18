@@ -37,6 +37,82 @@ async function submit(production: ProductionService, items: TaskItem[], sourceDr
   return { plan, task: requireValue(await production.submit(plan.planId)) };
 }
 describe('插件生成提供者的持久任务', () => {
+  it('projects current task failures without reading outputs or starting provider requests', async () => {
+    let sends = 0, queries = 0, fetches = 0;
+    const failure = { code: 'CONTROLLED_FAILURE', message: '受控失败', owner: 'M10' as const, severity: 'error' as const, related: [], actions: ['retry' as const] };
+    const remote = adapter(async function* () { sends++; yield { kind: 'error', remoteStatus: 'failed', issue: failure }; });
+    remote.query = async () => { queries++; return ok({ state: 'unknown', output: null, issues: [] }); };
+    remote.fetch = async () => { fetches++; return ok([]); };
+    const production = service(remote), source = item();
+    source.input = { ...textInput(), system: 'Private frozen input '.repeat(10000) } as GenerationInput;
+    const { task } = await submit(production, [source]); await production.drain();
+    const receipt = production.getTask(task.id)!, failed = receipt.items[0]!;
+    const projected = production.listTaskProblems();
+    expect(projected).toEqual([{ id: task.id, name: task.name, revision: receipt.revision,
+      failures: [{ itemId: source.id, attemptId: failed.attempts.at(-1)!.id, issues: [failure] }] }]);
+    expect(JSON.stringify(projected)).not.toContain('Private frozen input');
+    projected[0]!.failures[0]!.issues[0]!.message = 'changed projection';
+    expect(production.listTaskProblems()[0]!.failures[0]!.issues[0]!.message).toBe(failure.message);
+    expect(production.getTask(task.id)).toEqual(receipt);
+    requireValue(await production.cancel(task.id));
+    expect(production.listTaskProblems()).toEqual([{ id: task.id, name: task.name, revision: production.getTask(task.id)!.revision,
+      failures: [{ itemId: source.id, attemptId: failed.attempts.at(-1)!.id, issues: [failure] }] }]);
+    expect({ sends, queries, fetches }).toEqual({ sends: 1, queries: 0, fetches: 0 });
+    await production.close();
+  });
+  it('uses the item identity for an actionable failure before the first attempt and retains it across revisions', async () => {
+    const remote = adapter(async function* () {}), source = item();
+    let production = service(remote);
+    const { task } = await submit(production, [source]); await production.close();
+    task.revision++; task.items[0]!.state = 'blocked';
+    task.items[0]!.issues = [{ code: 'DEPENDENCY_MISSING', message: '补齐上游候选', owner: 'M10', severity: 'warning', related: [], actions: ['compare'] }];
+    await production.store.saveTask(task); production = service(remote); await production.open();
+    const first = production.listTaskProblems()[0]!;
+    expect(first.failures[0]).toMatchObject({ itemId: source.id, attemptId: source.id });
+    await production.close(); task.revision++; task.items[0]!.state = 'interrupted'; await production.store.saveTask(task);
+    production = service(remote); await production.open();
+    expect(production.listTaskProblems()[0]).toEqual({ ...first, revision: task.revision });
+    await production.close();
+  });
+  it('projects interruption and failed-state explanations without altering task issues or treating a normal blocked wait as a failure', async () => {
+    const remote = adapter(async function* () {}), sources = [item(), item(), item()];
+    let production = service(remote);
+    const { task } = await submit(production, sources); await production.close();
+    task.items[0]!.state = 'interrupted'; task.items[1]!.state = 'failed'; task.items[2]!.state = 'blocked';
+    await production.store.saveTask(task); production = service(remote); await production.open();
+    expect(production.listTaskProblems()[0]!.failures).toEqual([
+      { itemId: sources[0]!.id, attemptId: sources[0]!.id, issues: [{ code: 'PRODUCTION_INTERRUPTED', owner: 'M10', severity: 'warning', message: '制作项已中断。打开原任务查看可用的恢复操作。', related: [], actions: ['locate'] }] },
+      { itemId: sources[1]!.id, attemptId: sources[1]!.id, issues: [{ code: 'PRODUCTION_FAILED', owner: 'M10', severity: 'error', message: '制作项执行失败。打开原任务查看详情与可用操作。', related: [], actions: ['locate'] }] },
+    ]);
+    expect(production.getTask(task.id)).toEqual(task); await production.close();
+  });
+  it('supersedes a failed item only after its linked retry plan is submitted and retains the original receipt', async () => {
+    let sends = 0;
+    const production = service(adapter(async function* () {
+      sends++; yield { kind: 'error', remoteStatus: 'failed', issue: { code: 'CONTROLLED_FAILURE', message: '受控失败', owner: 'M10', severity: 'error', related: [], actions: ['retry'] } };
+    }));
+    const source = item(), { task } = await submit(production, [source]); await production.drain();
+    const original = production.getTask(task.id)!;
+    const retry = requireValue(await production.retryItem(task.id, source.id, true));
+    expect(production.listTaskProblems()[0]!.failures).toHaveLength(1); expect(sends).toBe(1);
+    const next = requireValue(await production.submit(retry.planId));
+    expect(production.listTaskProblems()).toEqual([
+      { id: original.id, name: original.name, revision: original.revision, failures: [] },
+      { id: next.id, name: next.name, revision: next.revision, failures: [] },
+    ]);
+    expect(production.getTask(task.id)).toEqual(original);
+    await production.drain();
+    const newer = production.listTaskProblems()[1]!;
+    expect(newer.failures).toHaveLength(1);
+    expect(newer.failures[0]!.attemptId).not.toBe(original.items[0]!.attempts.at(-1)!.id);
+    requireValue(await production.removeTaskRecord(next.id));
+    expect(production.listTaskProblems()).toEqual([{ id: original.id, name: original.name, revision: original.revision, failures: [] }]);
+    expect(production.getTask(task.id)).toEqual(original); expect(sends).toBe(2);
+    await production.close();
+    const reopened = service(adapter(async function* () { throw new Error('Snapshot must not generate'); })); await reopened.open();
+    expect(reopened.listTaskProblems()).toEqual([{ id: original.id, name: original.name, revision: original.revision, failures: [] }]);
+    expect(reopened.getTask(task.id)).toEqual(original); await reopened.close();
+  });
   it('projects navigation summaries separately from exact task input and candidate media', async () => {
     const production = service(adapter(async function* () { yield { kind: 'textDelta', text: 'candidate' }; yield { kind: 'output', artifacts: [], usage: null }; }));
     const source = item(); source.input = { ...textInput(), system: 'Frozen input '.repeat(30000) } as GenerationInput;
@@ -62,9 +138,11 @@ describe('插件生成提供者的持久任务', () => {
     const {task}=await submit(production,[source]);await production.drain();
     const failed=production.listTasks()[0]!.items[0]!;
     expect(failed).toMatchObject({state:'failed',rawOutput:'complete score JSON',attempts:[{outcome:'failed'}],issues:[{code:'PREPARATION_RESULT_INVALID'}]});
+    expect(production.listTaskProblems()[0]!.failures[0]!.attemptId).toBe(failed.attempts[0]!.id);
     expect(failed.issues[0]!.message).toContain('musicConstraints.fixedBpm');expect(failed.candidateIds).toHaveLength(1);
     valid=true;const fixed=requireValue(await production.reprocess(task.id,source.id,'corrected score JSON'));
     expect(fixed.items[0]!.state).toBe('review');expect(fixed.items[0]!.issues).toEqual([]);expect(fixed.items[0]!.progress.phase).toBe('review');expect(fixed.items[0]!.attempts).toMatchObject([{outcome:'failed'}]);expect(requests).toBe(1);
+    expect(production.listTaskProblems()).toEqual([{ id: fixed.id, name: fixed.name, revision: fixed.revision, failures: [] }]);
     await production.close();
   });
   it('persists original selection and edited-candidate identities with their collaboration calls',async()=>{

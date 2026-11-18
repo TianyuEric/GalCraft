@@ -17,6 +17,6 @@ export function ProjectTitle({ name, dirty, unsavedLabel }: { name: string; dirt
     <TooltipProvider><Tooltip><TooltipTrigger render={<span ref={viewport} tabIndex={0} className="shell-project-viewport"/>} aria-label={name}>
       <span ref={text} className="shell-project-text" data-overflow={distance > 0} style={{ '--title-travel': `${-distance}px`, '--title-duration': `${Math.max(12, distance / 18 + 8)}s` } as CSSProperties}>{name}</span>
     </TooltipTrigger><TooltipContent side="bottom" className="shell-project-full-title">{name}</TooltipContent></Tooltip></TooltipProvider>
-    {dirty && <i aria-label={unsavedLabel} role="img"/>}
+    {dirty && <i className="gc-unsaved-dot" aria-label={unsavedLabel} role="img"/>}
   </span>;
 }

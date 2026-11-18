@@ -115,6 +115,16 @@ export function DocumentEditor({ document, entry, services, locale, done, active
     })()}>{t('应用字段修改', 'Apply field changes', 'フィールド変更を適用')}</Button></footer>
   </section>;
 }
+export function openPluginDocument(document: AuthorDocument, entry: AuthorDocumentEntry, services: AuthorContributionServices, locale: string, afterApply?: () => void) {
+  services.workspace?.open(`plugin-document:${document.documentId}`, document.name, (done, changed) => {
+    const node = window.document.createElement('section'), react = createRoot(node), snapshot = structuredClone(document);
+    let dirty = false, active = true;
+    const render = () => react.render(<DocumentEditor document={snapshot} entry={entry} services={services} locale={locale} active={active}
+      done={() => { afterApply?.(); done(); }} onDirty={value => { dirty = value; changed(); }}/>);
+    render();
+    return { node, dirty: () => dirty, activate: value => { if (active !== value) { active = value; render(); } }, dispose: () => react.unmount() };
+  });
+}
 export function AuthorContributions({ services, locale, location = 'tools.list', documents = false }: { services: AuthorContributionServices; locale: string; location?: string; documents?: boolean }) {
   const t = (zh: string, en: string, ja: string) => text(locale, zh, en, ja), types = services.documentTypes(), tools = services.tools(location);
   const [active, setActive] = useState<AuthorToolEntry | null>(null), [entryKey, setEntryKey] = useState(types[0]?.definition.key ?? ''), [instances, setInstances] = useState<AuthorDocument[]>([]);
@@ -123,11 +133,8 @@ export function AuthorContributions({ services, locale, location = 'tools.list',
   const entry = types.find(item => item.definition.key === entryKey);
   const openEditor = (document: AuthorDocument, entry: AuthorDocumentEntry) => {
     if (services.workspace) {
-      services.workspace.open(`plugin-document:${document.documentId}`, document.name, (done, changed) => {
-        const node = window.document.createElement('section'), react = createRoot(node), snapshot = structuredClone(document); let dirty = false, active = true;
-        const render = () => react.render(<DocumentEditor document={snapshot} entry={entry} services={services} locale={locale} active={active} done={() => { setRevision(value => value + 1); done(); }} onDirty={value => { dirty = value; changed(); }}/>);
-        render(); return { node, dirty: () => dirty, activate: (value: boolean) => { if (active !== value) { active = value; render(); } }, dispose: () => react.unmount() };
-      }); return;
+      openPluginDocument(document, entry, services, locale, () => setRevision(value => value + 1));
+      return;
     }
     setEditors(items => items.some(item => item.document.documentId === document.documentId) ? items : [...items, { document: structuredClone(document), entry, dirty: false, closeRequest: 0 }]); setActiveEditor(document.documentId);
   };

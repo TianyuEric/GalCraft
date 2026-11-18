@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { StudioCollaboration } from './collaboration-providers.mjs';
 import { domainCatalog } from './collaboration-catalog.mjs';
 import { CatalogOutputSchema, WorkflowSummarySchema } from './collaboration-contracts.mjs';
-import { StudioProduction } from './production-providers.mjs';
+import { StudioProduction } from './production-providers.mts';
 import { DefaultTimeoutSecByPurpose } from '@galcraft/contracts';
 
 it('projects workflow summaries and details from the same persisted guidance revision', async () => {
@@ -39,7 +39,7 @@ it('projects workflow summaries and details from the same persisted guidance rev
 it('checks the saved workflow revision and rejects explicit incompatible image uses without checking service nodes', async () => {
   const root = resolve('../../tmp/testing/sh4-workflow-inspection'), directory = join(root, 'connections/workflows');
   await mkdir(directory, { recursive: true });
-  const workflow = { id: 'FlowS4', revision: 4, name: 'Character', purpose: 'image', imageUsages: ['figure'] };
+  const workflow = { id: 'FlowS4', revision: 4, name: 'Character', purpose: 'image', imageUsages: ['figure'], inputs: [], uploads: [] };
   const config = { id: 'ConnS4', revision: 2, name: 'Comfy', protocol: 'comfyUI', purposes: ['image'], parameters: {},
     model: '', baseUrl: 'http://local.invalid', credentialId: null, auth: 'none', apiKeyHeader: null,
     timeoutSecByPurpose: DefaultTimeoutSecByPurpose, concurrency: 1, workflowBindingId: null, serverFileRoot: null };
@@ -56,7 +56,14 @@ it('checks the saved workflow revision and rejects explicit incompatible image u
     expect(checkedRevisions).toEqual([]);
     const accepted = await owner.inspectOperationConnection({ ...input, usage: 'figure' });
     expect(accepted).toMatchObject({ ok: true, value: { workflow: { revision: 4 }, mapping: 'passed' } });
-    expect(checkedRevisions).toEqual([4]);
+    const missingReference = await owner.inspectOperationConnection({ ...input, usage: 'difference' });
+    expect(missingReference).toMatchObject({ ok: true, value: { mapping: 'failed', issues: [{ code: 'WORKFLOW_REFERENCE_REQUIRED' }] } });
+    workflow.inputs = [{ port: 'references', nodeId: '4', input: 'image', valueType: 'imageFile' }];
+    workflow.uploads = [{ port: 'references', method: 'comfyImage' }];
+    await writeFile(join(directory, `${workflow.id}.json`), JSON.stringify(workflow));
+    const wholeFigureDifference = await owner.inspectOperationConnection({ ...input, usage: 'difference' });
+    expect(wholeFigureDifference).toMatchObject({ ok: true, value: { workflow: { revision: 4 }, mapping: 'passed' } });
+    expect(checkedRevisions).toEqual([4, 4]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

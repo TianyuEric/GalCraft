@@ -21,6 +21,7 @@ export * from './ui-animations.js';
 
 export * from './canvas-style.js';
 export * from './bindings.js';
+export * from './blueprints.js';
 export { preparePageEdit, createBasicComponent, componentIsFree, validatePageStructure } from './editor.js';
 export type { PageEditPlan } from './editor.js';
 export * from './composition-contracts.js';

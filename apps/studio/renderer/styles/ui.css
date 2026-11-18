@@ -6,6 +6,7 @@
 @import '../components/ui/registry.css';
 @import '@xyflow/react/dist/style.css' layer(base);
 @source '../';
+@source not '../stories/review/**/baseline/**';
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @layer base {

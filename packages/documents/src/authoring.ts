@@ -1,10 +1,12 @@
 import { z } from 'zod';
-import { AuthoringOutlineSchema, EffectPatchSchema, CharacterDifferenceSchema, CharacterSchema, IdSchema, JsonSchema, ProjectSchema, SceneSchema, VariableSchema, createId, hasSceneParameterDefault, normalizeCharacterAuthoringData, normalizeProjectAuthoringData } from '@galcraft/contracts';
-import type { Asset, CommandSpec, GalleryEntry, Character, DocumentView, EditInput, Id, Issue, Json, Project, Ref, Result, Scene, Variable } from '@galcraft/contracts';
-import { applyTextEdits, validateAuthoringCommands, presentationArgs, dialogueInterpolations, parseExpression, variableReads, commandOwnedIds, parse, patchFields, rewriteScriptReferences, toDocumentPatch } from '@galcraft/dsl';
-import type { ParseResult } from '@galcraft/dsl';
-import { characterEdit, neutralCharacter } from './characters.js';
+import { reserveIds } from '@galcraft/contracts';
+import { AuthoringOutlineSchema, DialogueContentSchema, DialogueEventSchema, EffectPatchSchema, CharacterDifferenceSchema, CharacterSchema, IdSchema, JsonSchema, LockSchema, ProjectSchema, RevisionSchema, SceneSchema, VariableSchema, createId, dialogueAnchorOffsets, dialoguePlainText, dialogueSegments, hasSceneParameterDefault, normalizeCharacterAuthoringData, normalizeProjectAuthoringData, round5AssetBindings, sliceDialogueContent, stageCommandAssetBindings } from '@galcraft/contracts';
+import type { Asset, CommandSpec, DialogueContent, DialogueEvent, GalleryEntry, Character, DocumentView, EditInput, Id, Issue, Json, Project, Ref, Result, Scene, Variable } from '@galcraft/contracts';
+import { applyTextEdits, validateAuthoringCommands, createCommandArgs, createCommandRegistry, dialogueInterpolations, parseExpression, variableReads, commandOwnedIds, parse, patchFields, resolveStaticStageImage, rewriteScriptReferences, toDocumentPatch } from '@galcraft/dsl';
+import type { CompileInput, FieldPatchInput, ParseResult, TextEdit } from '@galcraft/dsl';
+import { characterDifferenceDependencies, characterEdit, neutralCharacter } from './characters.js';
 import { createWorkbenchChapter, moveWorkbenchObjects, renameWorkbenchObject } from './structure.js';
+import { invalidSceneEdit } from './scene-sources.js';
 export * from './characters.js';
 export * from './structure.js';
 
@@ -19,7 +21,7 @@ const projectFields = ProjectSchema.pick({ name: true, description: true, releas
   player: ProjectSchema.shape.player.partial().extend({emergencyKey:ProjectSchema.shape.player.shape.emergencyKey.unwrap().optional()}).optional(), platform: ProjectSchema.shape.platform.partial().optional(),
 });
 const variableFields = z.strictObject(VariableSchema.shape).omit({ id: true }).partial();
-const sceneFields = SceneSchema.pick({ name: true, presentation: true, parameters: true, locals: true, returns: true }).partial();
+const sceneFields = SceneSchema.pick({ name: true, presentation: true, decorLayers: true, parameters: true, locals: true, returns: true }).partial();
 const definitions = [
   ['outline.set', 'Set the formal story outline and chapter summaries', z.strictObject({op:z.literal('outline.set'),outline:AuthoringOutlineSchema})],
   ['project.update', 'Update project settings', z.strictObject({ op: z.literal('project.update'), changes: projectFields })],
@@ -48,6 +50,9 @@ const definitions = [
   ['variable.update', 'Edit a variable; referenced types and scopes stay stable', z.strictObject({ op: z.literal('variable.update'), id: IdSchema, changes: variableFields })],
   ['variable.remove', 'Remove an unreferenced variable', z.strictObject({ op: z.literal('variable.remove'), id: IdSchema })],
   ['variable.replace', 'Replace variable references with an existing variable', z.strictObject({ op: z.literal('variable.replace'), id: IdSchema, replacementId: IdSchema, parameterArguments: z.literal('remove').optional() })],
+  ['dialogue.update', 'Edit dialogue body or its anchored events', z.strictObject({ op: z.literal('dialogue.update'), sceneId: IdSchema, statementId: IdSchema, text: DialogueContentSchema.optional(), events: z.array(DialogueEventSchema).optional() })],
+  ['dialogue.split', 'Split a dialogue at a decoded text boundary', z.strictObject({ op: z.literal('dialogue.split'), sceneId: IdSchema, statementId: IdSchema, offset: RevisionSchema })],
+  ['dialogue.merge', 'Merge an adjacent dialogue into the preceding dialogue', z.strictObject({ op: z.literal('dialogue.merge'), sceneId: IdSchema, statementId: IdSchema, nextStatementId: IdSchema })],
   ['commands.insert', 'Insert script commands with generated statement identities', z.strictObject({ op: z.literal('commands.insert'), sceneId: IdSchema, beforeId: IdSchema.nullable().default(null), commands: z.array(z.strictObject({ command: z.string().min(1), args: z.record(z.string(), JsonSchema) })).min(1) })],
   ['commands.fields', 'Change selected command fields', z.strictObject({ op: z.literal('commands.fields'), sceneId: IdSchema, ids: z.array(IdSchema).min(1), changes: z.array(z.strictObject({ field: z.string().min(1), op: z.enum(['set', 'inherit']), value: JsonSchema })).min(1) })],
   ['commands.duplicate', 'Copy commands and rebuild internal identities', z.strictObject({ op: z.literal('commands.duplicate'), sceneId: IdSchema, ids: z.array(IdSchema).min(1), beforeId: IdSchema.nullable().default(null) })],
@@ -60,6 +65,17 @@ export type AuthorOperation = z.infer<typeof AuthorOperationSchema>;
 type DataFile = { document: DocumentView; path: string; data: Record<string, unknown> };
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const fail = (code: string, message: string): Result<never> => { const error: Issue = { code, message, severity: 'error', owner: 'M02', related: [], actions: ['edit', 'compare'] }; return { ok: false, error, issues: [error] }; };
+class InvalidSceneSource extends Error {
+  constructor(readonly diagnostic: Issue) { super(diagnostic.message); }
+}
+class InvalidAuthoringCommand extends Error {
+  constructor(readonly issues: Issue[]) { super(issues[0]?.message); }
+}
+function requireValidSceneSource(source: ParseResult): ParseResult {
+  const error = source.issues.find(issue => issue.severity === 'error');
+  if (error) throw new InvalidSceneSource(error);
+  return source;
+}
 function files(documents: DocumentView[]): DataFile[] {
   return documents.flatMap(document => Object.entries(document.files).flatMap(([path, raw]) => {
     if (!path.endsWith('.json')) return [];
@@ -128,7 +144,7 @@ export function rebaseAuthoringOperation(baseline: DocumentView[], current: Docu
 }
 
 /** All operations produce an ordinary M02 transaction. No state is applied here. */
-export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOperation, pluginCommands: CommandSpec[] = []): Result<EditInput> {
+export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOperation, pluginCommands: CommandSpec[] = [], pluginConditions?: CompileInput['pluginConditions']): Result<EditInput> {
   const checked = AuthorOperationSchema.safeParse(raw);
   if (!checked.success) return fail('AUTHOR_INPUT', checked.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; '));
   const operation = checked.data, dataFiles = files(documents), projectFile = dataFiles.find(file => file.path === 'project.json');
@@ -149,22 +165,75 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
     const create = (path: string, data: unknown, script?: string) => { const documentId = allocate(); edit.patches.push({ kind: 'document', documentId, op: 'create', before: null, after: { format: script === undefined ? 'json' : 'dsl', files: { [path]: JSON.stringify({ schemaVersion: 1, documentId, revision: 1, data }, null, 2) + '\n', ...(script === undefined ? {} : { [path.replace(/scene\.json$/, 'script.gal')]: script }) } } }); };
     const remove = (file: DataFile) => { touch(file.document); edit.patches.push({ kind: 'document', documentId: file.document.documentId, op: 'delete', before: { format: file.document.format, files: file.document.files }, after: null }); };
     const sceneFile = (id: Id) => required(dataFiles.find(file => file.path === `scenes/${id}/scene.json`), `Scene ${id}`);
+    const assetIndex = dataFiles.find(file => file.path === 'assets/index.json');
+    const lockFile = dataFiles.find(file => file.path === 'dependencies.lock.json');
+    const assets = (assetIndex?.data.assets ?? []) as Asset[];
+    const requireRef = (ref: Ref) => { if (!edit.requiredRefs.some(item => item.kind === ref.kind && item.id === ref.id)) edit.requiredRefs.push(ref); };
     const readScene = (id: Id) => SceneSchema.parse(sceneFile(id).data);
     const chapter = (id: Id) => required(project.chapters.find(chapter => chapter.id === id), `Chapter ${id}`);
     const script = (file: DataFile) => required(Object.entries(file.document.files).find(([path]) => path.endsWith('/script.gal'))?.[1], 'Scene script');
-    const parsed = (file: DataFile) => parse({ documentId: file.document.documentId, revision: file.document.revision, text: script(file) });
-    const validateCommands = (file: DataFile, before: ParseResult, after: string, ids: Id[], inserting = false) => {
-      const context = { engineVersion: project.engineVersion, pluginCommands, scenes: dataFiles.filter(file => /\/scene.json$/.test(file.path)).map(file => SceneSchema.parse(file.data)),
+    const parsed = (file: DataFile) => requireValidSceneSource(parse({ documentId: file.document.documentId, revision: file.document.revision, text: script(file) }));
+    const validateCommands = (file: DataFile, before: ParseResult, after: string, ids: Id[], inserting = false, movedFrom?: { documentId: Id; text: string }, creating = false) => {
+      const context = { engineVersion: project.engineVersion, project, lock: LockSchema.safeParse(lockFile?.data).data, pluginCommands, pluginConditions,
+        scenes: dataFiles.filter(file => /\/scene.json$/.test(file.path)).map(file => SceneSchema.parse(file.data)),
         characters: dataFiles.filter(file => /^characters\//.test(file.path)).map(file => CharacterSchema.parse(normalizeCharacterAuthoringData(file.data))),
         variables: dataFiles.filter(file => /^variables\//.test(file.path)).map(file => VariableSchema.parse(file.data)),
-        assets: (dataFiles.find(file => file.path === 'assets/index.json')?.data.assets ?? []) as Asset[],
+        assets,
         gallery: dataFiles.filter(file => /^gallery\//.test(file.path)).flatMap(file => Array.isArray(file.data.entries) ? file.data.entries : [file.data]) as GalleryEntry[],
-        documents: dataFiles.filter(file => /\/scene.json$/.test(file.path)).map(file => ({ documentId: file.document.documentId, revision: file.document.revision, kind: 'scene', sceneId: String(file.data.id), text: script(file) })) };
-      const signature = (issue: Issue) => `${issue.code}:${issue.source?.field ?? ''}:${issue.message}`;
+        documents: dataFiles.filter(file => /\/scene.json$/.test(file.path)).map(file => ({ documentId: file.document.documentId, revision: file.document.revision, kind: 'scene', sceneId: String(file.data.id),
+          text: movedFrom?.documentId === file.document.documentId ? movedFrom.text : script(file) })) };
+      const signature = (issue: Issue) => `${issue.code}:${issue.source?.statementId ?? ''}:${issue.source?.eventId ?? ''}:${issue.source?.field ?? ''}:${issue.message}`;
       const existing = new Set(inserting ? [] : validateAuthoringCommands(before, ids, readScene(String(file.data.id)), context).map(signature));
-      const issues = validateAuthoringCommands(parse({ ...before, text: after }), ids, readScene(String(file.data.id)), context)
+      const next = parse({ documentId: before.documentId, revision: before.revision, text: after });
+      const issues = validateAuthoringCommands(next, ids, readScene(String(file.data.id)), context, creating)
         .filter(issue => (issue.severity === 'error' || issue.code === 'FIELD_UNKNOWN') && issue.code !== 'TEXT_EMPTY' && !existing.has(signature(issue)));
-      if (issues.length) throw new Error(issues.map(issue => `${issue.source?.statementId ?? ''}.${issue.source?.field ?? ''}: ${issue.message}`).join('; '));
+      if (issues.length) throw new InvalidAuthoringCommand(issues);
+      const changed = next.statements.filter(node => node.id && ids.includes(node.id));
+      for (const node of changed) {
+        const bindings = stageCommandAssetBindings(node.command, node.args);
+        if (!bindings.length) continue;
+        if (assetIndex) touch(assetIndex.document);
+        for (const binding of bindings) {
+          requireRef({ kind: 'asset', id: binding.assetId });
+          if (binding.variantId) requireRef({ kind: 'variant', id: binding.variantId });
+        }
+        if (node.command === 'changeScene' && typeof node.args.sceneId === 'string') {
+          touch(projectFile.document);
+          touch(sceneFile(node.args.sceneId).document);
+          requireRef({ kind: 'scene', id: node.args.sceneId });
+          if (typeof node.args.labelId === 'string') requireRef({ kind: 'label', id: node.args.labelId });
+        }
+      }
+      const events = changed.filter(node => node.command === 'say').flatMap(node => z.array(DialogueEventSchema).safeParse(node.args.events).data ?? []);
+      if (!events.length) return;
+      const owners = context.documents.filter(doc => doc.documentId !== next.documentId).map(doc => parse(doc));
+      for (const event of events) {
+        for (const owner of owners) {
+          const found = owner.statements.some(node => node.command === 'say' && commandOwnedIds(node.command, node.args).includes(event.id));
+          if (found) throw new Error(`IDENTITY_IN_USE: ${event.id}`);
+        }
+        if (event.kind === 'wait') continue;
+        if (assetIndex) touch(assetIndex.document);
+        if (event.kind === 'live2dExpression') {
+          if (lockFile) touch(lockFile.document);
+          for (const doc of owners) if (doc.statements.some(node => ['changeFigure', 'changeIllustration'].includes(node.command) && node.args.objectId === event.objectId))
+            touch(required(documents.find(item => item.documentId === doc.documentId), 'Live2D instance document'));
+          requireRef({ kind: 'object', id: event.objectId });
+        } else if (event.kind === 'expression') {
+          const character = dataFiles.find(item => item.path === `characters/${event.characterId}.json`);
+          if (character) touch(character.document);
+          for (const doc of owners) if (doc.statements.some(node => node.command === 'changeFigure' && node.args.objectId === event.objectId))
+            touch(required(documents.find(item => item.documentId === doc.documentId), 'Figure document'));
+          requireRef({ kind: 'character', id: event.characterId });
+          requireRef({ kind: 'object', id: event.objectId });
+          requireRef({ kind: 'object', id: event.differenceId });
+          const definition = context.characters.find(item => item.id === event.characterId)?.differences?.find(item => item.id === event.differenceId);
+          if (definition) {
+            requireRef({ kind: 'asset', id: definition.figure.assetId });
+            if (definition.figure.variantId) requireRef({ kind: 'variant', id: definition.figure.variantId });
+          }
+        }
+      }
     };
     const replaceReferences = (id: Id, replacementId: Id | undefined, removedFile: DataFile, ignored: (reference: AuthoringReference) => boolean = () => false) => {
       const refs = authoringReferences(documents, { kind: 'document', id }).filter(ref => ref.documentId !== removedFile.document.documentId && !ignored(ref));
@@ -180,6 +249,7 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
       for (const document of documents.filter(document => document.documentId !== removedFile.document.documentId)) for (const [path, text] of Object.entries(document.files)) if (path.endsWith('.gal')) {
         const source = parse({ documentId: document.documentId, revision: document.revision, text });
         if (!source.cst.some(node=>references(node.object?.value,id).length)) continue;
+        requireValidSceneSource(source);
         const next = rewriteScriptReferences({documentId:document.documentId,revision:document.revision,text},{[id]:replacementId},project.engineVersion,pluginCommands,scopes);
         if (next !== text) { touch(document); edit.patches.push(toDocumentPatch(document.documentId,[{start:0,end:text.length,oldText:text,text:next}])); }
       }
@@ -187,6 +257,7 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
     const copyScenes = (ids: Id[], targetChapterId: Id, sceneNames?: Record<Id, string>) => {
       const mapping: Record<Id, Id> = {}, sources = ids.map(id => ({ file: sceneFile(id), scene: readScene(id) }));
       for (const source of sources) {
+        touch(source.file.document);
         mapping[source.scene.id] = allocate();
         for (const variable of source.scene.locals) mapping[variable.id] = allocate();
         const sourceParse = parsed(source.file); Object.assign(mapping, declaredIds(sourceParse, sourceParse.cst.flatMap(node => node.id ? [node.id] : []), allocate));
@@ -194,6 +265,7 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
       for (const { file, scene } of sources) {
         const source = parsed(file), copied = rewriteScriptReferences({documentId:source.documentId,revision:source.revision,text:source.text},mapping,project.engineVersion,pluginCommands);
         const next = remap(scene, mapping, '', {}, true) as Scene; next.chapterId = targetChapterId; next.name = sceneNames?.[scene.id] ?? scene.name;
+        if (scene.decorLayers) next.decorLayers = scene.decorLayers.map(layer => ({ ...layer, id: allocate() }));
         create(`scenes/${next.id}/scene.json`, SceneSchema.parse(next), copied);
       }
       return ids.map(id => mapping[id]!);
@@ -245,6 +317,28 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
         const locals = operation.op === 'scene.declarations' ? operation.locals.map(local => ({ id: local.id ?? allocate(), name: local.name, type: local.type, scope: 'local' as const, initial: local.initial })) : undefined;
         const changes = operation.op === 'scene.declarations' ? { locals, parameters: operation.locals.flatMap((local, i) => local.parameter ? [{ variableId: locals![i]!.id, required: local.parameter.required, defaultValue: local.parameter.defaultValue ?? null }] : []), returns: operation.returns } : operation.changes;
         const next = SceneSchema.parse({ ...file.data, ...changes });
+        if (operation.op === 'scene.update' && operation.changes.presentation) {
+          const bindings = round5AssetBindings({ scene: next }).filter(binding => binding.field.startsWith('/data/presentation/'));
+          for (const binding of bindings) {
+            requireRef({ kind: 'asset', id: binding.assetId });
+            if (binding.variantId) requireRef({ kind: 'variant', id: binding.variantId });
+          }
+          if (bindings.length && assetIndex) touch(assetIndex.document);
+        }
+        if (operation.op === 'scene.update' && operation.changes.decorLayers) {
+          for (const [index, layer] of operation.changes.decorLayers.entries()) {
+            const { variant, field } = resolveStaticStageImage(assets, layer.assetId, layer.variantId);
+            if (!variant) {
+              const source = { documentId: file.document.documentId, revision: file.document.revision,
+                field: `/data/decorLayers/${index}/${field}` };
+              throw new InvalidAuthoringCommand([{ code: 'DECOR_IMAGE', message: 'Choose an available static image and version for this decor layer',
+                severity: 'error', owner: 'M02', source, related: [], actions: ['edit', 'locate'] }]);
+            }
+            requireRef({ kind: 'asset', id: layer.assetId });
+            if (layer.variantId) requireRef({ kind: 'variant', id: layer.variantId });
+          }
+          if (operation.changes.decorLayers.length && assetIndex) touch(assetIndex.document);
+        }
         for (const parameter of next.parameters) {
           const local = next.locals.find(local => local.id === parameter.variableId);
           if (!local || local.scope !== 'local') throw new Error('Each parameter must reference a local variable declared in this scene');
@@ -277,7 +371,7 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
         if(changes.defaultEffects)changes.defaultEffects=merge(previous.defaultEffects,changes.defaultEffects) as Character['defaultEffects'];
         if(changes.personalRoute)changes.personalRoute=merge(previous.personalRoute??{sceneIds:[],endingIds:[]},changes.personalRoute) as NonNullable<Character['personalRoute']>;
         const next = CharacterSchema.parse({ ...previous, ...changes, ...(operation.op === 'character.create' ? { name: operation.name } : {}) });
-        const result = characterEdit({ project, characters }, documents, [next]); edit.patches.push(...result.patches); edit.expected.push(...result.expected); break;
+        const result = characterEdit({ project, characters }, documents, [next]); edit.patches.push(...result.patches); edit.expected.push(...result.expected); edit.requiredRefs.push(...result.requiredRefs); break;
       }
       case 'character.remove': {
         const file = required(dataFiles.find(file => file.path === `characters/${operation.id}.json`), 'Character');
@@ -287,6 +381,7 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
       case 'character.group.create': case 'character.group.update': case 'character.group.remove':
       case 'character.difference.create': case 'character.difference.update': case 'character.difference.remove': {
         const file=required(dataFiles.find(file=>file.path===`characters/${operation.characterId}.json`),'Character'), character=CharacterSchema.parse(normalizeCharacterAuthoringData(file.data));
+        const previous = operation.op === 'character.difference.create' || operation.op === 'character.difference.update' ? structuredClone(character) : undefined;
         if(operation.op==='character.group.create')character.groups.push({id:allocate(),name:operation.name,assetIds:operation.assetIds});
         else if(operation.op==='character.group.update'){const group=required(character.groups.find(item=>item.id===operation.id),'Character asset group');Object.assign(group,operation.changes);}
         else if(operation.op==='character.group.remove'){required(character.groups.find(item=>item.id===operation.id),'Character asset group');character.groups=character.groups.filter(item=>item.id!==operation.id);}
@@ -298,6 +393,11 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
           replaceReferences(operation.id,operation.replacementId,file);
           character.differences=character.differences!.filter(item=>item.id!==operation.id);
           if(character.initialDifferenceId===operation.id)character.initialDifferenceId=operation.replacementId??null;
+        }
+        if (previous) {
+          const dependencies = characterDifferenceDependencies(documents, character, previous);
+          edit.expected.push(...dependencies.expected);
+          edit.requiredRefs.push(...dependencies.requiredRefs);
         }
         change(file,CharacterSchema.parse(character));if(JSON.stringify(project)!==JSON.stringify(projectFile.data))changeProject();break;
       }
@@ -313,6 +413,7 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
       case 'variable.remove': case 'variable.replace': {
         const declarations=dataFiles.flatMap(file=>file.path.startsWith('variables/')?[{file,variable:VariableSchema.parse(file.data),sceneId:null as Id|null}]:/\/scene.json$/.test(file.path)?SceneSchema.parse(file.data).locals.map(variable=>({file,variable,sceneId:String(file.data.id)})):[]);
         const previous=required(declarations.find(item=>item.variable.id===operation.id),'Variable');
+        if (previous.sceneId) parsed(previous.file);
         const target=operation.op==='variable.replace'?required(declarations.find(item=>item.variable.id===operation.replacementId),'Replacement variable'):undefined;
         if(target?.variable.id===operation.id)throw new Error('Replacement must have a different identity');
         const parameter=previous.sceneId?SceneSchema.parse(previous.file.data).parameters.some(item=>item.variableId===operation.id):false;
@@ -335,9 +436,67 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
             const parameters={...args.parameters};delete parameters[operation.id];const result=patchFields(source,{documentId:source.documentId,revision:source.revision,statementIds:[node.id!],changes:[{field:'parameters',op:'set',value:parameters}]});if(!result.ok)throw new Error(result.error.message);return result.value;
           });next=applyTextEdits(text,changes);}
           next=rewriteScriptReferences({documentId:document.documentId,revision:document.revision,text:next},mapping,project.engineVersion,pluginCommands,scopes);
-          if(next!==text){touch(document);edit.patches.push(toDocumentPatch(document.documentId,[{start:0,end:text.length,oldText:text,text:next}]));}
+          if(next!==text){requireValidSceneSource(parse({documentId:document.documentId,revision:document.revision,text}));touch(document);edit.patches.push(toDocumentPatch(document.documentId,[{start:0,end:text.length,oldText:text,text:next}]));}
         }
         if(JSON.stringify(project)!==JSON.stringify(projectFile.data))changeProject();break;
+      }
+      case 'dialogue.update': case 'dialogue.split': case 'dialogue.merge': {
+        const file = sceneFile(operation.sceneId), source = parsed(file);
+        const node = source.cst.find(item => item.id === operation.statementId && item.command === 'say');
+        if (!node?.valid) throw new InvalidAuthoringCommand([{ code: 'STATEMENT_MISSING', message: 'The dialogue statement is unavailable',
+          severity: 'error', owner: 'M02', source: { documentId: source.documentId, revision: source.revision, statementId: operation.statementId }, related: [], actions: ['locate', 'compare'] }]);
+        const command = (target: typeof node) => {
+          const args = target?.object?.value;
+          if (!target?.valid || !record(args)) throw new Error('The dialogue statement is unavailable');
+          return { args, body: DialogueContentSchema.parse(args.text), events: z.array(DialogueEventSchema).parse(args.events ?? []) };
+        };
+        const current = command(node);
+        const changes: FieldPatchInput['changes'] = [];
+        const set = (field: string, value: Json) => changes.push({ field, op: 'set', value });
+        const setEvents = (events: DialogueEvent[]) => {
+          if (events.length || current.args.events !== undefined) set('events', events);
+        };
+        const edits: TextEdit[] = [], ids = [operation.statementId];
+        if (operation.op === 'dialogue.update') {
+          if (operation.text !== undefined) set('text', operation.text);
+          if (operation.events !== undefined) setEvents(operation.events);
+        } else if (operation.op === 'dialogue.split') {
+          const { offset } = operation, length = dialoguePlainText(current.body).length;
+          if (offset === 0 || offset === length || !dialogueAnchorOffsets(current.body).has(offset))
+            throw new Error('Split at a dialogue boundary inside the body');
+          // Boundary events belong to the second statement.
+          set('text', sliceDialogueContent(current.body, 0, offset));
+          setEvents(current.events.filter(event => event.offset < offset));
+          const { events: _events, voice: _voice, voiceByLocale: _voices, ...next } = current.args;
+          const events = current.events.filter(event => event.offset >= offset).map(event => ({ ...event, offset: event.offset - offset }));
+          const id = allocate(); ids.push(id);
+          const statement = { ...next, text: sliceDialogueContent(current.body, offset, length), ...(events.length ? { events } : {}) };
+          edits.push({ start: node.end, end: node.end, oldText: '', text: `\nsay ${JSON.stringify(statement)} @${id};` });
+        } else {
+          const next = source.cst[source.cst.indexOf(node) + 1];
+          if (next?.id !== operation.nextStatementId || next.command !== 'say') throw new Error('Choose the immediately following dialogue');
+          const consumers = authoringReferences(documents, { kind: 'statement', id: next.id });
+          if (consumers.length) throw new Error(`REFERENCE_IN_USE: ${next.id} is referenced by ${consumers.map(ref => ref.path + ref.field).join(', ')}`);
+          const second = command(next);
+          const metadata = ({ text: _text, events: _events, voice: _voice, voiceByLocale: _voices, ...args }: Record<string, unknown>) => args;
+          const firstFields = metadata(current.args), secondFields = metadata(second.args);
+          if (second.args.voice || record(second.args.voiceByLocale) && Object.values(second.args.voiceByLocale).some(Boolean) ||
+            [...new Set([...Object.keys(firstFields), ...Object.keys(secondFields)])].some(field => JSON.stringify(firstFields[field]) !== JSON.stringify(secondFields[field])))
+            throw new Error('Merge adjacent dialogues with matching presentation and no second voice');
+          const length = dialoguePlainText(current.body).length;
+          const body: DialogueContent = { segments: [...dialogueSegments(current.body), ...dialogueSegments(second.body)] };
+          set('text', body);
+          setEvents([...current.events, ...second.events.map(event => ({ ...event, offset: event.offset + length }))]);
+          edits.push({ start: next.start, end: next.end, oldText: next.raw, text: '' });
+        }
+        const patched = patchFields(source, { documentId: source.documentId, revision: source.revision, statementIds: [operation.statementId], changes });
+        if (!patched.ok) return patched;
+        edits.push(...patched.value);
+        if (!edits.length) return fail('NO_CHANGE', 'The requested dialogue is already current');
+        validateCommands(file, source, applyTextEdits(source.text, edits), ids, operation.op !== 'dialogue.update' || operation.events !== undefined);
+        touch(file.document);
+        edit.patches.push(toDocumentPatch(source.documentId, edits));
+        break;
       }
       default: {
         const file = sceneFile(operation.sceneId), source = parsed(file); touch(file.document);
@@ -345,19 +504,17 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
         if (operation.op === 'commands.fields') { const patched = patchFields(source, { documentId: file.document.documentId, revision: file.document.revision, statementIds: operation.ids, changes: operation.changes }); if (!patched.ok) return patched; validateCommands(file,source,applyTextEdits(source.text,patched.value),operation.ids); edit.patches.push(toDocumentPatch(file.document.documentId, patched.value)); break; }
         if (operation.op === 'commands.insert') {
           const at = beforeId ? required(source.cst.find(node => node.id === beforeId), 'Insertion command').start : source.text.length;
+          const registry = createCommandRegistry(project.engineVersion, pluginCommands);
+          const context = { textLocale: project.languages.textDefault };
           const ids: Id[] = [],owned=new Set(documents.flatMap(document=>Object.entries(document.files).filter(([path])=>path.endsWith('.gal')).flatMap(([,text])=>parse({documentId:document.documentId,revision:document.revision,text}).cst.filter(node=>node.valid).flatMap(node=>[node.id!,...commandOwnedIds(node.command,node.object?.value as Record<string,unknown>)]))));
+          reserveIds(operation.commands);
           const text = operation.commands.map(command => {
-            const args = presentationArgs(command.command,structuredClone(command.args)), assign = (key: string) => { if (!args[key]) args[key] = allocate(); };
-            if (command.command === 'label') assign('labelId');
-            if (['changeBg','changeFigure','changeIllustration'].includes(command.command) && (!args.op || args.op === 'show')) assign('objectId');
-            if (['setAnimation','setComplexAnimation'].includes(command.command)) assign('animationId');
-            if (command.command === 'pixi') assign('effectId');
-            if (command.command === 'playEffect' && (!args.op || args.op === 'play')) assign('soundId');
-            if (command.command === 'choose' && Array.isArray(args.options)) args.options = args.options.map(option => record(option) ? { ...option, id: option.id || allocate() } : option) as Json[];
+            const spec = registry.get(command.command);
+            const args = spec ? createCommandArgs(spec, command.args, context, allocate) : command.args;
             for(const ownedId of commandOwnedIds(command.command,args)){if(owned.has(ownedId))throw new Error(`IDENTITY_IN_USE: ${ownedId}`);owned.add(ownedId);}
             const id = allocate(); ids.push(id); return `${command.command} ${JSON.stringify(args)} @${id};`;
           }).join('\n') + '\n';
-          validateCommands(file,source,source.text.slice(0,at)+text+source.text.slice(at),ids,true);
+          validateCommands(file,source,source.text.slice(0,at)+text+source.text.slice(at),ids,true,undefined,true);
           edit.patches.push({ kind: 'text', documentId: source.documentId, edits: [{ start: at, end: at, before: '', after: `${at && source.text[at - 1] !== '\n' ? '\n' : ''}${text}` }] }); break;
         }
         const nodes = source.cst.filter(node=>node.id&&operation.ids.includes(node.id));
@@ -378,10 +535,19 @@ export function prepareAuthoringEdit(documents: DocumentView[], raw: AuthorOpera
         const copied = operation.op === 'commands.duplicate' ? rewriteScriptReferences({documentId:source.documentId,revision:source.revision,text:rawSelection},mapping,project.engineVersion,pluginCommands) : rawSelection;
         const insertion = { start: at, end: at, text: `${at && target.text[at - 1] !== '\n' ? '\n' : ''}${copied}\n`, oldText: '' };
         const removals = operation.op === 'commands.move' ? nodes.map(node => ({ start: node.start, end: end(node), text: '', oldText: source.text.slice(node.start,end(node)) })) : [];
+        if (operation.op === 'commands.duplicate' || target.documentId !== source.documentId && nodes.some(node => node.command === 'say')) {
+          const ids = operation.op === 'commands.duplicate' ? nodes.map(node => mapping[node.id!]!) : nodes.filter(node => node.command === 'say').map(node => node.id!);
+          const movedFrom = target.documentId !== source.documentId ? { documentId: source.documentId, text: applyTextEdits(source.text, removals) } : undefined;
+          validateCommands(targetFile, target, applyTextEdits(target.text, [...(target.documentId === source.documentId ? removals : []), insertion]), ids, true, movedFrom);
+        }
         if (target.documentId === source.documentId) edit.patches.push(toDocumentPatch(source.documentId, [...removals, insertion]));
         else { touch(targetFile.document); edit.patches.push(toDocumentPatch(source.documentId, removals), toDocumentPatch(target.documentId, [insertion])); }
       }
     }
     return { ok: true, value: edit, warnings: [] };
-  } catch (error) { return fail('AUTHOR_EDIT', error instanceof Error ? error.message : String(error)); }
+  } catch (error) {
+    if (error instanceof InvalidSceneSource) return invalidSceneEdit(error.diagnostic);
+    if (error instanceof InvalidAuthoringCommand) return { ok: false, error: error.issues[0]!, issues: error.issues };
+    return fail('AUTHOR_EDIT', error instanceof Error ? error.message : String(error));
+  }
 }

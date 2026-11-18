@@ -36,7 +36,7 @@ const bridge = {
     closeRequested = callback;
     return () => { if (closeRequested === callback) closeRequested = null; };
   },
-  engines: { listCreationVersions: () => call('engines', 'listCreationVersions'), resolvePreview: snapshot => call('engines', 'resolvePreview', snapshot), releasePreview: id => call('engines', 'releasePreview', id), importLive2D: withMotionSync => call('engines', 'importLive2D', withMotionSync) },
+  engines: { listCreationVersions: () => call('engines', 'listCreationVersions'), health: () => call('engines', 'health'), repair: () => call('engines', 'repair'), resolvePreview: snapshot => call('engines', 'resolvePreview', snapshot), releasePreview: id => call('engines', 'releasePreview', id), importLive2D: withMotionSync => call('engines', 'importLive2D', withMotionSync) },
   production: {
     waitForTask: input => call('production', 'waitForTask', input),
     inspectTaskResources: input => call('production', 'inspectTaskResources', input),
@@ -59,6 +59,7 @@ const bridge = {
     planContinuation: input => call('production', 'planContinuation', input),
     submitContinuation: input => call('production', 'submitContinuation', input),
     overview: input => input ? call('production', 'overview', input) : call('production', 'overview'),
+    problemSnapshot: () => call('production', 'problemSnapshot'),
     context: input => call('production', 'context', input),
     readOutline: () => call('production', 'readOutline'),
     saveOutline: input => call('production', 'saveOutline', input),
@@ -195,6 +196,8 @@ const bridge = {
   },
   assets: {
     typeCatalog: () => call('assets', 'typeCatalog'),
+    prepareVariantSwitch: input => call('assets', 'prepareVariantSwitch', input),
+    applyVariantSwitch: input => call('assets', 'applyVariantSwitch', input),
     editTypeData: input => call('assets', 'editTypeData', input),
     saveAnimation: input => call('assets', 'saveAnimation', input),
     weatherTexture: key => call('assets', 'weatherTexture', key),
@@ -226,7 +229,7 @@ const bridge = {
     rename: changes => call('assets', 'rename', changes),
     planBatchRename: input => call('assets', 'planBatchRename', input),
     applyBatchRename: planId => call('assets', 'applyBatchRename', planId),
-    remove: ids => call('assets', 'remove', ids),
+    remove: (ids, expected) => call('assets', 'remove', ids, expected),
     preview: (assetId, variantId) => call('assets', 'preview', assetId, variantId),
     thumbnails: requests => call('assets', 'thumbnails', requests),
     stopPreview: () => call('assets', 'stopPreview'),
@@ -236,7 +239,8 @@ const bridge = {
     removeBackground: input => call('assets', 'removeBackground', input),
     confirmBackground: (preparationId, scope) => call('assets', 'confirmBackground', preparationId, scope),
     discardBackground: preparationId => call('assets', 'discardBackground', preparationId),
-    import: paths => call('assets', 'import', paths),
+    import: (paths, options) => call('assets', 'import', paths, options),
+    listImportBatches: projectId => call('assets', 'listImportBatches', projectId),
   },
   operations: {
     cancel: id => call('operations', 'cancel', id),
@@ -250,12 +254,12 @@ const bridge = {
   language: {
     pluginQuery: input => call('language', 'pluginQuery', input),
     pluginPrepare: input => call('language', 'pluginPrepare', input),
-    compile: input => call('language', 'compile', input),
+    compile: (input, options) => options ? call('language', 'compile', input, options) : call('language', 'compile', input),
     lastValid: projectId => call('language', 'lastValid', projectId),
     querySemantic: input => call('language', 'querySemantic', input),
     locate: (source, fieldPath) => call('language', 'locate', source, fieldPath),
   },
-  plugins: { commandSpecs: ()=>call('plugins','commandSpecs'),
+  plugins: { commandSpecs: ()=>call('plugins','commandSpecs'), commandContracts: () => call('plugins', 'commandContracts'),
     list: () => call('plugins', 'list'),
     planChange: input => call('plugins', 'planChange', input),
     inspectPackage: source => call('plugins', 'inspectPackage', source),

@@ -1,11 +1,234 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { ProductionSession } from "./session.js";
+import { ProductionSession, type ProductionFeedback } from "./session.js";
 import type { Overview, WorkbenchBridge } from "./bridge.js";
 import type { ProductionFormDraft } from '@galcraft/authoring/production';
 import { OfficialRecipes } from '@galcraft/authoring/recipes';
 import { resolveProductionFields } from '@galcraft/authoring/production/draft';
+import type { Issue } from '@galcraft/contracts';
+
+const productionFailure = (code: string) => {
+  const error: Issue = { code, message: code, owner: 'M10', severity: 'error', related: [], actions: ['retry'] };
+  return { ok: false as const, error, issues: [error] };
+};
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+it('retains RPC failures by method and target until that same RPC succeeds, with a new identity for each request attempt', async () => {
+  const retry = vi.fn().mockResolvedValueOnce(productionFailure('RETRY_FAILED')).mockResolvedValueOnce({ ok: true, value: {}, warnings: [] }).mockResolvedValueOnce(productionFailure('RETRY_FAILED'));
+  const resume = vi.fn(async () => ({ ok: true, value: {}, warnings: [] }));
+  const session = new ProductionSession({ production: { retry, resume } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.taskId = 'TaskAA';
+  await session.bridge.production.retry({ taskId: 'TaskAA', itemId: 'ItemAA', confirmNewRequest: true });
+  const first = session.feedback[0]!;
+  expect(first).toMatchObject({ key: 'production:retry:task:TaskAA:item:ItemAA', kind: 'request', issue: { code: 'RETRY_FAILED' }, target: { kind: 'task', id: 'TaskAA' } });
+  await session.bridge.production.resume('TaskBB');
+  expect(session.feedback).toEqual([first]); expect(session.diagnostic?.code).toBe('RETRY_FAILED');
+  await session.bridge.production.retry({ taskId: 'TaskAA', itemId: 'ItemAA', confirmNewRequest: true });
+  expect(session.feedback).toEqual([]); expect(session.error).toBe(''); expect(session.diagnostic).toBeNull();
+  await session.bridge.production.retry({ taskId: 'TaskAA', itemId: 'ItemAA', confirmNewRequest: true });
+  expect(session.feedback[0]!.attemptId).not.toBe(first.attemptId);
+});
+it('clears a recovered background overview failure without clearing an unrelated request diagnostic or creating new read episodes', async () => {
+  vi.useFakeTimers();
+  const overview = vi.fn().mockResolvedValueOnce(productionFailure('OVERVIEW_FAILED')).mockResolvedValueOnce(productionFailure('OVERVIEW_FAILED'))
+    .mockImplementation(async () => ({ ok: true, value: session.data, warnings: [] }));
+  const retry = vi.fn(async () => productionFailure('RETRY_FAILED'));
+  const session = new ProductionSession({ production: { overview, retry } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.taskId = 'TaskAA'; session.start(); await vi.advanceTimersByTimeAsync(0);
+  const first = session.feedback[0]!;
+  expect(first.kind).toBe('read'); expect(session.error).toBe('OVERVIEW_FAILED');
+  await vi.advanceTimersByTimeAsync(1800); expect(session.feedback[0]!.attemptId).toBe(first.attemptId);
+  await session.bridge.production.retry({ taskId: 'TaskAA', itemId: 'ItemAA', confirmNewRequest: true });
+  await vi.advanceTimersByTimeAsync(1800);
+  expect(session.feedback).toHaveLength(1); expect(session.feedback[0]!.key).toBe('production:retry:task:TaskAA:item:ItemAA');
+  expect(session.diagnostic?.code).toBe('RETRY_FAILED'); expect(retry).toHaveBeenCalledTimes(1);
+  session.stop();
+});
+it('clears its displayed overview diagnostic after a successful background poll', async () => {
+  vi.useFakeTimers();
+  const overview = vi.fn().mockResolvedValueOnce(productionFailure('OVERVIEW_FAILED'))
+    .mockImplementation(async () => ({ ok: true, value: session.data, warnings: [] }));
+  const session = new ProductionSession({ production: { overview } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.start(); await vi.advanceTimersByTimeAsync(0); expect(session.feedback).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1800);
+  expect(session.feedback).toEqual([]); expect(session.error).toBe(''); expect(session.diagnostic).toBeNull(); session.stop();
+});
+it('keeps identical diagnostics from separate request scopes independent', async () => {
+  const retry = vi.fn().mockResolvedValueOnce(productionFailure('CONNECTION_UNAVAILABLE')).mockResolvedValueOnce({ ok: true, value: {}, warnings: [] });
+  const resume = vi.fn(async () => productionFailure('CONNECTION_UNAVAILABLE'));
+  const session = new ProductionSession({ production: { retry, resume } } as unknown as WorkbenchBridge, 'WorkAA');
+  const input = { taskId: 'TaskAA', itemId: 'ItemAA', confirmNewRequest: true };
+  await session.bridge.production.retry(input); await session.bridge.production.resume('TaskBB');
+  await session.bridge.production.retry(input);
+  expect(session.feedback).toHaveLength(1); expect(session.feedback[0]!.key).toBe('production:resume:task:TaskBB');
+  expect(session.diagnostic?.code).toBe('CONNECTION_UNAVAILABLE'); expect(session.error).toBe('CONNECTION_UNAVAILABLE');
+});
+it('keeps failed retries for different items in the same task independent', async () => {
+  const retry = vi.fn().mockResolvedValueOnce(productionFailure('FIRST_ITEM_FAILED')).mockResolvedValueOnce({ ok: true, value: {}, warnings: [] })
+    .mockResolvedValueOnce(productionFailure('SECOND_ITEM_FAILED')).mockResolvedValueOnce({ ok: true, value: {}, warnings: [] });
+  const session = new ProductionSession({ production: { retry } } as unknown as WorkbenchBridge, 'WorkAA');
+  const firstInput = { taskId: 'TaskAA', itemId: 'ItemAA', confirmNewRequest: true }, secondInput = { ...firstInput, itemId: 'ItemBB' };
+  await session.bridge.production.retry(firstInput); const first = session.feedback[0]!;
+  await session.bridge.production.retry(secondInput);
+  expect(session.feedback).toEqual([first]); expect(session.diagnostic?.code).toBe('FIRST_ITEM_FAILED');
+  await session.bridge.production.retry(secondInput); const second = session.feedback[1]!;
+  expect(second.target).toEqual({ kind: 'task', id: 'TaskAA' }); expect(second.key).not.toBe(first.key);
+  await session.bridge.production.retry(firstInput);
+  expect(session.feedback).toEqual([second]); expect(session.diagnostic?.code).toBe('SECOND_ITEM_FAILED'); session.stop();
+});
+it('keeps candidate operations and selection subsets independent while treating reordered selections as the same scope', async () => {
+  const planContinuation = vi.fn().mockResolvedValueOnce(productionFailure('CONTINUATION_FAILED')).mockResolvedValueOnce({ ok: true, value: {}, warnings: [] });
+  const select = vi.fn().mockResolvedValueOnce(productionFailure('SELECTION_FAILED')).mockResolvedValueOnce({ ok: true, value: {}, warnings: [] })
+    .mockResolvedValueOnce({ ok: true, value: {}, warnings: [] });
+  const session = new ProductionSession({ production: { planContinuation, select } } as unknown as WorkbenchBridge, 'WorkAA');
+  const continuation = { taskId: 'TaskAA', candidateId: 'CandidateA', instruction: 'Keep the opening', mode: 'write' as const };
+  await session.bridge.production.planContinuation(continuation); const failedCandidate = session.feedback[0]!;
+  await session.bridge.production.planContinuation({ ...continuation, candidateId: 'CandidateB' });
+  expect(session.feedback).toEqual([failedCandidate]); expect(failedCandidate.key).toContain(':candidate:CandidateA');
+  const selections = [{ itemId: 'ItemAA', candidateId: 'CandidateA' }, { itemId: 'ItemBB', candidateId: 'CandidateB' }];
+  const input = { taskId: 'TaskAA', selections, target: 'taskOnly' as const, expected: [] };
+  await session.bridge.production.select(input); const failedSelection = session.feedback[1]!;
+  await session.bridge.production.select({ ...input, selections: [selections[0]!] });
+  expect(session.feedback).toEqual([failedCandidate, failedSelection]);
+  await session.bridge.production.select({ ...input, selections: [...selections].reverse() });
+  expect(session.feedback).toEqual([failedCandidate]);
+  expect(selections.map(item => item.itemId)).toEqual(['ItemAA', 'ItemBB']); session.stop();
+});
+it('ignores a stale failed poll after a newer successful response and a failed poll after the project stops', async () => {
+  let older!: (value: unknown) => void, stopped!: (value: unknown) => void;
+  const overview = vi.fn().mockImplementationOnce(() => new Promise(resolve => { older = resolve; }))
+    .mockImplementationOnce(async () => ({ ok: true, value: session.data, warnings: [] }))
+    .mockImplementationOnce(() => new Promise(resolve => { stopped = resolve; }));
+  const session = new ProductionSession({ production: { overview } } as unknown as WorkbenchBridge, 'WorkAA');
+  const first = session.refresh(); await session.refresh();
+  older(productionFailure('STALE_FAILURE')); await first;
+  expect(session.feedback).toEqual([]); expect(session.error).toBe('');
+  const last = session.refresh(); session.stop(); stopped(productionFailure('STOPPED_FAILURE')); await last;
+  expect(session.feedback).toEqual([]); expect(session.error).toBe('');
+});
+it('keeps the newest request failure when an older request succeeds and ignores failures arriving after stop', async () => {
+  let older!: (value: unknown) => void, stopped!: (value: unknown) => void;
+  const retry = vi.fn().mockImplementationOnce(() => new Promise(resolve => { older = resolve; }))
+    .mockResolvedValueOnce(productionFailure('NEW_FAILURE')).mockImplementationOnce(() => new Promise(resolve => { stopped = resolve; }));
+  const session = new ProductionSession({ production: { retry } } as unknown as WorkbenchBridge, 'WorkAA');
+  const input = { taskId: 'TaskAA', itemId: 'ItemAA', confirmNewRequest: true };
+  const first = session.bridge.production.retry(input); await session.bridge.production.retry(input);
+  const current = session.feedback[0]!;
+  older({ ok: true, value: {}, warnings: [] }); await first;
+  expect(session.feedback).toEqual([current]);
+  const last = session.bridge.production.retry(input); session.stop(); stopped(productionFailure('STOPPED_FAILURE')); await last;
+  expect(session.feedback).toEqual([current]);
+});
+it('restores a failed attempt identity without issuing requests and clears it only through its matching scope', async () => {
+  const retry = vi.fn(async () => ({ ok: true, value: {}, warnings: [] }));
+  const session = new ProductionSession({ production: { retry } } as unknown as WorkbenchBridge, 'WorkAA');
+  const restored = { key: 'production:retry:task:TaskAA:item:ItemAA', attemptId: 'TryAAA', kind: 'request' as const, issue: productionFailure('RETRY_FAILED').error, target: { kind: 'task' as const, id: 'TaskAA' } };
+  session.restoreFeedback([restored]);
+  expect(session.feedback).toEqual([restored]); expect(retry).not.toHaveBeenCalled();
+  await session.bridge.production.retry({ taskId: 'TaskBB', itemId: 'ItemBB', confirmNewRequest: true }); expect(session.feedback).toEqual([restored]);
+  await session.bridge.production.retry({ taskId: 'TaskAA', itemId: 'ItemAA', confirmNewRequest: true }); expect(session.feedback).toEqual([]);
+});
+it('binds a draft save failure to its actual draft and keeps shared configuration feedback outside the selected task', async () => {
+  const saveDraft = vi.fn(async () => productionFailure('DRAFT_SAVE'));
+  const saveWorkflowDraft = vi.fn(async () => productionFailure('WORKFLOW_SAVE'));
+  const session = new ProductionSession({ production: { saveDraft, saveWorkflowDraft } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.newDraft(); session.taskId = 'TaskAA';
+  await session.bridge.production.saveDraft({ draft: session.draft!, expectedRevision: null });
+  expect(session.feedback[0]!.target).toEqual({ kind: 'draft', id: session.draft!.id });
+  await session.bridge.production.saveWorkflowDraft({ draft: { id: 'FlowAA' } as never, expectedRevision: null });
+  expect(session.feedback[1]!.target).toBeNull(); expect(session.feedback[1]!.key).toBe('production:saveWorkflowDraft:workspace:workflow-draft:FlowAA');
+});
+it.each([
+  { method: 'removeConnection' as const, input: 'ObjectAA', identity: ':connection:ObjectAA', kind: 'request' },
+  { method: 'saveWorkflow' as const, input: { workflow: { id: 'ObjectAA' }, expectedRevision: 1 }, identity: ':workflow:ObjectAA', kind: 'request' },
+  { method: 'saveWorkflowDraft' as const, input: { draft: { id: 'ObjectAA' }, expectedRevision: 1 }, identity: ':workflow-draft:ObjectAA', kind: 'request' },
+  { method: 'discoverWorkflowOutputs' as const, input: { workflow: { id: 'ObjectAA' }, connectionId: 'ConnectA' }, identity: ':workflow:ObjectAA:connection:ConnectA', kind: 'read' },
+  { method: 'listWorkflowDrafts' as const, input: undefined, identity: '', kind: 'read' },
+])('returns $method feedback to connections without changing its request scope or read kind', async ({ method, input, identity, kind }) => {
+  const operation = vi.fn(async () => productionFailure('WORKFLOW_FAILED'));
+  const session = new ProductionSession({ production: { [method]: operation } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.taskId = 'TaskAA';
+  await (session.bridge.production[method] as (input: unknown) => Promise<unknown>)(input);
+  expect(session.feedback[0]).toMatchObject({ key: `production:${method}:workspace${identity}`, kind, target: null, surface: 'connections' });
+  expect(session.revealedFeedback).toBeNull();
+});
+it('infers the connections owner for legacy retained workflow failures without changing their identity or assigning shared defaults and recipes', () => {
+  const methods = ['removeConnection', 'saveWorkflow', 'saveWorkflowDraft', 'listWorkflowDrafts', 'discoverWorkflowOutputs', 'saveDefaults', 'saveRecipe', 'connections', 'providers', 'defaults'];
+  const records: ProductionFeedback[] = methods.map((method, index) => ({ key: `production:${method}:workspace`, attemptId: `TryAA${index}`, kind: 'request', issue: productionFailure('RETAINED_FAILED').error, target: null }));
+  const production = Object.fromEntries(methods.map(method => [method, vi.fn()]));
+  const session = new ProductionSession({ production } as unknown as WorkbenchBridge, 'WorkAA');
+  session.restoreFeedback(records);
+  expect(session.feedback).toEqual(records.map((record, index) => index < 5 ? { ...record, surface: 'connections' } : record));
+  expect(records.every(record => !('surface' in record))).toBe(true);
+  expect(Object.values(production).every(operation => operation.mock.calls.length === 0)).toBe(true);
+  expect(session.revealedFeedback).toBeNull();
+});
+it('exposes connections feedback only after explicit reveal and retires that notice through its matching recovery scope', async () => {
+  const saveWorkflowDraft = vi.fn().mockResolvedValueOnce(productionFailure('WORKFLOW_SAVE'))
+    .mockResolvedValueOnce(productionFailure('WORKFLOW_SAVE')).mockResolvedValueOnce({ ok: true, value: {}, warnings: [] });
+  const removeConnection = vi.fn(async () => ({ ok: true, value: {}, warnings: [] }));
+  const session = new ProductionSession({ production: { saveWorkflowDraft, removeConnection } } as unknown as WorkbenchBridge, 'WorkAA');
+  const input = { draft: { id: 'FlowAA' } as never, expectedRevision: null };
+  await session.bridge.production.saveWorkflowDraft(input);
+  const record = session.feedback[0]!;
+  expect(session.revealedFeedback).toBeNull();
+  expect(session.revealFeedback(record.key)).toBe(true); expect(session.revealedFeedback).toEqual(record);
+  await session.bridge.production.removeConnection('ConnectA'); expect(session.revealedFeedback).toEqual(record);
+  await session.bridge.production.saveWorkflowDraft(input); expect(session.revealedFeedback).toBeNull();
+  session.revealFeedback(record.key);
+  await session.bridge.production.saveWorkflowDraft(input); expect(session.revealedFeedback).toBeNull(); expect(session.feedback).toEqual([]);
+});
+it('captures the exact editor at request initiation without leaking that context while promises are pending or changing service input', async () => {
+  let finishOlder!: (value: unknown) => void;
+  const saveWorkflowDraft = vi.fn().mockImplementationOnce(() => new Promise(resolve => { finishOlder = resolve; }))
+    .mockResolvedValueOnce(productionFailure('UNSCOPED_FAILED')).mockResolvedValueOnce(productionFailure('NEWER_EDITOR_FAILED'));
+  const session = new ProductionSession({ production: { saveWorkflowDraft } } as unknown as WorkbenchBridge, 'WorkAA');
+  const input = { draft: { id: 'FlowAA' } as never, expectedRevision: null };
+  const older = session.withFeedbackEditor('workflow-draft:FlowAA', () => session.bridge.production.saveWorkflowDraft(input));
+  await session.bridge.production.saveWorkflowDraft({ ...input, draft: { id: 'FlowBB' } as never });
+  expect(session.feedback[0]).not.toHaveProperty('editorId');
+  await session.withFeedbackEditor('FlowAA', () => session.bridge.production.saveWorkflowDraft(input));
+  const current = session.feedback.find(record => record.key.endsWith('workflow-draft:FlowAA'))!;
+  expect(current).toMatchObject({ editorId: 'FlowAA', issue: { code: 'NEWER_EDITOR_FAILED' } });
+  finishOlder(productionFailure('OLDER_EDITOR_FAILED')); await older;
+  expect(session.feedback.find(record => record.key === current.key)).toEqual(current);
+  expect(saveWorkflowDraft.mock.calls[0]).toEqual([input]); expect(saveWorkflowDraft.mock.calls[2]).toEqual([input]);
+  expect(input).not.toHaveProperty('editorId');
+  const restored = new ProductionSession({ production: {} } as unknown as WorkbenchBridge, 'WorkAA');
+  restored.restoreFeedback(session.feedback);
+  expect(restored.feedback.find(record => record.key === current.key)?.editorId).toBe('FlowAA');
+});
+it.each([
+  { method: 'removeConnection' as const, first: 'ObjectAA', other: 'ObjectBB', identity: 'connection:ObjectAA' },
+  { method: 'saveWorkflowDraft' as const, first: { draft: { id: 'ObjectAA' }, expectedRevision: 1 }, other: { draft: { id: 'ObjectBB' }, expectedRevision: 1 }, identity: 'workflow-draft:ObjectAA' },
+  { method: 'saveRecipe' as const, first: { recipe: { id: 'ObjectAA', scope: 'personal', projectId: null }, expectedRevision: 1 },
+    other: { recipe: { id: 'ObjectAA', scope: 'project', projectId: 'WorkAA' }, expectedRevision: 1 }, identity: 'recipe:personal:global:ObjectAA' },
+])('isolates object-scoped workspace feedback for $method without changing its navigation target', async ({ method, first, other, identity }) => {
+  const operation = vi.fn().mockResolvedValueOnce(productionFailure('OBJECT_FAILED')).mockResolvedValueOnce({ ok: true, value: {}, warnings: [] })
+    .mockResolvedValueOnce({ ok: true, value: {}, warnings: [] });
+  const session = new ProductionSession({ production: { [method]: operation } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.taskId = 'TaskAA';
+  const call = session.bridge.production[method] as (input: unknown) => Promise<unknown>;
+  await call(first); const receipt = session.feedback[0]!;
+  expect(receipt).toMatchObject({ key: `production:${method}:workspace:${identity}`, target: null });
+  await call(other); expect(session.feedback).toEqual([receipt]); expect(session.diagnostic?.code).toBe('OBJECT_FAILED');
+  await call(first); expect(session.feedback).toEqual([]); expect(session.diagnostic).toBeNull(); session.stop();
+});
+it('reveals the exact restored diagnostic in the current locale without an RPC and clears only its matching recovery scope', async () => {
+  const retry = vi.fn(async () => ({ ok: true, value: {}, warnings: [] }));
+  let locale = 'zh-CN';
+  const session = new ProductionSession({ production: { retry } } as unknown as WorkbenchBridge, 'WorkAA', () => locale);
+  const restored = { key: 'production:retry:task:TaskAA:item:ItemAA', attemptId: 'TryAAA', kind: 'request' as const, issue: productionFailure('CONNECTION_UNAVAILABLE').error, target: { kind: 'task' as const, id: 'TaskAA' } };
+  session.restoreFeedback([restored]);
+  expect(session.error).toBe(''); expect(session.diagnostic).toBeNull();
+  locale = 'en';
+  expect(session.revealFeedback('missing')).toBe(false); expect(session.revealFeedback(restored.key)).toBe(true);
+  expect(session.diagnostic).toEqual(restored.issue); expect(session.error).toContain('The generation service connection was interrupted.');
+  expect(retry).not.toHaveBeenCalled();
+  await session.bridge.production.retry({ taskId: 'TaskBB', itemId: 'ItemBB', confirmNewRequest: true });
+  expect(session.diagnostic).toEqual(restored.issue); expect(session.error).toContain('The generation service connection was interrupted.');
+  await session.bridge.production.retry({ taskId: 'TaskAA', itemId: 'ItemAA', confirmNewRequest: true });
+  expect(session.error).toBe(''); expect(session.diagnostic).toBeNull(); expect(session.feedback).toEqual([]);
+});
 it('suspends overview polling while the renderer document is hidden', async () => {
   vi.useFakeTimers(); const visibility = { hidden: true }; vi.stubGlobal('document', visibility);
   const overview = vi.fn(async () => ({ ok: true, value: session.data, warnings: [] }));
@@ -30,6 +253,107 @@ it('discards a response for a task that is no longer selected', async () => {
   session.taskId = 'Task01'; const original = session.data, pending = session.refresh(); session.taskId = 'Task02';
   finish({ ok: true, value: { ...original, canvas: { width: 800, height: 600 } }, warnings: [] }); await pending;
   expect(session.data).toBe(original); expect(session.taskId).toBe('Task02');
+});
+it('restores the selected task by ID and retains the ID when its details are unavailable', async () => {
+  const overview = vi.fn(async () => ({ ok: true, value: session.data, warnings: [] }));
+  const session = new ProductionSession({ production: { overview } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.restoreRecord({ kind: 'task', id: 'TaskAA' });
+  expect(session.unavailableRecord).toBeNull();
+  await session.refresh();
+  expect(overview).toHaveBeenCalledWith({ taskId: 'TaskAA' });
+  expect(session.unavailableRecord).toEqual({ kind: 'task', id: 'TaskAA' });
+  session.data.tasks = [{ id: 'TaskBB' }] as Overview['tasks'];
+  await session.openTask('TaskBB');
+  expect(session.selectedRecord).toEqual({ kind: 'task', id: 'TaskBB' });
+  expect(session.unavailableRecord).toBeNull();
+});
+it('restores the exact saved draft instead of choosing the first unsubmitted draft', async () => {
+  const overview = vi.fn(async () => ({ ok: true, value: structuredClone(session.data), warnings: [] }));
+  const session = new ProductionSession({ production: { overview } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.newDraft();
+  const other = structuredClone(session.draft!);
+  const desired = { ...other, id: 'DraftB' };
+  session.draft = null;
+  session.data.drafts = [other, desired];
+  session.restoreRecord({ kind: 'draft', id: desired.id });
+  await session.refresh();
+  expect(session.draft).toMatchObject({ id: desired.id });
+  expect(session.unavailableRecord).toBeNull();
+});
+it('returns to a first-save failure in the current dirty draft without another save or overview read', async () => {
+  vi.useFakeTimers();
+  const saveDraft = vi.fn(async () => productionFailure('FIRST_SAVE_FAILED')), overview = vi.fn();
+  const session = new ProductionSession({ production: { saveDraft, overview } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.newDraft('ui'); session.field('instruction', 'Keep this unsaved input');
+  await expect(session.saveDraft(true)).rejects.toThrow('FIRST_SAVE_FAILED');
+  const receipt = session.feedback[0]!, input = structuredClone(session.draft);
+  expect(session.data.drafts).toEqual([]);
+  await expect(session.revealProblemRecord(receipt.target)).resolves.toBe(true);
+  expect(session.selectedRecord).toEqual({ kind: 'draft', id: input!.id }); expect(session.draft).toEqual(input); expect(session.draftDirty).toBe(true);
+  expect(session.feedback).toEqual([receipt]); expect(session.revealFeedback(receipt.key)).toBe(true);
+  expect(saveDraft).toHaveBeenCalledOnce(); expect(overview).not.toHaveBeenCalled(); session.stop();
+});
+it('preserves an unrelated dirty draft and the available receipt when returning to another task or draft problem', async () => {
+  vi.useFakeTimers();
+  const saveDraft = vi.fn(), overview = vi.fn(), session = new ProductionSession({ production: { saveDraft, overview } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.newDraft('ui'); session.field('instruction', 'Unrelated author input');
+  const input = structuredClone(session.draft);
+  const receipt = { key: 'production:retry:task:TaskAA:item:ItemAA', attemptId: 'TryAAA', kind: 'request' as const,
+    target: { kind: 'task' as const, id: 'TaskAA' }, issue: productionFailure('RETRY_FAILED').error };
+  session.restoreFeedback([receipt]);
+  await expect(session.revealProblemRecord(receipt.target)).resolves.toBe(false);
+  await expect(session.revealProblemRecord({ kind: 'draft', id: 'OtherDraft' })).resolves.toBe(false);
+  expect(session.draft).toEqual(input); expect(session.draftDirty).toBe(true); expect(session.selectedRecord).toEqual({ kind: 'draft', id: input!.id });
+  expect(session.feedback).toEqual([receipt]); expect(session.revealFeedback(receipt.key)).toBe(true);
+  expect(session.diagnostic).toEqual(receipt.issue); expect(saveDraft).not.toHaveBeenCalled(); expect(overview).not.toHaveBeenCalled(); session.stop();
+});
+it('reveals exact clean task and draft records through overview reads without saving', async () => {
+  const saveDraft = vi.fn(), overview = vi.fn(async () => ({ ok: true as const, value: structuredClone(session.data), warnings: [] }));
+  const session = new ProductionSession({ production: { saveDraft, overview } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.newDraft('ui'); const first = structuredClone({ ...session.draft!, revision: 1 }), desired = { ...structuredClone(first), id: 'DraftBB' };
+  session.data.drafts = [first, desired]; session.data.tasks = [{ id: 'TaskAA' }] as Overview['tasks'];
+  await expect(session.revealProblemRecord({ kind: 'task', id: 'TaskAA' })).resolves.toBe(true);
+  expect(session.selectedRecord).toEqual({ kind: 'task', id: 'TaskAA' }); expect(overview).toHaveBeenLastCalledWith({ taskId: 'TaskAA' });
+  await expect(session.revealProblemRecord({ kind: 'draft', id: desired.id })).resolves.toBe(true);
+  expect(session.draft).toEqual(desired); expect(session.selectedRecord).toEqual({ kind: 'draft', id: desired.id });
+  expect(overview).toHaveBeenLastCalledWith({ taskId: null }); expect(saveDraft).not.toHaveBeenCalled(); session.stop();
+});
+it('returns false for an unavailable or unreadable exact record while its original feedback remains revealable', async () => {
+  const saveDraft = vi.fn(), overview = vi.fn().mockImplementationOnce(async () => ({ ok: true, value: structuredClone(session.data), warnings: [] }))
+    .mockResolvedValueOnce(productionFailure('RECORD_READ_FAILED'));
+  const session = new ProductionSession({ production: { saveDraft, overview } } as unknown as WorkbenchBridge, 'WorkAA');
+  const receipt = { key: 'production:saveDraft:draft:MissingDraft', attemptId: 'TryAAA', kind: 'request' as const,
+    target: { kind: 'draft' as const, id: 'MissingDraft' }, issue: productionFailure('SAVE_FAILED').error };
+  session.restoreFeedback([receipt]);
+  await expect(session.revealProblemRecord(receipt.target)).resolves.toBe(false);
+  expect(session.unavailableRecord).toEqual(receipt.target); expect(session.revealFeedback(receipt.key)).toBe(true);
+  await expect(session.revealProblemRecord({ kind: 'task', id: 'MissingTask' })).resolves.toBe(false);
+  expect(session.feedback).toContainEqual(receipt); expect(session.revealFeedback(receipt.key)).toBe(true); expect(session.diagnostic).toEqual(receipt.issue);
+  expect(saveDraft).not.toHaveBeenCalled(); session.stop();
+});
+it('retires only the discarded or abandoned draft feedback while retaining other drafts and task receipts', async () => {
+  const saveDraft = vi.fn().mockResolvedValueOnce(productionFailure('FIRST_DRAFT_FAILED')).mockResolvedValueOnce(productionFailure('SECOND_DRAFT_FAILED'));
+  const discardDraft = vi.fn(async () => ({ ok: true, value: undefined, warnings: [] })), retry = vi.fn(async () => productionFailure('TASK_RETRY_FAILED'));
+  const session = new ProductionSession({ production: { saveDraft, discardDraft, retry } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.newDraft('ui'); const first = structuredClone({ ...session.draft!, revision: 1 }); session.data.drafts = [first];
+  await session.bridge.production.saveDraft({ draft: first, expectedRevision: 1 });
+  session.newDraft('voice'); const second = structuredClone(session.draft!);
+  await session.bridge.production.saveDraft({ draft: second, expectedRevision: null }); const secondReceipt = session.feedback[1]!;
+  await session.discardDraft(first.id);
+  expect(session.feedback).toEqual([secondReceipt]); expect(session.draft?.id).toBe(second.id); expect(session.diagnostic?.code).toBe('SECOND_DRAFT_FAILED');
+  await session.bridge.production.retry({ taskId: 'TaskAA', itemId: 'ItemAA', confirmNewRequest: true }); const taskReceipt = session.feedback[1]!;
+  await session.abandonDraftChanges();
+  expect(session.feedback).toEqual([taskReceipt]); expect(session.diagnostic?.code).toBe('TASK_RETRY_FAILED'); expect(session.error).toBe('TASK_RETRY_FAILED');
+  expect(session.draft).toBeNull(); expect(discardDraft).toHaveBeenCalledExactlyOnceWith(first.id); session.stop();
+});
+it('keeps a discarded draft failure retired when its pending operation responds later', async () => {
+  let finish!: (value: unknown) => void;
+  const prepareUIPlan = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+  const session = new ProductionSession({ production: { prepareUIPlan } } as unknown as WorkbenchBridge, 'WorkAA');
+  session.newDraft('ui');
+  const pending = session.bridge.production.prepareUIPlan({ draft: session.draft!, candidateId: 'CandidateA', proposal: { summary: '', steps: [] }, expected: [], scope: { pageIds: [], componentIds: [] }, selectedAssets: [] });
+  await session.discardDraft(); finish(productionFailure('LATE_DRAFT_FAILURE')); await pending;
+  expect(session.feedback).toEqual([]); expect(session.diagnostic).toBeNull(); session.stop();
 });
 it('keeps a queued source-project save local after stop and resumes its autosave when restored',async()=>{
   vi.useFakeTimers();
