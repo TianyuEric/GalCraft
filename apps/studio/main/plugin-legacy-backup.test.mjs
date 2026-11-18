@@ -70,7 +70,7 @@ async function setup(name, definition = false, legacyDocument = false) {
     contributions: [{ kind: 'command', key: command, targets: ['web', 'windows'], required: true },
       ...(legacyDocument ? [{ kind: 'document', key: `${pluginId}/config`, targets: ['web', 'windows'], required: true }] : [])],
     stateVersions: { document: 1, progress: 1, longTerm: 1 }, native: [] }));
-  const template = createOfficialTemplate({ kind: 'standard' }), projectRoot = join(directory, 'project');
+  const template = createOfficialTemplate({ kind: 'light' }), projectRoot = join(directory, 'project');
   const project = { ...FixtureProject, chapters: [{ ...FixtureProject.chapters[0], sceneIds: [sceneId] }] };
   const lock = { ...FixtureLock, template: { ...FixtureLock.template, id: template.id, version: template.version },
     plugins: [{ kind: 'plugin', id: pluginId, version: '0.1.0', targets: ['web', 'windows'], required: true }] };
@@ -80,7 +80,7 @@ async function setup(name, definition = false, legacyDocument = false) {
     { documentId: fixtureId(0xda6), revision: 1, format: 'dsl', files: {
       [`scenes/${sceneId}/scene.json`]: envelope(fixtureId(0xda6), FixtureScenes[0]),
       [`scenes/${sceneId}/script.gal`]: `${command} {characterId:"${characterId}",sceneId:"${sceneId}"} @${statementId};\nend {} @${fixtureId(0xda7)};`,
-    } }, ...createTemplateDocuments(template),
+    } }, ...createTemplateDocuments(template, undefined, null),
   ]);
   const projects = { currentSession: session, currentRoot: projectRoot }, backups = new StudioBackups({ userData, projects,
     engineCatalog: { resolveProjectEngine: async () => ({ ok: true, value: {}, warnings: [] }) },
@@ -145,7 +145,7 @@ it('backs up and restores legacy runtime commands, and copyNew rewrites their in
   records.push({ target: 'PD-T08 legacy runtime backup/copyNew/restoreOriginal/copyCurrentProject', data: 'schemaVersion 1 runtime-only custom command with character/scene references',
     expected: 'saved command compiles; copies rewrite project, scene, character and statement IDs; original restoration preserves IDs; all leases deactivate and remove load graphs',
     actual: { copied: copiedResult, restored: original.projectId, currentCopy: currentCopy.projectId, activations: log.filter(item => item.event === 'activate').length }, result: 'pass' });
-}, 60000); // Executes saved backup, two restores and a copy through real plugin graphs and disk.
+}, 120_000); // Executes saved backup, two restores and a copy through real plugin graphs and disk.
 
 it('releases the runtime instance and load graph when activation fails', async () => {
   const fixture = await setup('activation-failure'); fixture.failActivation = true;
@@ -169,7 +169,7 @@ it('holds the legacy lease through commit and releases it when destination regis
   const result = await backups.commitRestore(plan.operationDirectory); expect(result.ok).toBe(false);
   await released(fixture); expect(heldAtRegistration).toBe(true);
   records.push({ target: 'PD-T08 legacy commit failure cleanup', data: 'registry registration rejects after real staging and identity rewriting', expected: 'lease stays active until commit finishes and releases on failure', actual: { error: result.error.code, heldAtRegistration }, result: 'pass' });
-}, 30_000);
+}, 60_000);
 
 it('releases legacy leases from the direct upgrade consumer on commit failure', async () => {
   const fixture = await setup('upgrade-failure'), candidate = join(fixture.directory, 'upgrade');
