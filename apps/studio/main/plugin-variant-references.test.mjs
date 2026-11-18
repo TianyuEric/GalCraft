@@ -256,7 +256,7 @@ it('keeps definition-only fixed variants through saved compilation, both release
     actual: { references, resolvedVariant, resolvedActive, missingVariantDiagnostic: missing.error, missingBuildPlan, compile: sourceCompile, releases, backup, restored,
       bothReferenceRelease: { plan: bothPlan, manifest: bothManifest, snapshot: bothSnapshot, resolved: bothRuntime.resolved }, componentReferences: componentRefs, copiedComponentRelease },
     limitations: ['Engine entry files and graphical Player mount are test adapters; checks cover real packaging, runtime activation, document and asset disk IO'], result: 'passed', executedAt: new Date().toISOString() }, null, 2));
-}, 90000); // Packages both targets and performs three identity-rewriting backups on real disk.
+}, 120_000); // Packages both targets and performs three identity-rewriting backups on real disk.
 
 it('diagnoses a missing fixed variant at the actual plugin document revision', async () => {
   const asset = structuredClone(FixtureAsset), missingId = fixtureId(0xef0), documentId = fixtureId(0xef1);

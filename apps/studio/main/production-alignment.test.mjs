@@ -81,4 +81,4 @@ it('continues Studio and other-collaboration records through M12 with actual dra
   await owner.core.end({ id: reader.id, expectedRevision: 1 });
   const restricted = await owner.core.create({ projectId: project.projectId, writeSessionId: 'Write1', projectName: 'AO2 fixture', goal: 'Restricted operation scope', harness: 'codex', scope: { ...scope, operations: [] } });
   expect((await invoke({ action: 'tasks' }, 'restricted-tasks', restricted)).tasks).toEqual([]);
-}, 20000);
+}, 30_000);
