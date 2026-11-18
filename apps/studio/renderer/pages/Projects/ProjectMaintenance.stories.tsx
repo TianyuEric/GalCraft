@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, userEvent, within } from 'storybook/test';
 import type { Issue, Result, UpgradePlan } from '@galcraft/contracts';
 import { FixtureProject } from '@galcraft/contracts/fixtures';
 import { ProjectMaintenance } from './ProjectMaintenance.js';
+import { StudioToaster } from '../../components/toast.js';
 import type { DesktopBridge } from '../../../desktop-bridge.js';
 import '../../authoring/shell.css';
 
@@ -41,6 +43,7 @@ function MaintenanceExample({ theme = 'light', blocked = false, missingEngine = 
   const project = { ...FixtureProject, engineVersion: version };
   return <div id="app" className="authoring-shell" data-theme={theme} style={{ display: 'block', height: '100vh', overflow: 'auto', background: 'var(--background)', color: 'var(--foreground)' }}>
     <div id="studio-portals" data-theme={theme} lang="zh-CN"/>
+    <StudioToaster locale="zh-CN"/>
     <ProjectMaintenance locale="zh-CN" source={{ project, projectDocumentId: project.projectId, projectRevision: 3, projectSavedRevision: 3, projectDirty: false, scenes: [], characters: [] }}
       upgrades={upgrades} readDocuments={async () => ok([{ documentId: project.projectId, revision: 3, savedRevision: 3, dirty: false, format: 'json', files: {}, savedFiles: {} }])}
       chooseOldSaves={async () => ok(['D:/GalCraft/saves/station-save.json'])} engineRepair={engineRepair} onProjectChanged={() => {}}/>
@@ -53,3 +56,17 @@ type Story = StoryObj<typeof meta>;
 export const Migration: Story = {};
 export const FailedValidation: Story = { args: { theme: 'dark', blocked: true } };
 export const ExactEngineRepair: Story = { args: { theme: 'dark', missingEngine: true } };
+export const MigrationMessages: Story = { play: async ({ canvas, canvasElement }) => {
+  await userEvent.click(await canvas.findByRole('combobox', { name: '目标引擎版本' }));
+  const page = within(canvasElement.ownerDocument.body);
+  await userEvent.click(await page.findByRole('option', { name: 'galcraft@0.1.1' }));
+  await userEvent.click(canvas.getByRole('button', { name: '选择代表旧档' }));
+  await userEvent.click(canvas.getByRole('button', { name: '准备并验证迁移' }));
+  await userEvent.click(await canvas.findByRole('button', { name: '确认迁移' }));
+  await userEvent.click(await page.findByRole('button', { name: '替换并重开' }));
+  await expect(await page.findByText('引擎迁移已提交。原副本可在维护记录中查看。')).toBeVisible();
+  await userEvent.click(await canvas.findByRole('button', { name: '回退到此原副本' }));
+  await userEvent.click(await page.findByRole('button', { name: '回退并重开' }));
+  await expect(await page.findByText('已从原副本恢复。')).toBeVisible();
+  await expect(await canvas.findByText(/已回退/)).toBeVisible();
+} };

@@ -60,7 +60,7 @@ export class StudioPluginPackages {
   }
 
   async acquireDefinitions(session, { allowMissing = false } = {}) {
-    const documents = [], components = [], pages = [], commands = [], assetTypes = [], productionOperations = [], releases = [], warnings = [], messages = {};
+    const documents = [], components = [], pages = [], commands = [], conditions = [], assetTypes = [], productionOperations = [], releases = [], warnings = [], messages = {};
     let transferred = false;
     try {
       for (const dependency of this.dependencies(session)) {
@@ -76,6 +76,7 @@ export class StudioPluginPackages {
           Object.assign(messages,lease.definition.messages?.en??{});
           components.push(...lease.definition.components ?? []);
           commands.push(...lease.definition.commands??[]);
+          conditions.push(...(lease.definition.conditions ?? []).map(({ key, fields }) => ({ key, fields })));
           pages.push(...lease.definition.pages ?? []);
           for (const definition of lease.definition.productionOperations ?? []) {
             if (!manifest.contributions.some(item => item.kind === 'productionOperation' && item.key === definition.id)) throw new Error(`未声明制作操作 ${definition.id}`);
@@ -89,17 +90,18 @@ export class StudioPluginPackages {
             if (!manifest.contributions.some(item => item.kind === 'document' && item.key === definition.key)) throw new Error(`未声明文档 ${definition.key}`);
             documents.push(definition);
           }
-        } else if (manifest.contributions.some(item => ['document','command'].includes(item.kind))) {
+        } else if (manifest.contributions.some(item => ['document','command','condition'].includes(item.kind))) {
           const instance = await loadPluginModule(directory, manifest); releases.push(() => instance.deactivate());
           const offered = await instance.activate(this.context(manifest.id, 'web', session));
           documents.push(...offered.documents);
           commands.push(...(offered.commands??[]).map(command=>command.spec));
+          conditions.push(...(offered.conditions ?? []).map(({ key, fields }) => ({ key, fields })));
         }
       }
       let released = false;
       const release = async () => { if (!released) { released = true; await Promise.allSettled(releases.reverse().map(fn => fn())); } };
       transferred = true;
-      return { ...ok({ documents, components, pages, commands, assetTypes, productionOperations, messages, release }), warnings };
+      return { ...ok({ documents, components, pages, commands, conditions, assetTypes, productionOperations, messages, release }), warnings };
     } catch (error) { return fail('PLUGIN_LOAD', String(error), 'M09'); }
     finally {
       // Ownership transfers to the successful definition lease only.

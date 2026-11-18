@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useRef, type ReactNode } from 'react';
 import { ChevronDown, LayoutPanelLeft, Moon, Play, Redo2, Save, Search, Settings2, Sun, Undo2 } from 'lucide-react';
 import type { StudioLocale } from '../../authoring/controller.js';
 import brandLight from '../../authoring/galcraft-icon.svg?url';
@@ -8,7 +8,7 @@ import { ProjectTitle } from '../ProjectTitle.js';
 import type { RailItem } from '../rail-navigation.js';
 import { StudioMenubar, type ShellAction } from '../shell-header.js';
 import { StudioToaster } from '../toast.js';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from '../ui/dropdown-menu.js';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from '../ui/dropdown-menu.js';
 import './studio-chrome.css';
 
 /** Shared app bar. The host supplies the project and search surfaces. */
@@ -33,7 +33,7 @@ export function StudioChromeHeader({ brand, menubar, project, context, search, a
 export function StudioChromeToolbar({ label, workfaces, routes, history, layout, save, preview, className = '' }: {
   label: string;
   workfaces: ReactNode;
-  routes: ReactNode;
+  routes?: ReactNode;
   history: ReactNode;
   layout: ReactNode;
   save: ReactNode;
@@ -64,9 +64,11 @@ export type StudioChromeMenuItem = {
   current?: boolean;
   shortcut?: string;
   separatorBefore?: boolean;
+  section?: string;
+  checked?: boolean;
 };
 
-function ChromeMenu({ label, items, icon, iconOnly = false, align = 'start', disabled, focusKey }: {
+export function ChromeMenu({ label, items, icon, iconOnly = false, align = 'start', disabled, focusKey }: {
   label: string;
   items: readonly StudioChromeMenuItem[];
   icon?: ReactNode;
@@ -75,23 +77,35 @@ function ChromeMenu({ label, items, icon, iconOnly = false, align = 'start', dis
   disabled?: boolean;
   focusKey: string;
 }) {
+  const sections: { label?: string; items: StudioChromeMenuItem[] }[] = [];
+  for (const item of items) {
+    const previous = sections.at(-1);
+    if (previous && previous.label === item.section) previous.items.push(item);
+    else sections.push({ label: item.section, items: [item] });
+  }
   return <DropdownMenu>
     <DropdownMenuTrigger render={<Button tone={iconOnly ? undefined : 'quiet'} className={iconOnly ? 'gc-studio-chrome-icon' : undefined}/>}
       aria-label={label} title={label} disabled={disabled} data-focus-key={focusKey}>
       {icon}{!iconOnly && <span>{label}</span>}<ChevronDown aria-hidden="true" className="gc-studio-chrome-chevron"/>
     </DropdownMenuTrigger>
     <DropdownMenuContent align={align} className="gc-studio-chrome-menu" aria-label={label}>
-      {items.map(item => <Fragment key={item.id}>
-        {item.separatorBefore && <DropdownMenuSeparator/>}
-        <DropdownMenuItem disabled={item.disabled} aria-current={item.current ? 'page' : undefined} onClick={item.run}>
-          <span>{item.label}</span>{item.shortcut && <DropdownMenuShortcut>{item.shortcut}</DropdownMenuShortcut>}
-        </DropdownMenuItem>
+      {sections.map(({ label: section, items: entries }, index) => <Fragment key={entries[0]!.id}>
+        {index > 0 && <DropdownMenuSeparator/>}
+        <DropdownMenuGroup>
+          {section && <DropdownMenuLabel>{section}</DropdownMenuLabel>}
+          {entries.map(item => <Fragment key={item.id}>
+            {item.separatorBefore && <DropdownMenuSeparator/>}
+            {item.checked !== undefined
+              ? <DropdownMenuCheckboxItem checked={item.checked} disabled={item.disabled} onCheckedChange={item.run}>{item.label}</DropdownMenuCheckboxItem>
+              : <DropdownMenuItem disabled={item.disabled} aria-current={item.current ? 'page' : undefined} onClick={item.run}>
+                <span>{item.label}</span>{item.shortcut && <DropdownMenuShortcut>{item.shortcut}</DropdownMenuShortcut>}
+              </DropdownMenuItem>}
+          </Fragment>)}
+        </DropdownMenuGroup>
       </Fragment>)}
     </DropdownMenuContent>
   </DropdownMenu>;
 }
-
-const quickRoutes = ['production', 'collaboration', 'plugins', 'publish'];
 
 export type StudioChromeProps = {
   locale: StudioLocale;
@@ -115,6 +129,7 @@ export type StudioChromeProps = {
 
 /** Connect the shared workbench chrome to the real Studio commands. */
 export function StudioChrome({ locale, theme, project, dirty, action, preferences, items, navigate, combinations = [], layout, preview, saving, editTarget, historyUnavailable, canSaveCurrent = !!project, service, auxiliary }: StudioChromeProps) {
+  const chrome = useRef<HTMLDivElement>(null);
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
   const workbench = t('作品工作台', 'Project workbench', '作品ワークスペース');
   const preferencesLabel = t('工作台偏好', 'Workbench preferences', 'ワークスペース設定');
@@ -130,6 +145,8 @@ export function StudioChrome({ locale, theme, project, dirty, action, preference
   }));
   workfaces.push(
     ...combinations.map((item, index) => index === 0 ? { ...item, separatorBefore: true } : item),
+    { id: 'project-settings', label: t('作品设置', 'Project settings', '作品設定'), separatorBefore: true, disabled: !project, run: () => action('projectSettings') },
+    { id: 'startup-home', label: t('启动与主页', 'Startup & home', '起動とホーム'), disabled: !project, run: () => action('startupHome') },
     { id: 'view-writing', label: t('当前场景文稿', 'Current scene manuscript', '現在のシーンの原稿'), separatorBefore: true, disabled: !project, run: () => action('writing') },
     { id: 'view-cards', label: t('当前场景指令', 'Current scene commands', '現在のシーンのコマンド'), disabled: !project, run: () => action('cards') },
     { id: 'view-script', label: t('当前场景源码', 'Current scene source', '現在のシーンのソース'), disabled: !project, run: () => action('script') },
@@ -138,8 +155,8 @@ export function StudioChrome({ locale, theme, project, dirty, action, preference
   const layoutItems = layout?.length ? layout : [
     { id: 'reset', label: t('恢复默认布局', 'Reset layout', 'レイアウトをリセット'), disabled: !project, run: () => action('resetLayout') },
   ];
-  return <div className="gc-studio-chrome">
-    <StudioToaster locale={locale}/>
+  return <div className="gc-studio-chrome" ref={chrome}>
+    <StudioToaster locale={locale} workbenchChrome={chrome}/>
     <StudioChromeHeader
       brand={<Button tone="quiet" className="gc-studio-chrome-brand" aria-label={workbench} title={workbench} data-focus-key="studio:projects" onClick={() => action('projects')}>
         <img src={theme === 'light' ? brandLight : brandDark} alt=""/><strong>GalCraft Studio</strong>
@@ -163,9 +180,6 @@ export function StudioChrome({ locale, theme, project, dirty, action, preference
     />
     <StudioChromeToolbar label={t('工作台命令', 'Workbench commands', 'ワークスペースのコマンド')}
       workfaces={<ChromeMenu label={t('工作面', 'Workfaces', '作業ビュー')} items={workfaces} focusKey="studio:workfaces" icon={<LayoutPanelLeft aria-hidden="true"/>}/>}
-      routes={<StudioChromeToolGroup as="nav" label={t('常用工作面', 'Common workfaces', 'よく使う作業ビュー')}>
-        {items.filter(item => quickRoutes.includes(item.key)).map(item => <Button key={item.key} tone="quiet" disabled={item.disabled} aria-current={item.current ? 'page' : undefined} data-focus-key={`route:${item.key}`} onClick={() => navigate(item.key)}>{item.label}</Button>)}
-      </StudioChromeToolGroup>}
       history={<StudioChromeToolGroup label={t('编辑历史', 'Edit history', '編集履歴')}>
         <Button tone="quiet" className="gc-studio-chrome-icon" aria-label={undoLabel} aria-description={historyUnavailable} title={historyUnavailable ?? commandTitle(undoLabel, 'Ctrl+Z')} data-action="undo" data-focus-key="studio:undo" disabled={!project || !!historyUnavailable} onClick={() => action('undo')}><Undo2 aria-hidden="true"/></Button>
         <Button tone="quiet" className="gc-studio-chrome-icon" aria-label={redoLabel} aria-description={historyUnavailable} title={historyUnavailable ?? commandTitle(redoLabel, 'Ctrl+Y')} data-action="redo" data-focus-key="studio:redo" disabled={!project || !!historyUnavailable} onClick={() => action('redo')}><Redo2 aria-hidden="true"/></Button>

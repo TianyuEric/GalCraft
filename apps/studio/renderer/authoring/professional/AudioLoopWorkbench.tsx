@@ -65,7 +65,7 @@ export function AudioLoopWorkbench({ src, name, value, fallback, locale = 'zh-CN
       </div>
       <div className="pro-audio-ruler"><span>0 s</span><span>{(duration / 2).toFixed(2)} s</span><span>{duration.toFixed(2)} s</span></div>
       <div className="pro-transport"><Button disabled={state !== 'ready' || !active} onClick={() => { const node = audio.current!; if (node.paused) void node.play().catch(() => setError(t('未能开始播放，请再次点击播放。', 'Playback did not start. Try Play again.', '再生できませんでした。もう一度再生してください。'))); else node.pause(); }}>{playing ? <Pause/> : <Play/>}{playing ? t('暂停', 'Pause', '一時停止') : t('播放声音', 'Play audio', '音声を再生')}</Button>
-        <Button disabled={state !== 'ready'} onClick={() => seek(start)}><RotateCcw/>{t('定位循环起点', 'Seek loop start', 'ループ開始へ')}</Button>
+        <Button disabled={state !== 'ready'} onClick={() => seek(start)}><RotateCcw/>{t('跳到循环起点', 'Go to loop start', 'ループ開始へ')}</Button>
         <label className="pro-seek">{t('播放头', 'Playhead', '再生位置')}<input data-slot="pro-control" type="range" min={0} max={duration} step={.01} value={Math.min(position, duration)} disabled={state !== 'ready'} onChange={event => seek(Number(event.target.value))}/></label><output aria-label={t('声音播放位置', 'Audio position', '音声の再生位置')}>{position.toFixed(2)} s</output>
       </div>
       <fieldset key={fieldSession} className="pro-loop-fields" disabled={state !== 'ready'}>

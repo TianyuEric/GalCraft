@@ -3,9 +3,11 @@ import { ChevronDown, Columns2, Maximize2, Minimize2, MoreHorizontal, PanelBotto
 import { allGroups, change, clamp, emptyLayout, geometry, group, groups, minimum, normalize, openViews, removeGroup, validLayout, type Group, type Rect, type ToolZone, type Zone, type ZonedLayout } from './zoned-layout.js';
 import { DockActionMenu, type DockMenuTarget } from './DockActionMenu.js';
 import { DockTab, DockTabList } from './DockTabs.js';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip.js';
 import './dock-workspace.css';
 
 export type LayoutPreset = 'balanced' | 'writing' | 'source' | 'stage' | 'documents' | 'custom';
+export type DockNoticeTone = 'success' | 'error' | 'warning' | 'info';
 export type OpenOptions = { preview?: boolean; beside?: 'x' | 'y'; focus?: boolean; showWhenNarrow?: boolean };
 export type DockHandle = {
   open(id: string, options?: OpenOptions): void;
@@ -29,8 +31,9 @@ export type DockWorkspaceProps = {
   zone?(id: string): Zone;
   allowedZones?(id: string): readonly Zone[];
   minSize?(id: string): { width: number; height: number };
-  status?(id: string): { dirty?: boolean; error?: string; running?: boolean }; onActivate?(id: string, reason?: 'tab'): void; notice(message: string): void;
+  status?(id: string): { dirty?: boolean; error?: string; running?: boolean }; onActivate?(id: string, reason?: 'tab'): void; notice(message: string, tone?: DockNoticeTone): void;
   onViewFocus?(id: string | null): void;
+  groupFocusLabels?(id: string): { focus: string; restore: string } | undefined;
   onClose?(id: string): boolean | Promise<boolean>; onViewsChange?(ids: readonly string[]): void;
   onBeforeClose?(ids: readonly string[]): boolean | Promise<boolean>;
   onKeep?(id: string): void;
@@ -45,6 +48,7 @@ export type DockWorkspaceProps = {
   createDefaultLayout?(preset: LayoutPreset): ZonedLayout;
   initialLayout?: ZonedLayout;
   onLayoutChange?(layout: ZonedLayout): void;
+  onPanelVisibilityChange?(visible: Record<ToolZone, boolean>): void;
   loadLayout?(): LayoutLoad;
   saveLayout?(layout: ZonedLayout): void;
   readPresets?(): Record<string, ZonedLayout>;
@@ -62,7 +66,7 @@ function DockButton({ className = '', ...props }: ComponentPropsWithoutRef<'butt
   return <button type="button" data-slot="dock-button" className={`gc-dock-button ${className}`} {...props}/>;
 }
 function DockIconButton({ label, ...props }: ComponentPropsWithoutRef<'button'> & { label: string }) {
-  return <DockButton aria-label={label} title={label} {...props}/>;
+  return <Tooltip><TooltipTrigger data-slot="dock-button" render={<DockButton aria-label={label} {...props}/>}/><TooltipContent side="right">{label}</TooltipContent></Tooltip>;
 }
 
 const uid = () => crypto.randomUUID(), gap = 5, header = 37, bottomRail = 28;
@@ -168,6 +172,10 @@ export function DockWorkspace(props: DockWorkspaceProps) {
   if (showBottom) positions.result.set('bottom', { ...centerRect, y: mainRect.height + gap, height: bottomHeight });
   if (temporary) positions.result.set(temporary.zone, temporary.zone === 'bottom' ? { ...centerRect, y: Math.max(0, size.height - 360), height: Math.min(332, size.height - bottomRail) } : { x: temporary.zone === 'left' ? sideRailWidth.left : size.width - sideRailWidth.right - Math.min(320, available), y: 0, width: Math.min(320, available), height: size.height - bottomRail });
   if (maximized) { positions.result.clear(); positions.result.set(maximized, { x: sideRailWidth.left, y: 0, width: available, height: size.height - bottomRail }); }
+  const leftVisible = positions.result.has('left'), rightVisible = positions.result.has('right'), bottomVisible = positions.result.has('bottom');
+  useLayoutEffect(() => {
+    callbacks.current.onPanelVisibilityChange?.({ left: leftVisible, right: rightVisible, bottom: bottomVisible });
+  }, [leftVisible, rightVisible, bottomVisible]);
   function focusElement(target?: HTMLElement | null) {
     if (!target?.isConnected) return false;
     target.focus({ preventScroll: true });
@@ -427,7 +435,7 @@ export function DockWorkspace(props: DockWorkspaceProps) {
         restoreFocus(destination.active);
       } else restoreFocus(focusId);
     }
-  }).catch(error => notice(t(`关闭未完成：${String(error)}`, `Could not close: ${String(error)}`, `閉じられませんでした：${String(error)}`))); }
+  }).catch(error => notice(t(`关闭未完成：${String(error)}`, `Could not close: ${String(error)}`, `閉じられませんでした：${String(error)}`), 'error')); }
   function move(id: string, destination: string, edge?: 'left' | 'right' | 'top' | 'bottom', beforeView?: string) {
     const next = structuredClone(state.current), from = owner(id, next), to = allGroups(next).find(g => g.id === destination); if (!from || !to) return; const a = groupZone(from.id), b = groupZone(to.id);
     if (a === 'center' && b === 'center' && from !== to && controlled(id) && props.canSplitView?.(id) === false) return;
@@ -524,10 +532,11 @@ export function DockWorkspace(props: DockWorkspaceProps) {
   function toggle(zone: ToolZone) {
     if (temporary?.zone === zone) { dismissTemporary(); return; }
     const next = structuredClone(state.current);
-    const id = next[zone].active;
+    const id = next[zone].active || toolIds(next, zone)[0];
     if (!id) return;
     if (positions.result.has(zone)) {
       next.hidden[zone] = true;
+      if (maximized === zone) setMaximized(null);
       commit(next);
     } else {
       open(id, { focus: false });
@@ -562,16 +571,16 @@ export function DockWorkspace(props: DockWorkspaceProps) {
       setMaximized(null);
       setTemporary(null);
       setDisplayCenter(null);
-      notice(t('已重置摆放；打开对象、草稿和个人偏好保留。', 'Layout reset. Open items, drafts and preferences are retained.', '配置をリセットしました。開いている項目、下書き、設定は保持されます。'));
+      notice(t('已重置摆放；打开对象、草稿和个人偏好保留。', 'Layout reset. Open items, drafts and preferences are retained.', '配置をリセットしました。開いている項目、下書き、設定は保持されます。'), 'success');
     },
     savePreset: async (name = defaultPresetName) => {
       const key = name.trim();
       if (!key || !props.writePresets) return;
       try {
         await props.writePresets({ ...readPresets(), [key]: portable(state.current, false) });
-        notice(t(`已保存布局「${key}」`, `Saved layout “${key}”`, `レイアウト「${key}」を保存しました`));
+        notice(t(`已保存布局「${key}」`, `Saved layout “${key}”`, `レイアウト「${key}」を保存しました`), 'success');
       } catch {
-        notice(t('布局未能保存，当前会话保留。', 'The layout could not be saved. The current session is retained.', 'レイアウトを保存できませんでした。現在のセッションは保持されます。'));
+        notice(t('布局未能保存，当前会话保留。', 'The layout could not be saved. The current session is retained.', 'レイアウトを保存できませんでした。現在のセッションは保持されます。'), 'error');
       }
     },
     restorePreset: (name = defaultPresetName) => {
@@ -593,7 +602,7 @@ export function DockWorkspace(props: DockWorkspaceProps) {
     if (state.current.stageSource) callbacks.current.onRestoreStageSource?.(state.current.stageSource);
     const g = recentCenter(state.current);
     if (g?.active && !callbacks.current.activeView) callbacks.current.onActivate?.(g.active);
-    if (loaded.error) callbacks.current.notice(loaded.error);
+    if (loaded.error) callbacks.current.notice(loaded.error, 'error');
     return () => observer.disconnect();
   }, []);
 
@@ -687,7 +696,7 @@ export function DockWorkspace(props: DockWorkspaceProps) {
   useEffect(() => {
     if (migrationBlocked || !callbacks.current.saveLayout) return;
     try { callbacks.current.saveLayout(layout); }
-    catch { callbacks.current.notice(t('个人布局保存失败；作品内容未受影响。', 'The personal layout could not be saved. Project content is intact.', '個人レイアウトを保存できませんでした。作品の内容は保持されています。')); }
+    catch { callbacks.current.notice(t('个人布局保存失败；作品内容未受影响。', 'The personal layout could not be saved. Project content is intact.', '個人レイアウトを保存できませんでした。作品の内容は保持されています。'), 'error'); }
   }, [layout, migrationBlocked]);
   useEffect(() => {
     if (temporary && showTool[temporary.zone] && layout[temporary.zone].active === temporary.view) setTemporary(null);
@@ -870,7 +879,7 @@ export function DockWorkspace(props: DockWorkspaceProps) {
           <MoreHorizontal size={16} aria-hidden="true"/>
         </DockIconButton>
       </>}
-      <DockIconButton className="gc-dock-header-button" label={maximized === g.id ? t('还原工作面', 'Restore work surface', '作業面を元に戻す') : t('局部最大化', 'Maximize group', 'グループを最大化')} onClick={() => { setMaximized(maximized === g.id ? null : g.id); setTemporary(null); restoreFocus(g.active); }}>{maximized === g.id ? <Minimize2 size={14}/> : <Maximize2 size={14}/>}</DockIconButton>
+      <DockIconButton className="gc-dock-header-button" label={maximized === g.id ? props.groupFocusLabels?.(g.active)?.restore ?? t('还原工作面', 'Restore work surface', '作業面を元に戻す') : props.groupFocusLabels?.(g.active)?.focus ?? t('局部最大化', 'Maximize group', 'グループを最大化')} onClick={() => { setMaximized(maximized === g.id ? null : g.id); setTemporary(null); restoreFocus(g.active); }}>{maximized === g.id ? <Minimize2 size={14}/> : <Maximize2 size={14}/>}</DockIconButton>
       <DockIconButton className="gc-dock-header-button" label={overlay ? t('收回临时工具', 'Dismiss temporary tool', '一時ツールを閉じる') : t(`收起 ${title(g.active)}`, `Stow ${title(g.active)}`, `${title(g.active)}を収納`)} onClick={() => overlay ? dismissTemporary() : collapse(g)}>
         {zone === 'left' ? <PanelLeftClose size={14}/> : zone === 'right' ? <PanelRightClose size={14}/> : zone === 'bottom' ? <PanelBottomClose size={14}/> : <X size={14}/>}
       </DockIconButton>

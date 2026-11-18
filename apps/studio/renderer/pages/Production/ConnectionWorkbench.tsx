@@ -4,6 +4,7 @@ import { createId } from '@galcraft/contracts';
 import { Button } from '../../components/controls.js';
 import { Input } from '../../components/ui/input.js';
 import { DocumentTabs } from '../../components/workbench/WorkbenchShell.js';
+import { IssueNotice } from '../../components/issue-notice.js';
 import { ServiceConnections } from './ServiceConnections.js';
 import { WorkflowDialog } from './WorkflowDialog.js';
 import { unwrap } from './bridge.js';
@@ -82,6 +83,14 @@ export function ConnectionWorkbench({ session, locale = 'zh-CN', active = true, 
     ? async () => unwrap(await session.bridge.files.readImport!({ purpose: 'production', extensions: ['json'] }))
     : undefined;
   const selected = workflowDocuments.find(item => item.id === activeWorkflow);
+  const revealedFeedback = session.revealedFeedback;
+  const feedbackWorkflowId = revealedFeedback?.surface === 'connections'
+    ? /^production:(?:saveWorkflow|saveWorkflowDraft|discoverWorkflowOutputs):workspace:workflow(?:-draft)?:([^:]+)/.exec(revealedFeedback.key)?.[1] : undefined;
+  const feedbackDocument = revealedFeedback?.editorId ? workflowDocuments.find(item => item.id === revealedFeedback.editorId)
+    : feedbackWorkflowId ? workflowDocuments.find(item => (readWorkflow(item.text)?.id ?? item.id) === feedbackWorkflowId && item.id === activeWorkflow)
+      ?? workflowDocuments.find(item => (readWorkflow(item.text)?.id ?? item.id) === feedbackWorkflowId) : undefined;
+  useEffect(() => { if (feedbackDocument) setActiveWorkflow(feedbackDocument.id); }, [revealedFeedback]);
+  const feedbackNotice = revealedFeedback?.surface === 'connections' && !feedbackDocument && <IssueNotice issue={revealedFeedback.issue} locale={locale}/>;
   const selectedId = readWorkflow(selected?.text ?? '')?.id ?? activeWorkflow;
   const editor = workflowDocuments.length > 0 && <section className="workflow-documents" hidden={!activeWorkflow}>
     <DocumentTabs documents={workflowDocuments.map(item => ({ ...item, icon: <Layers size={15}/> }))} active={activeWorkflow}
@@ -92,29 +101,32 @@ export function ConnectionWorkbench({ session, locale = 'zh-CN', active = true, 
       <WorkflowDialog inline active={active} locale={locale} closeRequest={item.closeRequest} close={() => closeWorkflow(item.id)}
         initialText={item.text} initialImportText={item.importText} initialBaseline={item.baseline} initialPaste={item.paste} initialPasteBaseline={item.pasteBaseline}
         operations={session.data.operations} existingWorkflows={session.data.workflows}
+        recoveredIssue={feedbackDocument?.id === item.id ? revealedFeedback?.issue : undefined}
+        onOperationStart={feedbackDocument?.id === item.id && revealedFeedback ? () => session.consumeRevealedFeedback(revealedFeedback.key) : undefined}
         availableRevision={item.expectedRevision} configurationDraftRevision={item.draftSource ? item.draftRevision : undefined} chooseImport={chooseImport}
         outputConnections={session.data.connections.filter(connection => connection.protocol === 'comfyUI')}
         discoverOutputs={async (connectionId, workflow, historyTaskId) => {
-          if (!workflow.purpose) throw new Error(t('请先选择用途或操作。', 'Choose a purpose or operation first.', '用途・操作を選択してください。'));
-          return unwrap(await session.bridge.production.discoverWorkflowOutputs({
-            connectionId, workflow: { ...workflow, purpose: workflow.purpose }, historyTaskId,
-          }));
+          const purpose = workflow.purpose;
+          if (!purpose) throw new Error(t('请先选择用途或操作。', 'Choose a purpose or operation first.', '用途・操作を選択してください。'));
+          return unwrap(await session.withFeedbackEditor(item.id, () => session.bridge.production.discoverWorkflowOutputs({
+            connectionId, workflow: { ...workflow, purpose }, historyTaskId,
+          })));
         }}
         onIdentityChange={expectedRevision => updateEditor(item.id, { expectedRevision, draftRevision: null })}
         onState={state => updateEditor(item.id, { ...state, importText: undefined })}
         saveDraft={async (workflow, paste) => {
-          const result = unwrap(await session.bridge.production.saveWorkflowDraft({
+          const result = unwrap(await session.withFeedbackEditor(item.id, () => session.bridge.production.saveWorkflowDraft({
             draft: {
               schemaVersion: 1, id: workflow.id, revision: item.draftRevision ?? 0, name: workflow.name,
               workflow, paste, availableRevision: item.expectedRevision, updatedAt: new Date().toISOString(),
             },
             expectedRevision: item.draftRevision ?? null,
-          }));
+          })));
           updateEditor(item.id, { draftRevision: result.revision });
           await session.refresh();
         }}
         save={async workflow => {
-          const updated = unwrap(await session.bridge.production.saveWorkflow({ workflow, expectedRevision: item.expectedRevision }));
+          const updated = unwrap(await session.withFeedbackEditor(item.id, () => session.bridge.production.saveWorkflow({ workflow, expectedRevision: item.expectedRevision })));
           updateEditor(item.id, { expectedRevision: updated.revision });
           await session.refresh();
           return updated;
@@ -126,7 +138,7 @@ export function ConnectionWorkbench({ session, locale = 'zh-CN', active = true, 
     workflowActive={!!activeWorkflow} selectedWorkflow={selected?.draftSource ? `workflow-draft:${selectedId}` : selectedId}
     showConnection={() => setActiveWorkflow('')} workflowEditor={editor} editWorkflow={openWorkflow}
     importWorkflow={chooseImport ? async () => { const selected = await chooseImport(); if (selected) openWorkflow(undefined, selected.text); } : undefined}/>;
-  if (embedded) return connections;
+  if (embedded) return <>{feedbackNotice}{connections}</>;
   const title = t('连接与工作流', 'Connections and workflows', '接続とワークフロー');
   const searchLabel = t('搜索服务连接与工作流', 'Search connections and workflows', '接続とワークフローを検索');
   return <section className="connection-workbench" aria-label={title}>
@@ -135,6 +147,7 @@ export function ConnectionWorkbench({ session, locale = 'zh-CN', active = true, 
       <Input aria-label={searchLabel} placeholder={searchLabel} value={search} onChange={event => setSearch(event.target.value)}/>
       {onReturn && <Button tone="quiet" onClick={onReturn}><ArrowLeft size={15}/>{t('返回制作任务', 'Return to production task', '制作タスクに戻る')}</Button>}
     </header>
+    {feedbackNotice}
     {error && <div className="workbench-error" role="alert">{error} <Button onClick={() => void refresh()}><RefreshCw size={15}/>{t('重新读取', 'Reload', '再読込')}</Button></div>}
     {connections}
   </section>;

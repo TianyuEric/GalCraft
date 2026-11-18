@@ -10,6 +10,7 @@ import { IdSchema } from '@galcraft/contracts';
 import { fail, ok } from './result.mjs';
 import { prepareStageTarget, stageResource } from './asset-stage-targets.mjs';
 import { studioApplicationRoot } from './application-root.mjs';
+import { AssetImportBatches } from './asset-import-batches.mts';
 
 const directAssetFields = new Set(['assetId', 'icon', 'splash', 'titleBackground', 'titleMusic',
   'titleVideo', 'emergencyImage', 'backgroundImage', 'imageId', 'fontId', 'avatar', 'cover', 'selectedAssetId', 'resourceId']);
@@ -197,6 +198,7 @@ export function selectedReferencePatches(session, selected, replacements) {
 }
 
 export class StudioAssets {
+  #importBatches = new AssetImportBatches();
   #runtimeLeases = new Map();
   #preview = null;
   #thumbnailLeases = [];
@@ -944,6 +946,29 @@ export class StudioAssets {
     }
     this.stopPreview();
     return ok(undefined);
+  }
+
+  /** @param {import('@galcraft/contracts').Id} [projectId] */
+  async listImportBatches(projectId) {
+    const current = this.current(), root = this.projectDocuments.currentRoot;
+    if (!current || !root) return fail('ASSET_INDEX_MISSING', '请先打开包含素材索引的作品', 'M04');
+    if (projectId !== undefined && projectId !== current.session.projectId)
+      return fail('PROJECT_STALE', '作品已切换，请返回原作品后查看素材导入批次。', 'M04');
+    return this.#importBatches.list({ root, projectId: current.session.projectId,
+      current: () => this.projectDocuments.currentSession === current.session && this.projectDocuments.currentRoot === root });
+  }
+
+  /** @param {string[]} paths @param {import('@galcraft/contracts').Id} [batchId] @param {import('@galcraft/contracts').Id} [projectId] */
+  async importBatch(paths, batchId, projectId) {
+    const current = this.current(), root = this.projectDocuments.currentRoot;
+    if (!current || !root) return fail('ASSET_INDEX_MISSING', '请先打开包含素材索引的作品', 'M04');
+    if (projectId !== undefined && projectId !== current.session.projectId)
+      return fail('PROJECT_STALE', '作品已切换，请返回原作品后导入素材。', 'M04');
+    const isCurrent = () => this.projectDocuments.currentSession === current.session && this.projectDocuments.currentRoot === root;
+    return this.#importBatches.import({ root, projectId: current.session.projectId, current: isCurrent }, paths, batchId,
+      attempted => this.import(attempted, { beforeCommit: () => {
+        if (!isCurrent()) throw fail('PROJECT_STALE', '作品已切换，请返回原作品后重试本批导入。', 'M04').error;
+      } }));
   }
 
   async import(paths, options = {}) {

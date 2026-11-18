@@ -59,6 +59,10 @@
 .plugin-desktop-workbench .plugin-version-change { gap:12px; padding:12px 0; }
 .plugin-desktop-workbench .impact-facts { gap:8px 12px; font-size:13px; margin:12px 0 0; }
 .plugin-editor > h3 { margin:24px 0 8px; font-size:16px; font-weight:600; }
+.plugin-editor .plugin-install-help { max-width: 64ch; margin: 0 0 16px; color: var(--muted-foreground); }
+.plugin-install-path { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; max-width: 720px; }
+.plugin-install-path .gc-field { flex: 1 1 260px; min-width: 0; margin: 0; }
+.plugin-install-path .gc-button { flex: none; }
 .plugin-package-dependencies { display:grid; gap:8px; font-size:13px; overflow-wrap:anywhere; padding-inline-start:20px; }
 .plugin-editor .plugin-document-list { max-height:320px; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
 .plugin-editor .plugin-document-list details { margin-top:8px; font-size:12px; }

@@ -104,7 +104,7 @@ export class MiniStage {
     this.entryControl.className = 'mini-entry';
     this.controls.className = 'mini-stage-controls gc-actions';
     const action = (label: string, run: () => void) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.onclick = run; this.controls.append(button); return button; };
-    for (const [mode, label] of [['inspection', this.t('定位检查','Inspect position','位置を確認')], ['current', this.t('播放当前演出','Play current performance','現在の演出を再生')], ['playtest', this.t('从此处试玩','Playtest from here','ここから試遊')]] as const)
+    for (const [mode, label] of [['inspection', this.t('查看静态画面','View still frame','静止画面を表示')], ['current', this.t('播放当前演出','Play current performance','現在の演出を再生')], ['playtest', this.t('从此处试玩','Playtest from here','ここから試遊')]] as const)
       action(label, () => this.run(mode));
     action(this.t('暂停／继续','Pause / resume','一時停止／再開'),()=>this.pauseOrResume());
     action(this.t('停止','Stop','停止'),()=>this.stop());
@@ -175,7 +175,7 @@ export class MiniStage {
         if (inspected?.ok && inspected.value.snapshot) { compiled = inspected; recovered = true; }
       }
       if (!compiled?.ok || !compiled.value.snapshot || !compiled.value.current) {
-        this.status.textContent = this.t('当前内容存在问题，修复下方问题后更新预览。','Fix the listed issues to update the preview.','表示された問題を修正するとプレビューを更新できます。') + (this.player ? this.t(' 保留上次有效画面。',' Showing the last valid stage.','前回の有効な舞台を表示。') : ''); return;
+        this.status.textContent = this.t('预览暂时无法更新。请检查当前场景。','Preview could not update. Check the current scene.','プレビューを更新できません。現在のシーンを確認してください。') + (this.player ? this.t(' 正在显示上一次成功的预览。',' Showing the last successful preview.','前回のプレビューを表示しています。') : ''); return;
       }
       const snapshot = structuredClone(compiled.value.snapshot);
       const compiledScene = snapshot.scenes.find(scene => scene.scene.id === sceneId);
@@ -262,7 +262,7 @@ export class MiniStage {
         const scene = snapshot.scenes.find(scene => scene.scene.id === target.sceneId);
         const line = (scene?.instructions.findIndex(instruction => instruction.statementId === target.statementId) ?? -1) + 1;
         const eventLabel = eventId && this.mode === 'inspection' ? ` · ${this.t('事件', 'Event', 'イベント')} ${eventId}` : '';
-        const revisionLabel = compiledSource ? ` · ${recovered ? this.t('有效修订', 'Valid revision', '有効なリビジョン') : this.t('修订', 'Revision', 'リビジョン')} ${compiledSource.revision}` : '';
+        const revisionLabel = compiledSource ? ` · ${recovered ? this.t('上次有效版本', 'Last valid version', '前回の有効なバージョン') : this.t('版本', 'Version', 'バージョン')} ${compiledSource.revision}` : '';
         this.provenance.textContent = `${selected.title} / ${scene?.scene.name ?? ''} · ${this.t(`第 ${line} 条`, `Line ${line}`, `${line} 行目`)}${eventLabel}${revisionLabel}`;
         this.root.dataset.sceneId = target.sceneId;
         this.root.dataset.documentId = compiledSource?.documentId ?? '';

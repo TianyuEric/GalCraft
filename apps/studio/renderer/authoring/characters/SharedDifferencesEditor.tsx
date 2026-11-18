@@ -5,6 +5,7 @@ import {Button,Choice,Field} from '../../components/controls.js';
 import {Input} from '../../components/ui/input.js';
 import {Plus,Trash2,ScanFace} from 'lucide-react';
 import { defaultDifferenceCrop, differenceVersionLabel } from './model.js';
+import type { AssetPickerChoice } from '../asset-picker.js';
 import './SharedDifferencesEditor.css';
 export type DifferenceResources=Pick<StudioBridge['assets'],'resolveRuntime'|'releaseRuntime'>;
 type Crop=Extract<NonNullable<CharacterDifference['avatar']>,{kind:'crop'}>['crop'];
@@ -94,33 +95,49 @@ function AvatarPreview({ difference, assets, resources, locale }: { difference: 
   const label = t('共同差分头像预览', 'Shared difference portrait preview', '共通差分のアバタープレビュー');
   return <figure className="shared-difference-portrait"><canvas ref={canvas} width={300} height={300} aria-label={label} /><figcaption>{label}</figcaption>{error && <p role="status">{error}</p>}</figure>;
 }
-export function SharedDifferencesEditor({ value, initialId, change, assets, locale, disabled, resources, previewAsset, produceDifference, removeDifference, persistedIds, selectedId, onSelect }: {
+export function SharedDifferencesEditor({ value, initialId, change, assets, locale, disabled, resources, previewAsset, produceDifference, removeDifference, persistedIds, selectedId, onSelect, chooseAsset }: {
   value: CharacterDifference[]; initialId: Id | null; change(value: CharacterDifference[], initialId: Id | null): void;
   assets: Asset[]; locale: string; disabled?: boolean; resources?: DifferenceResources;
   previewAsset?(id: Id, variantId?: Id): void; removeDifference?(id: Id, replacementId?: Id): Promise<void>;
   produceDifference?(differenceId: Id, assetId: Id, variantId: Id): void;
   persistedIds?: readonly Id[]; selectedId?: Id; onSelect?(id: Id): void;
+  chooseAsset?(source: CharacterDifference['figure'], purpose: 'difference-figure' | 'difference-avatar'): Promise<AssetPickerChoice | null>;
 }) {
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
   const [localId, setLocalId] = useState<Id>();
   const [replacement, setReplacement] = useState('');
   const [removeError, setRemoveError] = useState('');
   const [removing, setRemoving] = useState(false);
+  const [choosingAsset, setChoosingAsset] = useState(false), [pickerError, setPickerError] = useState('');
+  const returnFocus = useRef<HTMLElement | null>(null);
+  useEffect(() => { if (!choosingAsset && returnFocus.current?.isConnected) { returnFocus.current.focus(); returnFocus.current = null; } }, [choosingAsset]);
+  const latest = useRef({ value, initialId }); latest.current = { value, initialId };
   const difference = value.find(item => item.id === (selectedId ?? localId)) ?? value.find(item => item.id === initialId) ?? value[0];
   const images = assets.filter(asset => asset.kind === 'image');
   const referenceAsset = images.find(asset => asset.id === difference?.figure.assetId);
   const referenceVersion = referenceAsset?.variants.find(variant => variant.id === (difference?.figure.variantId ?? referenceAsset.activeVariantId));
   const availableImage = images.find(asset => asset.variants.some(variant => variant.id === asset.activeVariantId));
-  const blocked = disabled || removing;
+  const blocked = disabled || removing || choosingAsset;
   const persisted = !!removeDifference && !!difference && (persistedIds?.includes(difference.id) ?? true);
   const select = (id: Id) => { setLocalId(id); onSelect?.(id); setReplacement(''); setRemoveError(''); };
-  const update = (patch: Partial<CharacterDifference>) => change(value.map(item => item.id === difference?.id ? { ...item, ...patch } : item), initialId);
-  const add = () => {
-    if (!availableImage) return;
-    const item: CharacterDifference = { id: createId(value), name: t('新差分', 'New difference', '新しい差分'),
-      figure: { assetId: availableImage.id, variantId: availableImage.activeVariantId }, avatar: { kind: 'crop', crop: { ...defaultCrop } } };
-    change([...value, item], initialId ?? item.id);
+  const update = (patch: Partial<CharacterDifference>) => change(latest.current.value.map(item => item.id === difference?.id ? { ...item, ...patch } : item), latest.current.initialId);
+  const pickAsset = async (source: CharacterDifference['figure'], purpose: 'difference-figure' | 'difference-avatar', set: (source: CharacterDifference['figure']) => void) => {
+    if (!chooseAsset || choosingAsset) return;
+    returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setChoosingAsset(true); setPickerError('');
+    try { const choice = await chooseAsset(source, purpose); if (choice) set({ assetId: choice.assetId, variantId: choice.variantId }); }
+    catch (reason) { setPickerError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setChoosingAsset(false); }
+  };
+  const addWithSource = (figure: CharacterDifference['figure']) => {
+    const item: CharacterDifference = { id: createId(latest.current.value), name: t('新差分', 'New difference', '新しい差分'),
+      figure, avatar: { kind: 'crop', crop: { ...defaultCrop } } };
+    change([...latest.current.value, item], latest.current.initialId ?? item.id);
     select(item.id);
+  };
+  const add = () => {
+    if (availableImage) addWithSource({ assetId: availableImage.id, variantId: availableImage.activeVariantId });
+    else if (chooseAsset) void pickAsset({ assetId: '', variantId: null }, 'difference-figure', addWithSource);
   };
   const remove = async () => {
     if (!difference) return;
@@ -136,15 +153,15 @@ export function SharedDifferencesEditor({ value, initialId, change, assets, loca
     }
     setReplacement('');
   };
-  const assetField = (label: string, versionLabel: string, source: CharacterDifference['figure'], set: (source: CharacterDifference['figure']) => void) => {
+  const assetField = (label: string, versionLabel: string, source: CharacterDifference['figure'], set: (source: CharacterDifference['figure']) => void, purpose: 'difference-figure' | 'difference-avatar') => {
     const asset = images.find(item => item.id === source.assetId);
     const missingVersion = source.variantId && !asset?.variants.some(item => item.id === source.variantId) ? source.variantId : null;
     return <div className="shared-difference-image-fields">
-      <Field label={label}><Choice label={label} disabled={blocked} value={source.assetId} options={[
+      <Field label={label}>{chooseAsset ? <div className="character-asset-row"><span>{asset?.name ?? t('原图片缺失', 'Original image missing', '元の画像なし')}</span><Button disabled={blocked} onClick={()=>void pickAsset(source,purpose,set)}>{purpose === 'difference-figure' ? t('选择或导入立绘', 'Choose or import figure', '立ち絵を選択・読み込み') : t('选择或导入头像', 'Choose or import portrait', 'アバターを選択・読み込み')}</Button></div> : <Choice label={label} disabled={blocked} value={source.assetId} options={[
         ...(!source.assetId ? [{ value: '', label: t('选择图片', 'Choose image', '画像を選択') }] : []),
         ...images.map(item => ({ value: item.id, label: item.name })),
         ...(!asset && source.assetId ? [{ value: source.assetId, label: t('原图片缺失', 'Original image missing', '元の画像なし') }] : []),
-      ]} onChange={assetId => set({ assetId, variantId: images.find(item => item.id === assetId)?.activeVariantId ?? null })} /></Field>
+      ]} onChange={assetId => set({ assetId, variantId: images.find(item => item.id === assetId)?.activeVariantId ?? null })} />}</Field>
       {asset && <Field label={versionLabel}><Choice label={versionLabel} disabled={blocked} value={source.variantId ?? ''} options={[
         { value: '', label: t('跟随采用版本', 'Follow active version', '採用バージョンに追従') },
         ...asset.variants.map(variant => ({ value: variant.id, label: differenceVersionLabel(asset, variant.id, locale) })),
@@ -159,10 +176,10 @@ export function SharedDifferencesEditor({ value, initialId, change, assets, loca
   return <section className="shared-differences">
     <header className="shared-difference-heading">
       <h3><ScanFace size={16} aria-hidden="true" />{t('共同差分', 'Shared differences', '共通差分')}</h3>
-      <Button disabled={blocked || !availableImage} onClick={add}><Plus size={15} />{t('添加共同差分', 'Add difference', '共通差分を追加')}</Button>
+      <Button disabled={blocked || !availableImage && !chooseAsset} onClick={add}><Plus size={15} />{t('添加共同差分', 'Add difference', '共通差分を追加')}</Button>
     </header>
     <p className="shared-difference-hint">{t('舞台立绘与阅读头像共享同一命名差分。场景中的当前差分与实例变换由演出指令控制。', 'The stage figure and reading portrait share a named difference. Scene commands control the current difference and instance transform.', '舞台の立ち絵と会話アバターは同じ差分を使います。現在の差分とインスタンスの変形はシーンの演出命令で制御します。')}</p>
-    {!availableImage && <p className="shared-difference-hint">{t('先导入角色图片，再配置命名差分。', 'Import a character image to configure differences.', 'キャラクター画像を読み込んでください。')}</p>}
+    {!availableImage && <p className="shared-difference-hint">{chooseAsset ? t('选择或导入图片以添加共同差分。', 'Choose or import an image to add a shared difference.', '画像を選択・読み込んで共通差分を追加します。') : t('先导入角色图片，再配置命名差分。', 'Import a character image to configure differences.', 'キャラクター画像を読み込んでください。')}</p>}
     {availableImage && !difference && <p className="shared-difference-hint">{t('添加差分后可选择立绘版本、阅读头像与取景。', 'Add a difference to select a figure version, reading portrait and framing.', '差分を追加すると立ち絵のバージョン、アバター、構図を選べます。')}</p>}
     {difference && <div className="shared-difference-layout">
       <nav className="shared-difference-list" aria-label={t('差分列表', 'Difference list', '差分一覧')}>
@@ -179,13 +196,14 @@ export function SharedDifferencesEditor({ value, initialId, change, assets, loca
           {previewAsset && <Button disabled={blocked || !images.some(asset => asset.id === difference.figure.assetId && (!difference.figure.variantId || asset.variants.some(variant => variant.id === difference.figure.variantId)))} onClick={() => previewAsset(difference.figure.assetId, difference.figure.variantId ?? undefined)}>{t('查看源图', 'View source', '元画像を表示')}</Button>}
           {produceDifference && referenceAsset && referenceVersion && <Button disabled={blocked} onClick={() => produceDifference(difference.id, referenceAsset.id, referenceVersion.id)}>{t('制作整图差分', 'Create figure variation', '全身差分を制作')}</Button>}
         </div>
-        {assetField(t('立绘源图', 'Figure source', '立ち絵の元画像'), t('立绘版本', 'Figure version', '立ち絵のバージョン'), difference.figure, figure => update({ figure }))}
+        {assetField(t('立绘源图', 'Figure source', '立ち絵の元画像'), t('立绘版本', 'Figure version', '立ち絵のバージョン'), difference.figure, figure => update({ figure }), 'difference-figure')}
         <Field label={portraitLabel}><Choice label={portraitLabel} disabled={blocked} value={avatar?.kind ?? 'default'} options={[
           { value: 'default', label: t('角色默认头像', 'Character default', '標準アバター') },
           { value: 'image', label: t('独立图片', 'Separate image', '別画像') },
           { value: 'crop', label: t('裁剪此立绘', 'Crop this figure', '立ち絵から切り抜く') },
         ]} onChange={kind => update({ avatar: kind === 'image' ? { kind, ...difference.figure } : kind === 'crop' ? { kind, crop: { ...defaultCrop } } : null })} /></Field>
-        {avatar?.kind === 'image' && assetField(t('头像图片', 'Portrait image', 'アバター画像'), t('头像版本', 'Portrait version', 'アバターのバージョン'), avatar, source => update({ avatar: { kind: 'image', ...source } }))}
+        {avatar?.kind === 'image' && assetField(t('头像图片', 'Portrait image', 'アバター画像'), t('头像版本', 'Portrait version', 'アバターのバージョン'), avatar, source => update({ avatar: { kind: 'image', ...source } }), 'difference-avatar')}
+        {pickerError && <p role="alert" className="character-error">{pickerError}</p>}
         {crop && <>
           <FigureCropEditor difference={difference} assets={assets} resources={resources} crop={crop} change={crop => update({ avatar: { kind: 'crop', crop } })} locale={locale} disabled={blocked} />
           <div className="shared-difference-image-fields">{([
@@ -210,5 +228,6 @@ export function SharedDifferencesEditor({ value, initialId, change, assets, loca
         </details>
       </div>
     </div>}
+    {!difference && pickerError && <p role="alert" className="character-error">{pickerError}</p>}
   </section>;
 }

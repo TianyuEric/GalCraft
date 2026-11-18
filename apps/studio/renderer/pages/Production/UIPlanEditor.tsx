@@ -1,7 +1,22 @@
 import type { UIPlanProposal } from "@galcraft/authoring/production";
 import { Button, Choice, Field } from "../../components/controls.js";
+import { Input } from "../../components/ui/input.js";
+import { Textarea } from "../../components/ui/textarea.js";
 import type { ProductionSession } from "./session.js";
 import { tr } from "./Production.js";
+
+export function planStepTitle(step: UIPlanProposal["steps"][number], index: number, locale: string) {
+  return step.description || tr(locale, `步骤 ${index + 1}`, `Step ${index + 1}`, `ステップ ${index + 1}`);
+}
+
+export function planDependencies(steps: UIPlanProposal["steps"], step: UIPlanProposal["steps"][number], locale: string) {
+  return step.dependsOn.map(key => {
+    const index = steps.findIndex(candidate => candidate.key === key);
+    return index < 0
+      ? tr(locale, "缺失的步骤", "Missing step", "見つからないステップ")
+      : planStepTitle(steps[index]!, index, locale);
+  }).join(tr(locale, "、", ", ", "、"));
+}
 
 export function UIPlanEditor({
   value,
@@ -30,16 +45,16 @@ export function UIPlanEditor({
   return (
     <div className="ui-plan-editor">
       <Field label={t("计划目标", "Plan objective", "計画の目的")}>
-        <input
+        <Input
           value={value.summary}
           onChange={(e) => onChange({ ...value, summary: e.target.value })}
         />
       </Field>
       {value.steps.map((step, index) => (
-        <article className="plan-step-editor" key={step.key}>
+        <article className="plan-step-editor" key={step.key} tabIndex={-1}>
           <header>
             <span className="step-number">{index + 1}</span>
-            <strong>{step.description || step.key}</strong>
+            <h3>{planStepTitle(step, index, locale)}</h3>
             <Button
               tone="quiet"
               onClick={() =>
@@ -52,8 +67,11 @@ export function UIPlanEditor({
               {t("移除", "Remove", "削除")}
             </Button>
           </header>
+          {step.dependsOn.length > 0 && <p className="plan-step-dependencies">
+            {t("先完成", "After", "先行ステップ")} · {planDependencies(value.steps, step, locale)}
+          </p>}
           <Field label={t("修改要求", "Instruction", "変更の要望")}>
-            <textarea
+            <Textarea rows={3}
               value={step.instruction}
               onChange={(e) => update(index, { instruction: e.target.value })}
             />
@@ -170,7 +188,7 @@ export function UIPlanEditor({
                       ][i]
                     }
                   >
-                    <input
+                    <Input
                       type="number"
                       min="1"
                       value={Number(
@@ -223,11 +241,7 @@ export function UIPlanEditor({
               </Field>
             )}
           </div>
-          <small>
-            {t("先完成", "After", "先行ステップ")}:{" "}
-            {step.dependsOn.join(", ") || "—"} · {t("素材", "Assets", "素材")}:{" "}
-            {step.assetKeys.join(", ") || "—"}
-          </small>
+          {step.assetKeys.length > 0 && <small>{t("素材键", "Asset keys", "素材キー")} · {step.assetKeys.join(", ")}</small>}
         </article>
       ))}
     </div>

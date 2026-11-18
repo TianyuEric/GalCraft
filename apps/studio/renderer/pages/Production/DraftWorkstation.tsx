@@ -34,6 +34,8 @@ export function DraftWorkstation({ session: s, locale, services, busy, run, gene
   const [inspector, setInspector] = useState(false);
   const [presetName, setPresetName] = useState<string | null>(null);
   const workstation = useRef<HTMLDivElement>(null), parameters = useRef<HTMLElement>(null), pendingFocus = useRef<string | null>(null);
+  const content = useRef<HTMLDivElement>(null), planHeading = useRef<HTMLHeadingElement>(null);
+  const inputScroll = useRef<number | null>(null);
   const fieldSelector = (key: string) => `[data-field="${CSS.escape(key)}"] :is(input,textarea,button)`;
   const showField = (key: string) => {
     pendingFocus.current = key;
@@ -104,18 +106,39 @@ export function DraftWorkstation({ session: s, locale, services, busy, run, gene
     if (!validate()) return;
     await s.saveDraft(true);
     try { s.plan = unwrap(await s.bridge.production.plan({ draftId: draft.id, name: draft.name || t('制作任务', 'Production task', '制作タスク') })); } catch (error) { const message = String(error).replace(/^Error: /, ''); const key = Object.keys(v.fields).find(key => message.includes(key)); if (key) { setErrors(old => ({ ...old, [key]: message })); showField(key); } throw error; }
+    inputScroll.current = content.current?.scrollTop ?? 0;
     s.changed();
   });
   const plan = s.plan;
-  return <div ref={workstation} className={`production-workstation ${inspector ? 'show-inspector' : ''}`} data-inspector-external={!!inspectorContainer}>
+  const requestCount = plan?.sendSummary.reduce((sum, row) => sum + row.requests, 0) ?? 0;
+  useEffect(() => {
+    if (plan) {
+      if (content.current) content.current.scrollTop = 0;
+      planHeading.current?.focus({ preventScroll: true });
+    } else if (inputScroll.current !== null) {
+      if (content.current) content.current.scrollTop = inputScroll.current;
+      inputScroll.current = null;
+      workstation.current?.querySelector<HTMLButtonElement>('[data-production-review-request]')?.focus({ preventScroll: true });
+    }
+  }, [plan]);
+  return <div ref={workstation} className={`production-workstation ${inspector && !plan ? 'show-inspector' : ''}`} data-inspector-external={!!inspectorContainer} data-send-review={!!plan}>
     <section className="production-document">
-      <header className="production-document-toolbar"><Input aria-label={t('制作名称', 'Production name', '制作名')} value={draft.name ?? ''} placeholder={t('未命名制作', 'Untitled production', '名称未設定')} onChange={e => { draft.name = e.target.value; s.update({}); }}/><span role="status">{s.draftSaving ? t('保存中', 'Saving', '保存中') : s.draftDirty ? t('草稿未保存', 'Draft unsaved', '下書き未保存') : draft.revision ? t('草稿已保存', 'Draft saved', '下書き保存済み') : t('未开始编辑', 'Ready to edit', '編集待ち')}</span>
-        {(revealInspector || !inspectorContainer) && <Button className={inspectorContainer ? undefined : 'production-inspector-toggle'} onClick={inspectorContainer ? revealInspector : () => setInspector(!inspector)}>{t('参数', 'Parameters', 'パラメータ')}</Button>}</header>
-      <div className="production-document-content">
+      <header className="production-document-toolbar">
+        {plan ? <strong className="production-frozen-name">{plan.task.name}</strong> : <>
+          <Input aria-label={t('制作名称', 'Production name', '制作名')} value={draft.name ?? ''} placeholder={t('未命名制作', 'Untitled production', '名称未設定')} onChange={e => { draft.name = e.target.value; s.update({}); }}/>
+          <span role="status">{s.draftSaving ? t('保存中', 'Saving', '保存中') : s.draftDirty ? t('草稿未保存', 'Draft unsaved', '下書き未保存') : draft.revision ? t('草稿已保存', 'Draft saved', '下書き保存済み') : t('未开始编辑', 'Ready to edit', '編集待ち')}</span>
+          {(revealInspector || !inspectorContainer) && <Button className={inspectorContainer ? undefined : 'production-inspector-toggle'} onClick={inspectorContainer ? revealInspector : () => setInspector(!inspector)}>{t('参数', 'Parameters', 'パラメータ')}</Button>}
+        </>}
+      </header>
+      <div className="production-document-content" ref={content}><div className="production-form-content">
         {s.origin && <p className="production-origin"><Button tone="quiet" disabled={busy} onClick={returnToOrigin ?? (() => navigate(s.origin!.page))}><ArrowLeft size={14}/>{t('返回来源', 'Return to origin', '元の画面に戻る')}</Button>{s.data.characters.find(character => character.id === s.origin?.characterId)?.name ?? s.data.assets.find(asset => asset.id === s.origin?.asset?.assetId)?.name ?? s.data.scenes.find(scene => scene.id === s.origin?.sceneId)?.name ?? (s.origin.pageIds.length ? t('页面设计', 'Page design', 'ページ編集') : t('独立制作', 'Independent production', '独立した制作'))}</p>}
-        {plan ? <section className="production-send-review" aria-label={t('本次执行', 'This execution', '今回の実行')}>
-          <h2>{t('本次执行', 'This execution', '今回の実行')} · {plan.sendSummary.reduce((sum, row) => sum + row.requests, 0)} {t('次请求', 'requests', '回のリクエスト')}</h2>
-          <p>{t('服务未提供报价。以下输入与配置已冻结；开始后生成候选。', 'The service has not quoted a price. These inputs and settings are frozen for generation.', '料金の見積もりはありません。下記の入力と設定を固定して候補を作成します。')}</p>
+        {plan ? <section className="production-send-review" aria-label={t('发送计划', 'Request plan', '送信計画')}>
+          <h2 ref={planHeading} tabIndex={-1}>{t('发送计划', 'Request plan', '送信計画')}</h2>
+          <p>{t('已冻结以下输入和配置。确认开始后发送请求并生成候选。', 'The inputs and settings below are frozen. Starting generation sends the requests and creates candidates.', '以下の入力と設定は固定済みです。生成を開始するとリクエストを送信し、候補を作成します。')}</p>
+          <dl className="production-request-summary">
+            <div><dt>{t('请求数', 'Requests', 'リクエスト数')}</dt><dd>{requestCount.toLocaleString(locale)}</dd></div>
+            <div><dt>{t('预计费用', 'Estimated cost', '見積もり料金')}</dt><dd>{t('服务未提供报价', 'Quote unavailable', '見積もり未提供')}</dd></div>
+          </dl>
           {plan.task.items.map(item => { const value = item.input as GenerationInput; const summary = plan.sendSummary.find(row => row.itemId === item.id); return <article className="production-send-step" key={item.id}>
             <h3>{item.configSnapshot?.name ?? t('本地步骤', 'Local step', 'ローカル処理')} <Badge>{item.purpose}</Badge></h3>
             {summary && <p>{summary.destination} · {summary.model} · {summary.requests} {t('次请求', 'requests', '回')} · {summary.textCharacters.toLocaleString(locale)} {t('字符','characters','文字')} · {inputTextSummary(value).attachments} {t('个附件','attachments','添付')}</p>}
@@ -149,10 +172,18 @@ export function DraftWorkstation({ session: s, locale, services, busy, run, gene
           {(s.purpose === 'text' || prepare) && <section className="production-explicit-context" data-field="context">{errors.context && <p role="alert" className="field-error">{errors.context}</p>}<header><h3>{t('明确选择的参考资料', 'Explicitly selected context', '明示的に選択した資料')}</h3><Button onClick={() => void run(() => s.captureContext())}>{t('读取当前范围', 'Read the selected scope', '選択範囲を読む')}</Button></header><ContextTable parts={v.context} change={context => s.update({ context })} locale={locale} requestSummary={textSummary} estimated={textSteps.some(step=>step.preview?.estimated)} pendingStep={prepare} requestSteps={textSteps.flatMap(step=>step.preview?[{label:step.label,characters:inputTextSummary(step.preview.input).textCharacters}]:[])}/></section>}
           {!!Object.keys(v.fields).filter(key => !['instruction', 'positive', 'negative', 'width', 'height', 'count', 'language', 'text', 'prompt', 'durationSec', 'creationMode', 'promptConnectionId', 'promptModel', 'speechLines', 'references', 'reference', 'omittedPorts', 'voiceId', 'speed', 'emotion', 'instrumental', 'lyrics', 'maxOutputTokens', 'referenceAudio', 'referenceText', 'referenceLanguage', 'seed'].includes(key) && v.fields[key] !== null && v.fields[key] !== '').length && <Disclosure><span>{t('保留的其他参数', 'Retained additional parameters', '保持した追加パラメータ')}</span><CodeBlock code={JSON.stringify(v.fields, null, 2)} locale={locale}/><p>{t('原有值保存在草稿中。当前执行输入按所选操作编译。', 'Original values remain in the draft. The selected operation compiles the execution input.', '元の値を下書きに保持。選択した操作から実行入力を作成します。')}</p></Disclosure>}
         </>}
-      </div>
-      <footer className="production-document-actions"><Button disabled={busy || s.draftSaving} onClick={() => void run(() => s.saveDraft(true))}><Save size={14}/>{t('保存草稿', 'Save draft', '下書きを保存')}</Button>{plan ? <><Button onClick={() => { s.plan = null; s.changed(); }}>{t('返回修改', 'Edit input', '入力を編集')}</Button><Button tone="primary" disabled={busy} onClick={() => void run(async () => { const task = unwrap(await s.bridge.production.submit(plan.planId)); s.taskId = task.id; draft.submittedTaskId = task.id; s.plan = null; s.selected.clear(); s.changed(); generated(); })}><Play size={14}/>{t('开始生成', 'Start generation', '生成を開始')} · {plan.sendSummary.reduce((sum, row) => sum + row.requests, 0)}</Button></> : <Button tone="primary" disabled={busy || scheme?.production?.executor === 'planned'} onClick={check}><Check size={14}/>{t('检查并开始', 'Check and start', '確認して開始')}</Button>}</footer>
+      </div></div>
+      <footer className="production-document-actions">
+        {plan ? <>
+          <Button disabled={busy} onClick={() => { s.plan = null; s.changed(); }}><ArrowLeft size={14}/>{t('返回修改', 'Edit input', '入力を編集')}</Button>
+          <Button tone="primary" disabled={busy} onClick={() => void run(async () => { const task = unwrap(await s.bridge.production.submit(plan.planId)); s.taskId = task.id; draft.submittedTaskId = task.id; s.plan = null; s.selected.clear(); s.changed(); generated(); })}><Play size={14}/>{t('开始生成', 'Start generation', '生成を開始')}</Button>
+        </> : <>
+          <Button disabled={busy || s.draftSaving} onClick={() => void run(() => s.saveDraft(true))}><Save size={14}/>{t('保存草稿', 'Save draft', '下書きを保存')}</Button>
+          <Button data-production-review-request tone="primary" disabled={busy || scheme?.production?.executor === 'planned'} onClick={check}><Check size={14}/>{t('查看发送计划', 'Review request plan', '送信計画を確認')}</Button>
+        </>}
+      </footer>
     </section>
-    {placeInspector(<aside ref={parameters} className="production-inspector" hidden={!active} aria-busy={busy}><fieldset className="production-inspector-fields" disabled={busy}>{!inspectorContainer && <Button className="production-inspector-toggle" onClick={() => setInspector(false)}>{t('返回输入', 'Back to input', '入力に戻る')}</Button>}<h2>{t('本次制作参数', 'Production parameters', '今回の制作設定')}</h2>
+    {placeInspector(<aside ref={parameters} className="production-inspector" hidden={!active || !!plan} aria-busy={busy}><fieldset className="production-inspector-fields" disabled={busy || !!plan}>{!inspectorContainer && <Button className="production-inspector-toggle" onClick={() => setInspector(false)}>{t('返回输入', 'Back to input', '入力に戻る')}</Button>}<h2>{t('本次制作参数', 'Production parameters', '今回の制作設定')}</h2>
       {media && <Field label={t('制作方案', 'Production scheme', '制作方法')}><Choice label={t('制作方案', 'Production scheme', '制作方法')} value={v.productionRecipeId ?? ''} options={[{ value: '', label: t('直接使用连接', 'Use connection directly', '接続を直接使用') }, ...s.data.recipes.filter(recipe => recipe.production?.operation === operation && recipe.uses.includes(draft.activeUse)).map(recipe => ({ value: recipe.id, label: `${localizeRecipe(recipe, locale).name}${recipe.production?.executor === 'planned' ? t(' · 规划', ' · planned', '・計画') : ''}` }))]} onChange={id => { const recipe = s.data.recipes.find(item => item.id === id); s.update({ productionRecipeId: id || null }); if (recipe?.production) { s.update({ fields: resolveProductionFields(v, recipe, parameterPreset?.parameterPreset?.recipeId === recipe.id ? parameterPreset : null) }); } s.applyDefaults(); s.changed(); }}/></Field>}
       {scheme?.production?.executor === 'planned' && <p role="status">{localizeRecipe(scheme, locale).description}</p>}
       {scheme?.production?.defaults.score !== undefined && (Object.hasOwn(v.parameterOverrides ?? {}, 'score') || v.explicitFields?.includes('score')) && <section className="production-parameter-presets"><p role="status">{t('正在使用已修改乐谱；切换方案保留整份乐谱。', 'Using your modified score. Switching schemes retains the entire score.', '編集済みの楽譜を使用しています。制作方法を変えても楽譜全体を保持します。')}</p><Button tone="quiet" onClick={() => s.resetParameter('score', scheme.production!.defaults.score!)}>{t('替换当前乐谱 · 跟随所选方案', 'Replace current score · follow selected scheme', '楽譜を置換・選択した制作方法に従う')}</Button></section>}

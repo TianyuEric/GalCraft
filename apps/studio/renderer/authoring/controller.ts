@@ -1,8 +1,8 @@
 import { DialogueContentSchema, dialoguePlainText } from '@galcraft/contracts';
 import { countNameCharacters, createId, reserveIds } from '@galcraft/contracts';
-import type { Asset, AssetIdsResult, Character, EditInput, EditReceipt, FieldSpec, Id, Issue, Json, LastValidSceneSource, Project, Ref, Result, SavePlan, SaveReceipt, SemanticPage, SemanticQuery, Snapshot, Source, SourceLocation, StudioBridge, StudioPreferences, Variable, VersionRef, WorkspaceResume } from '@galcraft/contracts';
+import type { Asset, AssetIdsResult, Character, DocumentView, EditInput, EditReceipt, FieldSpec, Id, Issue, Json, LastValidSceneSource, Project, Ref, Result, SavePlan, SaveReceipt, SaveScope, SemanticPage, SemanticQuery, Snapshot, Source, SourceLocation, StudioBridge, StudioPreferences, Variable, VersionRef, WorkspaceResume } from '@galcraft/contracts';
 import { DefaultStudioPreferences, IdSchema, ProjectSchema } from '@galcraft/contracts';
-import { applyTextEdits, duplicateStatements, fieldAt, parse, patchFields, presentationArgs, toDocumentPatch } from '@galcraft/dsl';
+import { applyTextEdits, conditionSignatures, duplicateStatements, fieldAt, parse, patchFields, presentationArgs, toDocumentPatch } from '@galcraft/dsl';
 import type { ParseResult, ValueNode } from '@galcraft/dsl';
 import { characterEdit, neutralCharacter, removeCharacterEdit, type CharacterDraft } from './characters/model.js';
 import { animationSourceChanges } from './animation-source.js';
@@ -18,6 +18,7 @@ export type AuthoringSource = { projectDocumentId: Id; projectRevision: number; 
   assetFolders?: readonly (readonly string[])[];
   references?: (Ref & { name: string })[]; documentVersions?: {documentId:Id;revision:number}[]; anyDirty?: boolean; assetIndexDocumentId?: Id; assetIndexRevision?: number };
 export type AssetQuery = { kind: string | null; text: string; offset: number; limit: number;
+  assetIds?: Id[];
   typeFields?: Record<string, Json>;
   folder?: string[] | null; sort?: 'name' | 'size' | 'modified'; direction?: 'asc' | 'desc';
   allowedKinds?: Asset['kind'][]; characterId?: Id | null; sceneId?: Id | null; locale?: string | null;
@@ -38,7 +39,7 @@ export type AuthoringServices = {
   recordAssetUse?: StudioBridge['assets']['recordUse'];
   removeRecentAsset?: StudioBridge['assets']['removeRecent'];
   allAssetIds?(query: Omit<AssetQuery, 'offset' | 'limit'>): Promise<Result<AssetIdsResult>>;
-  importAssets?(paths: string[]): Promise<Result<{ succeeded: Asset[]; failed: { path: string; issue: Issue }[] }>>;
+  importAssets?: StudioBridge['assets']['import'];
   pickAssetFiles?: StudioBridge['files']['pickAssets'];
   getAsset?(id: Id): ReturnType<StudioBridge['assets']['get']>;
   inspectModelAsset?: StudioBridge['assets']['inspectModel'];
@@ -67,12 +68,16 @@ export type AuthoringRefresh = { documents: import('@galcraft/contracts').Docume
 export type AuthoringStatus = { dirty: boolean; save: 'idle' | 'saving' | 'failed'; savedRevision: number;
   preview: 'none' | 'synced' | 'updateAvailable' | 'restartRequired' | 'lastValid'; issues: Issue[];
   compilation: { state: 'none' | 'current' | 'lastValid' | 'failed'; snapshotId: Id | null; documents: { documentId: Id; revision: number }[] } };
+export type AuthoringSaveFailure = { attemptId: string; issues: Issue[]; versions: VersionRef[]; objects: import('@galcraft/contracts').SaveObjectRef[]; objectKeys: string[]; all: boolean };
 
 function failed<T>(code: string, message: string): Result<T> {
   const error: Issue = { code, message, severity: 'error', owner: 'M01', related: [], actions: ['retry'] };
   return { ok: false, error, issues: [error] };
 }
 function success<T>(value: T): Result<T> { return { ok: true, value, warnings: [] }; }
+function failureIssues(result: { error: Issue; issues: Issue[] }): Issue[] {
+  return [...new Map([result.error, ...result.issues].map(issue => [JSON.stringify([issue.code, issue.source, issue.message]), issue])).values()];
+}
 function version(documentId: Id, revision: number): VersionRef { return { ref: { kind: 'document', id: documentId }, revision }; }
 function sceneOf(source: AuthoringSource, documentId: Id): SceneSource | undefined { return source.scenes.find(scene => scene.documentId === documentId); }
 function sameIds(a: readonly Id[], b: readonly Id[]): boolean { return a.length === b.length && a.every((id, index) => id === b[index]); }
@@ -181,9 +186,16 @@ export function queryDialogueText(source: AuthoringSource, term: string, offset 
 }
 
 export class AuthoringController {
+  private projectEpoch = 0;
+  private readSequence = 0;
+  private compileSequence = 0;
   private currentParses = new Map<Id, ParseResult>();
   source: AuthoringSource | null = null;
   engineIssue: Issue | null = null;
+  readIssue: Issue | null = null;
+  compilationIncomplete = true;
+  compilationFailureIssues: Issue[] = [];
+  readonly saveFailures = new Map<string, AuthoringSaveFailure>();
   preferences: StudioPreferences = structuredClone(DefaultStudioPreferences);
   scene: SceneSource | null = null;
   selection: AuthoringSelection | null = null;
@@ -204,8 +216,11 @@ export class AuthoringController {
   constructor(readonly services: AuthoringServices) {}
 
   async open(): Promise<Result<void>> {
+    const epoch = ++this.projectEpoch;
     const loaded = await this.services.read();
-    if (!loaded.ok) return loaded;
+    if (epoch !== this.projectEpoch) return failed('PROJECT_CHANGED', '作品已切换，请重新检查');
+    if (!loaded.ok) { this.readIssue = loaded.error; this.compilationIncomplete = true; return loaded; }
+    this.readIssue = null;
     const valid = ProjectSchema.safeParse(loaded.value.project);
     if (!valid.success) return failed('PROJECT_INVALID', '作品配置不符合当前规格');
     reserveIds(loaded.value);
@@ -213,8 +228,10 @@ export class AuthoringController {
     this.currentParses.clear();
     this.lastValid.clear();
     const preferences = await this.services.readPreferences();
+    if (epoch !== this.projectEpoch) return failed('PROJECT_CHANGED', '作品已切换，请重新检查');
     if (preferences.ok) this.preferences = preferences.value;
     const resume = await this.services.bridge.authoringPreferences.readWorkspace(loaded.value.project.projectId);
+    if (epoch !== this.projectEpoch) return failed('PROJECT_CHANGED', '作品已切换，请重新检查');
     this.workbench = resume.ok ? resume.value?.workbench : undefined;
     const position = resolveResume(loaded.value, resume.ok ? resume.value : null);
     this.scene = position.scene;
@@ -232,10 +249,12 @@ export class AuthoringController {
   }
 
   close(): void {
+    this.projectEpoch++; this.readSequence++; this.compileSequence++;
     this.currentParses.clear();
     if (this.resumeTimer) { clearTimeout(this.resumeTimer); this.resumeTimer = null; }
     this.source = null; this.scene = null; this.selection = null; this.workbench = undefined;
     this.engineIssue = null;
+    this.readIssue = null; this.saveFailures.clear(); this.compilationIncomplete = true; this.compilationFailureIssues = [];
     this.booleanOrigins.clear();this.historyLabel='';this.lastOperationDocumentId=null;
     this.lastValid.clear(); this.status = { dirty: false, save: 'idle', savedRevision: 0, preview: 'none', issues: [],
       compilation: { state: 'none', snapshotId: null, documents: [] } };
@@ -326,14 +345,14 @@ export class AuthoringController {
     const listed = await this.services.bridge.documents.list(); if (!listed.ok) return listed;
     if (target && !listed.value.some(document => document.documentId === target.documentId && document.revision === target.revision))
       return failed('EDIT_TARGET_CHANGED', '指令来源已变化，请重新确认目标');
-    const commands=await this.services.bridge.plugins?.commandSpecs?.();if(commands&&!commands.ok)return commands;
+    const contracts = await this.commandContracts(); if (!contracts.ok) return contracts;
     if (target && !this.sceneForEdit(target)) return failed('EDIT_TARGET_CHANGED', '指令来源已变化，请重新确认目标');
     const input: EditInput = { label: `编辑 ${changes.map(item=>item.field).join('、')}`, origin: ids.length>1?'batch':'field', expected: [], patches: [], preparedAssets: [], requiredRefs: [] };
     for (const id of ids) {
       const node = state.parsed.cst.find(item => item.id === id);
       const canonical = source && node?.command === 'setComplexAnimation'
         ? [...animationSourceChanges(node.object?.value as Record<string, unknown> ?? {}, source.field, source.value), ...changes.filter(change => !['animation', 'segments', 'resourceId'].includes(change.field))] : changes;
-      const planned = prepareAuthoringEdit(listed.value,{op:'commands.fields',sceneId:current.sceneId,ids:[id],changes:canonical},commands?.value??[]);
+      const planned = prepareAuthoringEdit(listed.value,{op:'commands.fields',sceneId:current.sceneId,ids:[id],changes:canonical},contracts.value.commands,contracts.value.conditions);
       if (!planned.ok) return planned;
       for(const patch of planned.value.patches){const previous=input.patches.find(item=>item.kind==='text'&&item.documentId===patch.documentId);if(previous?.kind==='text'&&patch.kind==='text')previous.edits.push(...patch.edits);else input.patches.push(patch);}
       for(const expected of planned.value.expected)if(!input.expected.some(item=>item.ref.id===expected.ref.id))input.expected.push(expected);
@@ -351,10 +370,10 @@ export class AuthoringController {
     ids = target?.statementIds ?? ids;
     if (!ids.length) return failed('SELECTION_EMPTY', '请选择语句');
     const listed=await this.services.bridge.documents.list();if(!listed.ok)return listed;
-    const contracts=await this.services.bridge.plugins?.commandSpecs?.();if(contracts&&!contracts.ok)return contracts;
+    const contracts = await this.commandContracts(); if (!contracts.ok) return contracts;
     if (target && (!this.sceneForEdit(target) || !listed.value.some(document => document.documentId === target.documentId && document.revision === target.revision)))
       return failed('EDIT_TARGET_CHANGED', '指令来源已变化，请重新确认目标');
-    const planned=prepareAuthoringEdit(listed.value,{op:'commands.fields',sceneId:current.sceneId,ids,changes:[{field:spec.path,op:'set',value}]},contracts?.value??[]);if(!planned.ok)return planned;
+    const planned=prepareAuthoringEdit(listed.value,{op:'commands.fields',sceneId:current.sceneId,ids,changes:[{field:spec.path,op:'set',value}]},contracts.value.commands,contracts.value.conditions);if(!planned.ok)return planned;
     const edits: { start: number; end: number; text: string; oldText: string }[] = [];
     const origins = new Map(this.booleanOrigins);
     for (const id of ids) {
@@ -449,8 +468,8 @@ export class AuthoringController {
     const listed=await this.services.bridge.documents.list();if(!listed.ok)return listed;
     const characters=characterEdit(source,listed.value,newCharacters.map(item=>neutralCharacter(item.id,item.name.trim(),source.project)));
     const virtual=characters.patches.flatMap(patch=>patch.kind==='document'&&patch.after?[{documentId:patch.documentId,revision:1,savedRevision:1,dirty:false,format:'json' as const,files:(patch.after as {files:Record<string,string>}).files,savedFiles:{}}]:[]);
-    const contracts=await this.services.bridge.plugins?.commandSpecs?.();if(contracts&&!contracts.ok)return contracts;
-    const planned=prepareAuthoringEdit([...listed.value,...virtual],{op:'commands.insert',sceneId:current.sceneId,beforeId,commands:lines.map(line=>({command:'say',args:{speaker:line.speaker,text:line.text}}))},contracts?.value??[]);if(!planned.ok)return planned;
+    const contracts = await this.commandContracts(); if (!contracts.ok) return contracts;
+    const planned=prepareAuthoringEdit([...listed.value,...virtual],{op:'commands.insert',sceneId:current.sceneId,beforeId,commands:lines.map(line=>({command:'say',args:{speaker:line.speaker,text:line.text}}))},contracts.value.commands,contracts.value.conditions);if(!planned.ok)return planned;
     const text=planned.value.patches.flatMap(patch=>patch.kind==='text'?patch.edits.map(edit=>edit.after):[]).join(''),id=parse({documentId:current.documentId,revision:current.revision,text}).cst[0]?.id;
     const result=await this.commit({...planned.value,label:`插入 ${lines.length} 条对白`,origin:'batch',patches:[...characters.patches,...planned.value.patches]});
     if(result.ok&&id){this.select([id]);this.setScroll(id,0,this.scroll.scrollLeft);}return result;
@@ -460,8 +479,8 @@ export class AuthoringController {
     const current = this.scene; const state = this.parsed();
     if (!current || !state || state.readOnly) return failed('SOURCE_INVALID', '原文存在错误，不能插入指令');
     const listed=await this.services.bridge.documents.list();if(!listed.ok)return listed;
-    const commands=await this.services.bridge.plugins?.commandSpecs?.();if(commands&&!commands.ok)return commands;
-    const planned=prepareAuthoringEdit(listed.value,{op:'commands.insert',sceneId:current.sceneId,beforeId,commands:[{command,args}]},commands?.value??[]);if(!planned.ok)return planned;
+    const contracts = await this.commandContracts(); if (!contracts.ok) return contracts;
+    const planned=prepareAuthoringEdit(listed.value,{op:'commands.insert',sceneId:current.sceneId,beforeId,commands:[{command,args}]},contracts.value.commands,contracts.value.conditions);if(!planned.ok)return planned;
     const text=planned.value.patches.flatMap(patch=>patch.kind==='text'?patch.edits.map(edit=>edit.after):[]).join('');
     const id=parse({documentId:current.documentId,revision:current.revision,text}).cst[0]?.id;
     const result=await this.commit(planned.value);
@@ -502,14 +521,15 @@ export class AuthoringController {
       if (applied.ok && this.source) await this.services.recordAssetUse?.({ projectId: this.source.project.projectId, assetIds: [asset.id] });
       return applied;
     }
-    const args = kind === 'background' ? { op: 'show', assetId: asset.id, fit: 'cover', positionX: 0.5, positionY: 0.5 } :
-      illustration ? { op: 'show', objectId: options.objectId ?? createId(this.source), assetId: asset.id,
-        illustrationFrame: { widthRatio: .5, heightRatio: .5, fit: 'contain' } } :
-      figure ? { op: 'show', objectId: options.objectId ?? createId(this.source), assetId: asset.id,
-        ...(options.characterId ?? asset.characterId ? { characterId: options.characterId ?? asset.characterId } : {}), station: options.station ?? 'center' } :
-      kind === 'bgm' ? { op: 'play', assetId: asset.id } : { op: 'play', soundId: createId(this.source), assetId: asset.id };
+    const characterId = options.characterId ?? asset.characterId;
+    const args: Record<string, Json> = {
+      assetId: asset.id,
+      ...((figure || illustration) && options.objectId ? { objectId: options.objectId } : {}),
+      ...(figure && characterId ? { characterId } : {}),
+      ...(figure && options.station ? { station: options.station } : {}),
+    };
     const command = kind === 'background' ? 'changeBg' : illustration ? 'changeIllustration' : figure ? 'changeFigure' : kind === 'bgm' ? 'bgm' : 'playEffect';
-    const applied = await this.insertCommand(command,args as unknown as Record<string,Json>,beforeId);
+    const applied = await this.insertCommand(command, args, beforeId);
     if (applied.ok && this.source) await this.services.recordAssetUse?.({ projectId: this.source.project.projectId, assetIds: [asset.id] });
     return applied;
   }
@@ -565,29 +585,105 @@ export class AuthoringController {
   async save(all = false): Promise<Result<SaveReceipt>> {
     if (!all && !this.scene) return failed('SCENE_MISSING', '请选择场景');
     this.status.save = 'saving';
-    const plan = await this.services.bridge.documents.planSave(all ? { kind: 'all' } : { kind: 'current', documentId: this.scene!.documentId });
-    if (!plan.ok) { this.status.save = 'failed'; this.status.issues = plan.issues; return plan; }
-    return this.savePlanned(plan.value);
+    const scope: SaveScope = all ? { kind: 'all' } : { kind: 'current', documentId: this.scene!.documentId };
+    const plan = await this.services.bridge.documents.planSave(scope);
+    if (!plan.ok) { this.recordSaveFailure(plan, scope); return plan; }
+    return this.savePlanned(plan.value, scope);
   }
 
-  async savePlanned(plan: SavePlan): Promise<Result<SaveReceipt>> {
+  async savePlanned(plan: SavePlan, scope?: SaveScope): Promise<Result<SaveReceipt>> {
     this.status.save = 'saving';
     const saved = await this.services.bridge.documents.save(plan.planId);
-    if (!saved.ok) { this.status.save = 'failed'; this.status.issues = saved.issues; return saved; }
+    if (!saved.ok) { this.recordSaveFailure(saved, plan); return saved; }
+    this.clearSavedFailures(plan, saved.value);
+    if (!plan.files.length && scope) {
+      const listed = await this.services.bridge.documents.list();
+      if (listed.ok) this.reconcileCleanSave(scope, listed.value, plan);
+    }
     await this.reload();
     for (const key of this.booleanOrigins.keys()) if (saved.value.saved.some(item => key.startsWith(`${item.ref.id}/`))) this.booleanOrigins.delete(key);
-    this.status.save = 'idle';
+    this.status.save = this.saveFailures.size ? 'failed' : 'idle';
     return saved;
   }
 
   async saveProject(): Promise<Result<SaveReceipt>> {
     if (!this.source) return failed('PROJECT_MISSING', '请先打开作品');
+    const scope: SaveScope = { kind: 'current', documentId: this.source.projectDocumentId };
     this.status.save = 'saving';
-    const plan = await this.services.bridge.documents.planSave({ kind: 'current', documentId: this.source.projectDocumentId });
-    if (!plan.ok) { this.status.save = 'failed'; this.status.issues = plan.issues; return plan; }
-    const saved = await this.services.bridge.documents.save(plan.value.planId);
-    if (!saved.ok) { this.status.save = 'failed'; this.status.issues = saved.issues; return saved; }
-    await this.reload(); this.status.save = 'idle'; return saved;
+    const plan = await this.services.bridge.documents.planSave(scope);
+    if (!plan.ok) { this.recordSaveFailure(plan, scope); return plan; }
+    return this.savePlanned(plan.value, scope);
+  }
+
+  recordSaveFailure(result: { error: Issue; issues: Issue[] }, scope: SavePlan | SaveScope): void {
+    const issues = failureIssues(result);
+    const attemptId = crypto.randomUUID();
+    const known = this.source?.documentVersions?.map(item => version(item.documentId, item.revision)) ?? [
+      ...(this.source ? [version(this.source.projectDocumentId, this.source.projectRevision)] : []),
+      ...(this.source?.scenes.map(scene => version(scene.documentId, scene.revision)) ?? []),
+    ];
+    if ('planId' in scope) {
+      if (scope.objects.length) for (const object of scope.objects) {
+        this.saveFailures.set(object.key, { attemptId, issues, versions: scope.versions.filter(item => item.ref.id === object.documentId), objects: [object.kind === 'asset' ? { kind: 'asset', documentId: object.documentId, objectId: object.objectId! } : { kind: 'document', documentId: object.documentId, objectId: null }], objectKeys: [object.key], all: false });
+      }
+      else if (scope.versions.length) for (const item of scope.versions) this.saveFailures.set(`${item.ref.id}:document`, { attemptId, issues, versions: [item], objects: [], objectKeys: [], all: false });
+      else this.saveFailures.set('all', { attemptId, issues, versions: [], objects: [], objectKeys: [], all: true });
+    } else if (scope.kind === 'objects') {
+      for (const object of scope.objects) {
+        const key = `${object.documentId}:${object.kind}${object.objectId ? `:${object.objectId}` : ''}`;
+        this.saveFailures.set(key, { attemptId, issues, versions: scope.expected.filter(item => item.ref.id === object.documentId), objects: [object], objectKeys: [key], all: false });
+      }
+    } else {
+      const all = scope.kind === 'all';
+      this.saveFailures.set(all ? 'all' : `${scope.documentId}:document`, {
+        attemptId, issues, versions: all ? known : known.filter(item => item.ref.id === scope.documentId), objects: [], objectKeys: [], all,
+      });
+    }
+    this.status.save = 'failed';
+  }
+
+  private clearSavedFailures(plan: SavePlan, receipt: SaveReceipt): void {
+    const objects = new Set(plan.objects.map(object => object.key));
+    for (const [key, failure] of this.saveFailures) {
+      const covered = failure.all ? receipt.saved.length > 0 || !failure.versions.length : failure.versions.length > 0
+        ? failure.versions.every(prior => receipt.saved.some(saved => saved.ref.kind === prior.ref.kind && saved.ref.id === prior.ref.id && saved.revision >= prior.revision))
+        : failure.objectKeys.length > 0 && failure.objectKeys.every(key => plan.objects.some(object => object.key === key && receipt.saved.some(saved => saved.ref.kind === 'document' && saved.ref.id === object.documentId)));
+      const complete = failure.all ? !receipt.remainingDirty.length : failure.objectKeys.length
+        ? failure.objectKeys.every(key => objects.has(key))
+        : failure.versions.every(item => !receipt.remainingDirty.includes(item.ref.id));
+      if (covered && complete) this.saveFailures.delete(key);
+    }
+  }
+
+  reconcileCleanSave(scope: SaveScope, documents: DocumentView[], plan: SavePlan): void {
+    if (plan.files.length) return;
+    const cleanDocuments = new Set(documents.filter(document => !document.dirty && (scope.kind === 'all' || scope.kind === 'current' && scope.documentId === document.documentId || scope.kind === 'objects' && scope.objects.some(object => object.kind === 'document' && object.documentId === document.documentId))).map(document => document.documentId));
+    const cleanObjects = new Set<string>();
+    if (scope.kind === 'objects') for (const object of scope.objects) {
+      if (object.kind !== 'asset') continue;
+      const document = documents.find(document => document.documentId === object.documentId);
+      if (!document) continue;
+      try {
+        const entry = (files: Record<string, string>): unknown => {
+          const raw = files['assets/index.json'];
+          if (!raw) return undefined;
+          const index = JSON.parse(raw) as { data?: { assets?: { id: Id }[] } };
+          if (!Array.isArray(index.data?.assets)) throw new Error('Asset index unavailable');
+          return index.data.assets.find(asset => asset.id === object.objectId);
+        };
+        if (JSON.stringify(entry(document.files)) === JSON.stringify(entry(document.savedFiles))) cleanObjects.add(`${object.documentId}:asset:${object.objectId}`);
+      } catch { /* A malformed index cannot verify a clean object. */ }
+    }
+    const allClean = scope.kind === 'all' && documents.length > 0 && cleanDocuments.size === documents.length;
+    for (const [key, failure] of this.saveFailures) {
+      if (failure.all) { if (allClean) this.saveFailures.delete(key); continue; }
+      const coversKey = (key: string) => cleanObjects.has(key) || [...cleanDocuments].some(id => key.startsWith(`${id}:`));
+      const covered = failure.objectKeys.length ? failure.objectKeys.every(coversKey)
+        : failure.versions.length ? failure.versions.every(item => cleanDocuments.has(item.ref.id)) : coversKey(key);
+      const current = failure.versions.every(prior => documents.some(document => document.documentId === prior.ref.id && document.revision >= prior.revision));
+      if (covered && current) this.saveFailures.delete(key);
+    }
+    this.status.save = this.saveFailures.size ? 'failed' : 'idle';
   }
 
   async refresh(refresh?: AuthoringRefresh): Promise<void> { await this.reload(refresh); }
@@ -596,8 +692,8 @@ export class AuthoringController {
     const listed = await this.services.bridge.documents.list(); if (!listed.ok) return listed;
     const partial= ['project.update','scene.update','variable.update','character.update'].includes(operation.op);
     if(baseline&&partial){const rebased=rebaseAuthoringOperation(baseline,listed.value,operation,resolution);if(rebased.conflicts.length&&!resolution)return failed('AUTHOR_CONFLICT',`Fields changed in the workspace: ${rebased.conflicts.join(', ')}. Your input is retained; choose draft or current values.`);operation=rebased.operation;}
-    const commands=await this.services.bridge.plugins?.commandSpecs?.();if(commands&&!commands.ok)return commands;
-    const planned = prepareAuthoringEdit(baseline&&!partial?baseline:listed.value, operation,commands?.value ?? []); return planned.ok ? this.commit(planned.value) : planned;
+    const contracts = await this.commandContracts(); if (!contracts.ok) return contracts;
+    const planned = prepareAuthoringEdit(baseline&&!partial?baseline:listed.value, operation,contracts.value.commands,contracts.value.conditions); return planned.ok ? this.commit(planned.value) : planned;
   }
 
   async editDialogue(operation: Extract<AuthorOperation, { op: 'dialogue.update' | 'dialogue.split' | 'dialogue.merge' }>, target: StatementEditTarget, eventId?: Id): Promise<Result<EditReceipt>> {
@@ -612,10 +708,22 @@ export class AuthoringController {
     const listed = await this.services.bridge.documents.list(); if (!listed.ok) return listed;
     const document = listed.value.find(document => document.documentId === target.documentId);
     if (document?.revision !== target.revision || !this.sceneForEdit(target)) return changed(document?.revision);
-    const commands = await this.services.bridge.plugins?.commandSpecs?.(); if (commands && !commands.ok) return commands;
+    const contracts = await this.commandContracts(); if (!contracts.ok) return contracts;
     if (!this.sceneForEdit(target)) return changed();
-    const planned = prepareAuthoringEdit(listed.value, operation, commands?.value ?? []);
+    const planned = prepareAuthoringEdit(listed.value, operation, contracts.value.commands, contracts.value.conditions);
     return planned.ok ? this.commit(planned.value) : planned;
+  }
+
+  private async commandContracts() {
+    const plugins = this.services.bridge.plugins;
+    if (plugins?.commandContracts) {
+      const result = await plugins.commandContracts();
+      if (!result.ok) return result;
+      return { ...result, value: { commands: result.value.commands, conditions: conditionSignatures(result.value.conditions) } };
+    }
+    const result = await plugins?.commandSpecs?.();
+    if (result && !result.ok) return result;
+    return { ok: true as const, value: { commands: result?.value ?? [], conditions: {} }, warnings: result?.warnings ?? [] };
   }
 
   async saveCharacters(drafts: CharacterDraft[]): Promise<Result<EditReceipt>> {
@@ -685,22 +793,33 @@ export class AuthoringController {
     return applied;
   }
   private async reload(refresh?: AuthoringRefresh): Promise<void> {
+    const epoch = this.projectEpoch, sequence = ++this.readSequence, projectId = this.source?.project.projectId;
     const loaded = await this.services.read(refresh?.documents);
-    if (!loaded.ok) { this.status.issues = loaded.issues; return; }
+    if (epoch !== this.projectEpoch || sequence !== this.readSequence || loaded.ok && projectId && loaded.value.project.projectId !== projectId) return;
+    if (!loaded.ok) { this.readIssue = loaded.error; this.compilationIncomplete = true; return; }
+    this.readIssue = null;
     const id = this.scene?.sceneId;
     reserveIds(loaded.value);
     this.source = loaded.value;
     this.scene = loaded.value.scenes.find(scene => scene.sceneId === id) ?? loaded.value.scenes[0] ?? null;
     this.refreshStatus();
-    if (refresh?.compilation) this.receiveCompilation(refresh.compilation); else await this.refreshPreview();
+    if (refresh?.compilation) { this.compileSequence++; this.receiveCompilation(refresh.compilation); } else await this.refreshPreview();
   }
   private async refreshPreview(): Promise<void> {
+    const epoch = this.projectEpoch, sequence = ++this.compileSequence;
+    this.compilationIncomplete = true;
     if (!this.services.compilePreview) return;
     const result = await this.services.compilePreview();
+    if (epoch !== this.projectEpoch || sequence !== this.compileSequence) return;
     this.receiveCompilation(result);
   }
   private receiveCompilation(result: Awaited<ReturnType<NonNullable<AuthoringServices['compilePreview']>>>): void {
-    if (!result.ok) { this.status.issues = result.issues; this.status.compilation = { state: 'failed', snapshotId: null, documents: [] }; return; }
+    if (!result.ok) {
+      this.compilationIncomplete = true; this.compilationFailureIssues = failureIssues(result);
+      this.status.compilation = { ...this.status.compilation, state: 'failed' }; return;
+    }
+    this.compilationIncomplete = false;
+    this.compilationFailureIssues = [];
     this.status.issues = result.value.issues;
     const snapshot = result.value.snapshot ?? result.value.lastValid;
     this.status.compilation = { state: result.value.snapshot && result.value.current ? 'current' : result.value.lastValid ? 'lastValid' : result.value.issues.length ? 'failed' : 'none',

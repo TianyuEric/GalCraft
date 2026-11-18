@@ -8,7 +8,7 @@ import { zipSync, unzipSync } from 'fflate';
 import { ConnectionConfigSchema, IdSchema, readPluginDocumentInstances } from '@galcraft/contracts';
 import type { Artifact, Asset, CancelResult, ConnectionConfig, EditPlan, EditReceipt, Id, Issue, Json, RemoteStatus, Result, VersionRef } from '@galcraft/contracts';
 import type { ProjectSession } from '@galcraft/documents';
-import type { Candidate, GenerationAdapter, GenerationAdapterLease, GenerationProviderSnapshot, GenerationInput, GenerationReadiness, MediaInput, ProductionFormDraft, ReviewProvider, SubmissionContext, Task, TaskSummary, TaskItem, TaskPlan, TaskPlanInput } from './types.js';
+import type { Candidate, GenerationAdapter, GenerationAdapterLease, GenerationProviderSnapshot, GenerationInput, GenerationReadiness, MediaInput, ProductionFormDraft, ProductionTaskProblem, ReviewProvider, SubmissionContext, Task, TaskSummary, TaskItem, TaskPlan, TaskPlanInput } from './types.js';
 import { ProductionStore } from './store.js';
 import { fail, issue, ok, validateItems } from './validation.js';
 import { defaultOperation, normalizeProductionDraft } from './draft.js';
@@ -65,6 +65,22 @@ export class ProductionService {
   private serial<T>(action: () => Promise<T>): Promise<T> { const result = this.mutation.catch(() => {}).then(action); this.mutation = result; return result; }
   listTasks(): Task[] { return structuredClone([...this.tasks.values()].filter(task => !this.removedTasks.has(task.id))); }
   listTaskSummaries(): TaskSummary[] { return [...this.tasks.values()].filter(task => !this.removedTasks.has(task.id)).map(({ id, name, revision, createdAt, updatedAt, items }) => ({ id, name, revision, createdAt, updatedAt, items: items.map(({ id, state }) => ({ id, state })) })); }
+  listTaskProblems(): ProductionTaskProblem[] {
+    const superseded = new Set([...this.tasks.values()].filter(task => task.previousTaskId && task.previousItemId)
+      .map(task => `${task.previousTaskId}:${task.previousItemId}`));
+    return [...this.tasks.values()].filter(task => !this.removedTasks.has(task.id)).map(task => ({
+      id: task.id, name: task.name, revision: task.revision,
+      failures: task.items.flatMap(item => {
+        if (superseded.has(`${task.id}:${item.id}`) || !['failed', 'blocked', 'interrupted'].includes(item.state)) return [];
+        const issues = item.issues.filter(issue => issue.severity === 'error' || issue.severity === 'warning');
+        if (!issues.length && item.state === 'interrupted') issues.push({ code: 'PRODUCTION_INTERRUPTED', owner: 'M10', severity: 'warning',
+          message: '制作项已中断。打开原任务查看可用的恢复操作。', related: [], actions: ['locate'] });
+        if (!issues.length && item.state === 'failed') issues.push({ code: 'PRODUCTION_FAILED', owner: 'M10', severity: 'error',
+          message: '制作项执行失败。打开原任务查看详情与可用操作。', related: [], actions: ['locate'] });
+        return issues.length ? [{ itemId: item.id, attemptId: item.attempts.at(-1)?.id ?? item.id, issues: structuredClone(issues) }] : [];
+      }),
+    }));
+  }
   getTask(id: Id): Task | null { return this.removedTasks.has(id) ? null : structuredClone(this.tasks.get(id) ?? null); }
   listImageCandidates(): Pick<Candidate, 'id' | 'taskId' | 'artifacts' | 'provenance'>[] {
     return [...this.candidates.values()].filter(candidate => !this.removedTasks.has(candidate.taskId) && candidate.artifacts.some(artifact => artifact.kind === 'image' && artifact.role === 'primary')).map(({ id, taskId, artifacts, provenance }) => structuredClone({ id, taskId, artifacts, provenance }));

@@ -18,7 +18,7 @@ function ProjectCenter({ locale = 'zh-CN', theme = 'light', empty = false, workb
       copy={async () => setNotice('Storybook：复制作品需要桌面宿主。')} backup={async () => setNotice('Storybook：备份需要桌面宿主。')}
       reveal={async () => setNotice('D:\\GalCraft\\春日来信')} navigate={page => setNotice(page)}
       openSettings={() => setNotice('作品设置')} openMaintenance={() => setNotice('作品维护')}
-      recovery={{ pending: recoveryPending, review: () => setNotice('比较与恢复草稿') }}
+      recovery={{ pending: recoveryPending, review: () => setNotice('查看保留的草稿') }}
       create={async () => {await new Promise(resolve=>setTimeout(resolve,createDelayMs));if(createError)throw Error('创建失败：无法写入所选目录。请更换目录后重试。');return false;}} listCreationVersions={async () => { await new Promise(resolve => setTimeout(resolve, delayMs)); return creationFailure ? {ok:false,error:{code:'ENGINE_UNAVAILABLE',severity:'error',owner:'M11',message:'Engine catalog unavailable',related:[],actions:['retry']},issues:[]} : { ok: true, value: ['0.1.0'], warnings: [] }; }} />;
   return <div data-theme={theme}><div className="authoring-shell" data-locale={locale} style={{ display: 'block', height: '100vh', overflow: 'auto', background: 'var(--background)' }}>
     <div id="studio-portals" lang={locale} data-theme={theme} />

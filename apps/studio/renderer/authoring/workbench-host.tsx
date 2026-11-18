@@ -1,12 +1,12 @@
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { CircleAlert, FileText, Folder, Images, Layers, ListTree, MonitorPlay, Plus, Search, Settings, SlidersHorizontal, UsersRound, Network, ClipboardList, WandSparkles, Terminal } from 'lucide-react';
+import { CircleAlert, FileImage, FileText, Folder, Images, Layers, ListTree, MonitorPlay, Plus, Search, SlidersHorizontal, UsersRound, ClipboardList, WandSparkles, Terminal } from 'lucide-react';
 import { TooltipProvider } from '../components/ui/tooltip.js';
 import { Button } from '../components/controls.js';
 import { Input } from '../components/ui/input.js';
 import { SceneExplorerTree } from './scene-explorer-tree.js';
 import { ObjectTree, type WorkbenchTreeNode } from '../components/workbench/ObjectTree.js';
-import { DockWorkspace, type DockHandle, type LayoutPreset } from '../components/workbench/DockWorkspace.js';
-import { StudioChrome, type StudioChromeMenuItem, type StudioChromeProps } from '../components/workbench/StudioChrome.js';
+import { DockWorkspace, type DockHandle, type DockNoticeTone, type LayoutPreset } from '../components/workbench/DockWorkspace.js';
+import { ChromeMenu, StudioChrome, type StudioChromeMenuItem, type StudioChromeProps } from '../components/workbench/StudioChrome.js';
 import { allGroups, emptyLayout, group, normalize, validLayout, type Zone, type ZonedLayout } from '../components/workbench/zoned-layout.js';
 import type { WorkbenchLayout } from '../components/workbench/WorkbenchShell.js';
 import type { StudioPreferences, WorkspaceResume } from '@galcraft/contracts';
@@ -48,15 +48,16 @@ export type AuthoringWorkbenchProps = {
   documents: AuthorDocument[]; active: string; content: HTMLElement; toolbar?: HTMLElement | null; explorer?: HTMLElement | null; search?: HTMLElement | null; stage?: HTMLElement | null; inspector?: HTMLElement | null; problems?: HTMLElement | null; status: HTMLElement;
   activateScenePane?(): void;
   output?: HTMLElement | null;
+  problemCount?: number;
   beside?: AuthorSceneCompanion;
   retainedCompanions?: ReadonlyMap<string, AuthorSceneCompanion>;
-  notice?: ReactNode; layout: WorkbenchLayout; selected: string[];
+  layout: WorkbenchLayout; selected: string[];
   dock: RefObject<DockHandle | null>;
   dockLayout?: NonNullable<WorkspaceResume['workbench']>['dockLayout'];
   dockLayoutChange(layout: ZonedLayout): void;
   namedLayouts?: StudioPreferences['namedDockLayouts'];
   writeNamedLayouts(layouts: Record<string, ZonedLayout>): Promise<void>;
-  dockNotice(message: string): void;
+  dockNotice(message: string, tone?: DockNoticeTone): void;
   inspectorShown?(): void;
   inspectorAvailable?: boolean;
   select(ids: string[]): void; open(document: AuthorDocument): void | Promise<void>; pin(id: string): void; close(id: string): boolean | Promise<boolean>;
@@ -116,6 +117,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
   const term = search.key === explorerKey ? search.query : props.outlineState?.query ?? '';
   const [namingLayout, setNamingLayout] = useState(false);
   const [layoutName, setLayoutName] = useState('');
+  const [visiblePanels, setVisiblePanels] = useState({ left: false, right: false, bottom: false });
   const source = props.source;
   const outlineState = useRef({ key: explorerKey, query: term, scrollTop: props.outlineState?.scrollTop ?? 0 });
   if (outlineState.current.key !== explorerKey) outlineState.current = { key: explorerKey, query: term, scrollTop: props.outlineState?.scrollTop ?? 0 };
@@ -139,7 +141,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     scroll.addEventListener('scroll', remember);
     return () => { visibility.disconnect(); scroll.removeEventListener('scroll', remember); };
   }, [explorerKey]);
-  const routeTitles:Record<string,string>={projects:t('项目中心','Project center','作品センター'),assets:t('素材','Assets','素材'),production:t('制作','Production','制作'),assistant:t('制作','Production','制作'),collaboration:t('协作活动','Collaboration activity','連携アクティビティ'),plugins:t('插件','Plugins','プラグイン'),connections:t('连接','Connections','接続'),maintenance:t('作品维护','Project maintenance','作品メンテナンス'),publish:t('发布','Publish','配布')};
+  const routeTitles:Record<string,string>={projects:t('作品中心','Project center','作品センター'),assets:t('素材','Assets','素材'),production:t('制作','Production','制作'),assistant:t('制作','Production','制作'),collaboration:t('协作活动','Collaboration activity','連携アクティビティ'),plugins:t('插件','Plugins','プラグイン'),connections:t('连接','Connections','接続'),maintenance:t('作品维护','Project maintenance','作品メンテナンス'),publish:t('发布','Publish','配布')};
   const documentTitle=(document:AuthorDocument)=>document.kind==='page'?(props.pageNodes?.find(node=>node.id===(document.objectId??document.id.slice(5)))?.name??document.title)
     :document.kind==='characters'?t('角色与路线','Characters & routes','キャラクターとルート'):document.kind==='scene-graph'?t('场景关系图','Scene graph','シーン関係図'):document.kind==='startup'?t('启动与主页','Startup & home','起動とホーム')
     :document.kind==='route'?(document.id.startsWith('route:')?routeTitles[document.objectId??document.id.replace(/^route:/,'')]??document.title:document.title):document.kind==='project'?document.objectId==='preferences'?t('工作台偏好','Workbench preferences','ワークスペース設定'):t('作品设置','Project settings','作品設定'):document.title;
@@ -153,7 +155,11 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     <Button tone="quiet" disabled={props.selected.length !== 1} onClick={() => { const selected = props.selected[0]; document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(selected)}"]`)?.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true })); }}>{t('重命名','Rename','名前を変更')}</Button>
     {props.entryPresentation && <Button tone="quiet" disabled={props.selected.length !== 1} onClick={() => { const id = props.selected[0]; if (id) props.entryPresentation?.(source?.project.chapters.some(chapter => chapter.id === id) ? 'chapter' : 'scene', id); }}>{t('开场演出','Opening presentation','開始演出')}</Button>}
     </div><div className="gc-wb-tree-action-group"><select aria-label={t('移动所选对象到章节','Move selected objects to chapter','選択した項目をチャプターへ移動')} value="" disabled={!props.selected.length} onChange={event => { if (event.target.value) void props.move(props.selected, event.target.value); }}><option value="">{t('移动到章节…','Move to chapter…','チャプターへ移動…')}</option>{source?.project.chapters.map(chapter => <option key={chapter.id} value={chapter.id}>{chapter.name}</option>)}</select></div><div className="gc-wb-tree-action-group">
-    <Button tone="quiet" onClick={() => props.dock.current?.open(dockTools.characters)}><UsersRound/>{t('角色目录','Character directory','キャラクター一覧')}</Button><Button tone="quiet" onClick={() => props.open({ id: 'scene-graph', kind: 'scene-graph', title: t('场景关系图','Scene graph','シーン関係図') })}><Network/>{t('关系图','Scene graph','関係図')}</Button><Button tone="quiet" aria-pressed={props.active==='project'} onClick={() => props.open({ id: 'project', kind: 'project', title: t('作品设置','Project settings','作品設定') })}><Settings/>{t('作品设置','Project settings','作品設定')}</Button>
+    <ChromeMenu label={t('更多入口','More places','その他の画面')} focusKey="plot-outline:more" items={[
+      { id: 'characters', label: t('角色目录','Character directory','キャラクター一覧'), run: () => props.dock.current?.open(dockTools.characters) },
+      { id: 'scene-graph', label: t('场景关系图','Scene graph','シーン関係図'), run: () => { void props.open({ id: 'scene-graph', kind: 'scene-graph', title: t('场景关系图','Scene graph','シーン関係図') }); } },
+      { id: 'project-settings', label: t('作品设置','Project settings','作品設定'), run: () => props.chrome.action('projectSettings') },
+    ]}/>
   </div></div>;
   const explorer = <><div><div className="gc-wb-tree-search"><Input data-dock-focus aria-label={t('查找场景','Find scene','シーンを検索')} placeholder={t('查找场景','Find scene','シーンを検索')} value={term} onChange={event => changeTerm(event.target.value)}/></div><SceneExplorerTree locale={props.locale} query={term} onClearSearch={() => changeTerm('')} onMoveAt={props.move} label={t('作品对象','Project objects','作品のオブジェクト')} nodes={nodes} active={props.documents.find(document => document.id === props.active && document.kind === 'scene')?.objectId} selected={props.selected} onSelect={props.select} onOpen={openScene} onRename={props.rename} onMoveMany={(ids, parent) => void props.move(ids, parent)} menuGroups={(node, scope, hidden) => node.children ? [{ label: node.name, actions: [{ label: t('新建场景','New scene','シーンを追加'), run: () => void props.create('scene', node.id) }, { label: t('章节入场演出','Chapter entry presentation','チャプター開始演出'), run: () => props.entryPresentation?.('chapter', node.id) }] }] : [
     { label: node.name, actions: [{ label: t('打开场景','Open scene','シーンを開く'), run: () => openScene(node.id, true) }, { label: t('场景入场演出','Scene entry presentation','シーン開始演出'), run: () => props.entryPresentation?.('scene', node.id) }, ...(props.sceneDecor ? [{ label: t('场景布景', 'Scene decor', 'シーンの背景レイヤー'), run: () => props.sceneDecor?.(node.id) }] : [])] },
@@ -182,12 +188,12 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
   const tools = {
     [dockTools.outline]: { title: explorerTitle, icon: <ListTree/>, zone: 'left', allowedZones: sidebarZones, content: <div ref={bindOutlineScroll}>{explorer}</div> },
     [dockTools.search]: { title: t('语义查找','Semantic search','セマンティック検索'), icon: <Search/>, zone: 'left', allowedZones: sidebarZones, content: props.search ? <DomRegion node={props.search} className="gc-studio-dock-search"/> : <p className="gc-dock-missing-view">{t('打开场景工作区以查找正文或引用。','Open the scene workspace to find dialogue or references.','シーンの作業スペースで本文や参照を検索できます。')}</p> },
-    [dockTools.inspector]: { title: t('属性','Inspector','プロパティ'), icon: <SlidersHorizontal/>, zone: 'right', allowedZones: sidebarZones, content: <DomRegion node={props.inspectorAvailable === false ? null : props.inspector}/> },
-    [dockTools.problems]: { title: t('问题','Problems','問題'), icon: <CircleAlert/>, zone: 'bottom', allowedZones: problemZones, content: <DomRegion node={props.problems}/> },
+    [dockTools.inspector]: { title: t('对象属性','Object properties','オブジェクトのプロパティ'), icon: <SlidersHorizontal/>, zone: 'right', allowedZones: sidebarZones, content: <DomRegion node={props.inspectorAvailable === false ? null : props.inspector}/> },
+    [dockTools.problems]: { title: `${t('问题','Problems','問題')} · ${props.problemCount ?? 0}`, icon: <CircleAlert/>, zone: 'bottom', allowedZones: problemZones, content: <DomRegion node={props.problems}/> },
     [dockTools.output]: { title: t('输出','Output','出力'), icon: <Terminal/>, zone: 'bottom', allowedZones: problemZones, content: <DomRegion node={props.output}/> },
     [dockTools.stage]: { title: t('舞台','Stage','ステージ'), icon: <MonitorPlay/>, zone: 'center', allowedZones: editorZones, content: <DomRegion node={props.stage}/> },
     [dockTools.assetDirectory]: { title: t('素材目录','Asset directory','素材一覧'), icon: <Folder/>, zone: 'left', allowedZones: sidebarZones, content: props.assetDirectory ? <DomRegion node={props.assetDirectory}/> : waitingForAssets },
-    [dockTools.assetInspector]: { title: t('素材属性','Asset properties','素材プロパティ'), icon: <SlidersHorizontal/>, zone: 'right', allowedZones: sidebarZones, content: props.assetInspector ? <DomRegion node={props.assetInspector}/> : waitingForAssets },
+    [dockTools.assetInspector]: { title: t('素材属性','Asset properties','素材プロパティ'), icon: <FileImage/>, zone: 'right', allowedZones: sidebarZones, content: props.assetInspector ? <DomRegion node={props.assetInspector}/> : waitingForAssets },
     [dockTools.assets]: { title: t('素材库','Asset library','素材ライブラリ'), icon: <Images/>, zone: 'bottom', allowedZones: problemZones, content: props.assetLibrary ? <DomRegion node={props.assetLibrary}/> : waitingForAssets },
     [dockTools.characters]: { title: t('角色目录','Character directory','キャラクター一覧'), icon: <UsersRound/>, zone: 'left', allowedZones: sidebarZones, content: <DomRegion node={props.characterExplorer}/> },
     [dockTools.pageDirectory]: { title: t('页面目录','Page directory','ページ一覧'), icon: <Layers/>, zone: 'left', allowedZones: sidebarZones, content: pageDirectory },
@@ -228,7 +234,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     return normalize(next);
   };
   const namedLayouts = Object.fromEntries(Object.entries(props.namedLayouts ?? {}).filter((item): item is [string, ZonedLayout & typeof item[1]] => validLayout(item[1])));
-  const invoke = (run: () => void | Promise<void>) => { void Promise.resolve().then(run).catch(error => props.dockNotice(String(error))); };
+  const invoke = (run: () => void | Promise<void>) => { void Promise.resolve().then(run).catch(error => props.dockNotice(String(error), 'error')); };
   const sceneTarget = props.documents.find(document => document.id === active && document.kind === 'scene')?.objectId
     ?? props.selected.find(id => source?.scenes.some(scene => scene.sceneId === id));
   const combinations: StudioChromeMenuItem[] = [
@@ -243,17 +249,19 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
       props.dock.current?.openCombination(tools, target ? {} : { focusOrder: tools });
       if (target && props.openCharacterDifference) invoke(() => props.openCharacterDifference!(target));
     } },
-    { id: 'build-pages', label: t('页面搭建','Page building','ページ制作'), disabled: !source, run: () => {
-      props.preparePageDirectory?.();
-      const tools = [dockTools.pageDirectory, dockTools.pageOutline];
-      props.dock.current?.openCombination(tools, props.pageOutline ? {} : { focusOrder: tools });
-    } },
   ];
+  const toolsSection = t('显示工具','Show tools','ツールを表示');
+  const layoutsSection = t('命名布局','Named layouts','名前付きレイアウト');
+  const sidebars = [
+    ['left', t('左侧栏','Left sidebar','左サイドバー')],
+    ['right', t('右侧栏','Right sidebar','右サイドバー')],
+    ['bottom', t('底栏','Bottom panel','下部パネル')],
+  ] as const;
   const presets: StudioChromeMenuItem[] = [
-    { id: 'balanced', label: t('平衡布局','Balanced layout','標準レイアウト'), run: () => props.dock.current?.preset('balanced') },
-    { id: 'writing', label: t('专注写作','Focus on writing','執筆に集中'), run: () => props.dock.current?.preset('writing') },
-    { id: 'show-search', label: t('显示语义查找','Show semantic search','セマンティック検索を表示'), disabled: !props.search, run: () => props.dock.current?.open(dockTools.search), separatorBefore: true },
-    { id: 'show-inspector', label: t('显示属性','Show inspector','プロパティを表示'), disabled: props.inspectorAvailable === false, run: () => props.dock.current?.open(dockTools.inspector) },
+    ...sidebars.map(([zone, label]) => ({ id: zone, label, checked: visiblePanels[zone], section: t('栏位显隐','Panel visibility','パネルの表示'), run: () => props.dock.current?.toggle(zone) })),
+    ...([
+    { id: 'show-search', label: t('显示语义查找','Show semantic search','セマンティック検索を表示'), disabled: !props.search, run: () => props.dock.current?.open(dockTools.search) },
+    { id: 'show-inspector', label: t('显示对象属性','Show object properties','オブジェクトのプロパティを表示'), disabled: props.inspectorAvailable === false, run: () => props.dock.current?.open(dockTools.inspector) },
     { id: 'show-stage', label: t('显示舞台','Show stage','ステージを表示'), disabled: !props.stage, run: () => props.dock.current?.open(dockTools.stage) },
     { id: 'show-problems', label: t('显示问题','Show problems','問題を表示'), disabled: !props.problems, run: () => props.dock.current?.open(dockTools.problems) },
     { id: 'show-output', label: t('显示输出','Show output','出力を表示'), disabled: !props.output, run: () => props.dock.current?.open(dockTools.output) },
@@ -264,16 +272,18 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
     { id: 'show-page-directory', label: t('显示页面目录','Show page directory','ページ一覧を表示'), disabled: !source, run: () => { props.preparePageDirectory?.(); props.dock.current?.open(dockTools.pageDirectory); } },
     { id: 'show-page-outline', label: t('显示页面大纲','Show page outline','ページ構成を表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.pageOutline) },
     { id: 'show-production-directory', label: t('显示制作记录','Show production records','制作履歴を表示'), disabled: !source, run: () => props.dock.current?.open(dockTools.productionDirectory) },
-    { id: 'save-layout', label: t('保存命名布局…','Save named layout…','レイアウトに名前を付けて保存…'), disabled: !source, separatorBefore: true, run: () => { setLayoutName(''); setNamingLayout(true); } },
+    ] satisfies StudioChromeMenuItem[]).map(item => ({ ...item, section: toolsSection })),
+    { id: 'balanced', section: layoutsSection, label: t('平衡布局','Balanced layout','標準レイアウト'), run: () => props.dock.current?.preset('balanced') },
+    { id: 'writing', section: layoutsSection, label: t('专注写作','Focus on writing','執筆に集中'), run: () => props.dock.current?.preset('writing') },
+    { id: 'save-layout', section: layoutsSection, label: t('保存命名布局…','Save named layout…','レイアウトに名前を付けて保存…'), disabled: !source, separatorBefore: true, run: () => { setLayoutName(''); setNamingLayout(true); } },
     ...Object.keys(namedLayouts).flatMap(name => [
-      { id: `layout:${name}`, label: name, disabled: !source, run: () => props.dock.current?.restorePreset(name) },
-      { id: `update-layout:${name}`, label: t(`更新「${name}」`,`Update “${name}”`,`「${name}」を更新`), disabled: !source, run: () => props.dock.current?.savePreset(name) },
+      { id: `layout:${name}`, section: layoutsSection, label: name, disabled: !source, run: () => props.dock.current?.restorePreset(name) },
+      { id: `update-layout:${name}`, section: layoutsSection, label: t(`更新「${name}」`,`Update “${name}”`,`「${name}」を更新`), disabled: !source, run: () => props.dock.current?.savePreset(name) },
     ]),
   ];
   return <TooltipProvider>
     <div className="gc-workbench gc-studio-workbench" data-workbench="zoned">
       <StudioChrome {...props.chrome} layout={presets} combinations={combinations}/>
-      {props.notice && <div className="gc-studio-workbench-notice">{props.notice}</div>}
       <DockWorkspace key={source?.project.projectId ?? 'library'} ref={props.dock} locale={props.locale} initial="writing"
         activeView={active} documentViews={documentViews} viewIds={viewIds}
         companion={besideId ? { id: besideId, document: active, preserveSidebars: active.startsWith('page:') } : undefined}
@@ -281,6 +291,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
         createDefaultLayout={preset => initialDock(props, preset)}
         initialLayout={validLayout(props.dockLayout) ? prune(props.dockLayout) : undefined}
         onLayoutChange={props.dockLayoutChange}
+        onPanelVisibilityChange={setVisiblePanels}
         readPresets={() => namedLayouts} writePresets={props.writeNamedLayouts}
         mapPresetView={toPresetView}
         title={id => {
@@ -290,6 +301,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
         icon={id => tool(id)?.icon ?? (id === productionDocumentId ? <WandSparkles/> : props.documents.find(document => document.id === id)?.kind === 'page' ? <Layers/> : <FileText/>)}
         zone={id => tool(id)?.zone ?? 'center'}
         allowedZones={id => tool(id)?.allowedZones ?? editorZones}
+        groupFocusLabels={id => id === dockTools.assets ? { focus: t('聚焦浏览', 'Focus browsing', '素材一覧に集中'), restore: t('还原浏览', 'Restore browsing', '素材一覧を元に戻す') } : undefined}
         minSize={id => ({ width: /^(studio-beside:)?page:/.test(id) ? 360 : 480, height: 240 })}
         canCloseView={id => id !== dockTools.empty}
         canSplitView={id => Boolean(companionView(id)) || id === dockTools.stage || id === productionDocumentId || props.documents.some(document => document.id === id && ['scene', 'asset', 'character'].includes(document.kind))}
@@ -297,7 +309,7 @@ export function AuthoringWorkbench(props: AuthoringWorkbenchProps) {
         onViewFocus={props.onViewFocus}
         status={id => ({ dirty: props.documents.find(document => document.id === id)?.dirty })}
         onActivate={(id, reason) => {
-          if (id === dockTools.inspector) props.inspectorShown?.();
+          if (id === dockTools.inspector || id === dockTools.assetInspector || id === dockTools.assets) props.inspectorShown?.();
           if (id === dockTools.pageDirectory && !props.pageNodes) props.preparePageDirectory?.();
           if (id === dockTools.productionDirectory) props.prepareProductionDirectory?.();
           companionView(id)?.activate();

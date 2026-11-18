@@ -40,6 +40,23 @@ const unwrap = (r) => {
 const envelope = (documentId, data) =>
   JSON.stringify({ schemaVersion: 1, documentId, revision: 1, data });
 let project, provider, sceneDocument, statement, template;
+it('reads the current production problem snapshot without loading the overview or starting recovery requests', async () => {
+  let sends = 0, queries = 0, fetches = 0;
+  const issue = { code: 'CONTROLLED_FAILURE', message: 'Controlled task failure', owner: 'M10', severity: 'error', related: [], actions: ['retry'] };
+  provider.adapter.submit = async function* () { sends++; yield { kind: 'error', remoteStatus: 'failed', issue }; };
+  provider.adapter.query = async () => { queries++; throw new Error('Snapshot must not query'); };
+  provider.adapter.fetch = async () => { fetches++; throw new Error('Snapshot must not fetch'); };
+  const { ctx, task } = await generated();
+  const original = ctx.service.listTasks();
+  provider.compileInput = () => { throw new Error('Snapshot must not load the production overview'); };
+  const snapshot = unwrap(await provider.call('problemSnapshot'));
+  expect(snapshot).toEqual({ projectId: project.projectId, tasks: [{ id: task.id, name: task.name, revision: task.revision,
+    failures: task.items.map(item => ({ itemId: item.id, attemptId: item.attempts.at(-1).id, issues: [issue] })) }] });
+  expect(unwrap(await provider.call('problemSnapshot'))).toEqual(snapshot);
+  expect(ctx.service.listTasks()).toEqual(original);
+  expect({ sends, queries, fetches }).toEqual({ sends: 2, queries: 0, fetches: 0 });
+  await ctx.service.close();
+});
 it('keeps personal workflow configuration drafts outside the available workflow overview and preserves revisions through the host', async () => {
   const workflow = { id: randomUUID(), revision: 3, name: 'Available workflow', purpose: 'speech', imageUsages: null, graphVersion: '1', editorWorkflowPath: null,
     apiGraph: { '1': { class_type: 'SaveAudio', inputs: {} } }, inputs: [], uploads: [], requiredNodes: [], modelNotes: [], outputs: [{ nodeId: '1', key: 'audio', kind: 'audio', decoder: 'comfyFileList', group: 'main', role: 'primary', background: 'unknown' }] };

@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { DomainSchema, IdSchema, JsonSchema, RevisionSchema, UtcTimeSchema, VersionSchema } from './common.js';
-import { SaveReceiptSchema } from './documents.js';
+import { DomainSchema, IdSchema, IssueSchema, JsonSchema, RevisionSchema, TargetSchema, UtcTimeSchema, VersionRefSchema, VersionSchema } from './common.js';
+import { SaveObjectRefSchema, SaveReceiptSchema } from './documents.js';
 import { BuildReceiptSchema } from './release.js';
 import type { CancelResult, Id, Issue, Json, Lock, Operation, Ref, Result, Revision, Source, Target, VersionRef } from './common.js';
 import type { Asset, AssetIdsResult, AssetPage, AssetPickerPage, AssetPickerQuery, AssetQuery, AssetReference, AssetTypeCatalogEntry, AssetTypeEditInput } from './assets.js';
@@ -86,6 +86,7 @@ const WorkspaceStatementSourceSchema = z.strictObject({
 });
 const WorkspaceAssetQuerySchema = z.strictObject({
   kind: z.string().nullable(), text: z.string(), offset: RevisionSchema, limit: z.number().int().positive(),
+  assetIds: z.array(IdSchema).optional(),
   typeFields: z.record(z.string(), JsonSchema).optional(), folder: z.array(z.string()).nullable().optional(),
   sort: z.enum(['name', 'size', 'modified']).optional(), direction: z.enum(['asc', 'desc']).optional(),
   allowedKinds: z.array(AssetKindSchema).optional(), characterId: IdSchema.nullable().optional(),
@@ -100,13 +101,22 @@ const WorkspaceAssetStateSchema = z.strictObject({
   primaryVersions: z.array(WorkspaceAssetVersionSchema), previewVersions: z.array(WorkspaceAssetVersionSchema),
   inspectorPin: WorkspaceAssetVersionSchema.nullable(), scroll: finite.nonnegative(),
 });
+const WorkspaceDocumentIdentitySchema = z.strictObject({ id: z.string(), title: z.string(), kind: z.enum(['scene', 'page', 'asset', 'project', 'character', 'characters', 'scene-graph', 'startup', 'route']), objectId: z.string().optional() });
+const WorkspaceOperationProblemSchema = z.strictObject({
+  id: z.string().min(1), attemptId: z.string().min(1), issue: IssueSchema, group: z.string(),
+  source: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('document'), document: WorkspaceDocumentIdentitySchema }),
+    z.strictObject({ kind: z.literal('model') }),
+    z.strictObject({ kind: z.literal('build'), planId: z.string(), target: TargetSchema.optional() }),
+  ]),
+});
 export const WorkspaceResumeSchema = z.strictObject({
   schemaVersion: z.literal(1), projectId: IdSchema, documentId: IdSchema.nullable(), sceneId: IdSchema.nullable(),
   documentRevision: RevisionSchema, view: SceneViewSchema,
   caret: EditorAnchorSchema, previousStatementId: IdSchema.nullable(), nextStatementId: IdSchema.nullable(),
   scroll: WorkspaceScrollSchema, updatedAt: UtcTimeSchema,
   workbench: z.strictObject({
-    documents: z.array(z.strictObject({ id: z.string(), title: z.string(), kind: z.enum(['scene', 'page', 'asset', 'project', 'character', 'characters', 'scene-graph', 'startup', 'route']), objectId: z.string().optional() })),
+    documents: z.array(WorkspaceDocumentIdentitySchema),
     active: z.string(),
     sceneSplits: z.array(z.strictObject({ sceneId: IdSchema, views: z.tuple([SceneViewSchema, SceneViewSchema])
       .refine(([left, right]) => left !== right) })).optional(),
@@ -116,6 +126,21 @@ export const WorkspaceResumeSchema = z.strictObject({
       sample: z.string(), zoom: z.enum(['fit', '100']), locale: z.string().nullable(), scrollTop: finite.nonnegative(), scrollLeft: finite.nonnegative().optional(), split: z.boolean(),
     })).optional(),
     outline: z.strictObject({ query: z.string(), scrollTop: finite.nonnegative(), selected: z.array(IdSchema) }).optional(),
+    problems: z.strictObject({
+      query: z.string(), severity: z.enum(['all', 'error', 'warning']), selected: z.string().nullable(), scrollTop: finite.nonnegative(),
+      expanded: z.string().nullable().optional(),
+      showIgnored: z.boolean().optional(), ignoredAttempts: z.array(z.string().min(1)),
+      hiddenImportBatches: z.array(IdSchema).optional(),
+      operations: z.array(WorkspaceOperationProblemSchema).optional(),
+      saveFailures: z.array(z.strictObject({ key: z.string(), attemptId: z.string(), issues: z.array(IssueSchema), versions: z.array(VersionRefSchema),
+        objects: z.array(SaveObjectRefSchema), objectKeys: z.array(z.string()), all: z.boolean(), source: WorkspaceDocumentIdentitySchema.optional() })).optional(),
+      outputFailure: z.strictObject({ kind: z.enum(['save', 'build']), id: z.string(), issue: IssueSchema, cancelled: z.boolean() }).optional(),
+      release: z.strictObject({ issues: z.array(IssueSchema), failures: z.array(IssueSchema), state: z.enum(['checking', 'complete', 'failed', 'stale']) }).optional(),
+      productionFeedback: z.array(z.strictObject({ key: z.string(), kind: z.enum(['request', 'read']), attemptId: z.string(), issue: IssueSchema,
+        surface: z.literal('connections').optional(),
+        editorId: z.string().min(1).optional(),
+        target: z.strictObject({ kind: z.enum(['task', 'draft']), id: IdSchema }).nullable() })).optional(),
+    }).optional(),
     productionDirectory: z.strictObject({
       query: z.string(), filter: z.enum(['all', 'active', 'review', 'failed']), scrollTop: finite.nonnegative(),
       taskPage: z.number().int().nonnegative(), draftPage: z.number().int().nonnegative(),
@@ -173,7 +198,13 @@ export type ProjectCreationInput = { path: string; name: string; template: 'empt
   width: number; height: number; engineVersion: string; closeChoice?: 'save' | 'discard' };
 export type ProjectLibraryEntry = { projectId: Id; directory: string; name: string; description: string; engineVersion: string;
   lastOpenedAt: string | null; pinned: boolean; status: 'available' | 'missing' | 'invalid' };
-export type AssetImportReceipt = { succeeded: Asset[]; failed: { path: string; issue: Issue }[] };
+export type AssetImportBatch = {
+  id: Id; projectId: Id; revision: number; createdAt: string; updatedAt: string;
+  succeeded: { id: Id; name: string }[]; failed: { path: string; issue: Issue }[];
+  attempts: { id: Id; createdAt: string; succeeded: Id[]; failed: { path: string; issue: Issue }[] }[];
+};
+export type AssetImportReceipt = { succeeded: Asset[]; failed: { path: string; issue: Issue }[];
+  batch?: { id: Id; attemptId: Id; revision: number } };
 export type AssetVerificationProgress = { operationId: Id; projectId: Id; sessionId: string; target: Target;
   phase: 'preparing' | 'checking' | 'applying' | 'complete' | 'failed'; completed: number; total: number | null; issueCount: number;
   assetId?: Id; variantId?: Id; name?: string; message?: string };
@@ -227,6 +258,8 @@ export interface StudioBridge {
   };
   plugins: {
     commandSpecs?():Promise<Result<import('./dsl.js').CommandSpec[]>>;
+    commandContracts?(): Promise<Result<{ commands: import('./dsl.js').CommandSpec[];
+      conditions: { key: string; fields: import('./dsl.js').FieldSpec[] }[] }>>;
     inspectPackage(source: { kind: 'archive' | 'directory'; path: string }): Promise<Result<unknown>>;
     install(source: { kind: 'archive' | 'directory'; path: string }): Promise<Result<unknown>>;
     loadDevelopment(input: { directory: string; projectId: Id }): Promise<Result<unknown>>;
@@ -359,7 +392,8 @@ export interface StudioBridge {
     removeBackground(input: RemoveBackgroundInput): Promise<Result<{ status: 'unchanged' | 'reused' | 'needsReview' | 'prepared'; preparationId?: Id; previewUri?: string; maskVariantId?: Id; transparentVariantId?: Id; references?: BackgroundReference[] }>>;
     confirmBackground(preparationId: Id, scope: BackgroundAdoptionScope): Promise<Result<{ save: SaveReceipt; transparentVariantId: Id; assetId: Id }>>;
     discardBackground(preparationId: Id): Promise<Result<void>>;
-    import(paths: string[]): Promise<Result<AssetImportReceipt>>;
+    import(paths: string[], options?: { batchId?: Id; projectId?: Id }): Promise<Result<AssetImportReceipt> & { batch?: AssetImportReceipt['batch'] }>;
+    listImportBatches(projectId?: Id): Promise<Result<AssetImportBatch[]>>;
   };
   language: {
     pluginQuery?(input: { refs?: Ref[]; sceneId?: Id; statementIds?: Id[] }): Promise<Result<Json>>;

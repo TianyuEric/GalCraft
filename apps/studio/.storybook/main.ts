@@ -16,6 +16,7 @@ export function createStudioStorybookConfig({ review = false } = {}): StorybookC
     viteFinal: async config => mergeConfig(mergeConfig(config, {
       server: { watch: { ignored: ['**/dist-storybook/**', '**/dist-storybook-review/**', '**/dist-service/**', '**/dist-main/**', '**/resources/practice/**'] } },
       resolve: { alias: [
+        { find: '@', replacement: fileURLToPath(new URL('../renderer', import.meta.url)) },
         { find: /^@galcraft\/player-ui$/, replacement: fileURLToPath(new URL('../../../packages/player-ui/src/index.ts', import.meta.url)) },
         { find: /^@galcraft\/runtime$/, replacement: fileURLToPath(new URL('../../../packages/runtime/src/index.ts', import.meta.url)) },
       ] },

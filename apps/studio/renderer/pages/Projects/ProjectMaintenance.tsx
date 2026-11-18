@@ -5,6 +5,7 @@ import type { AuthoringSource, StudioLocale } from '../../authoring/controller.j
 import { Button, Choice, Field } from '../../components/controls.js';
 import { IssueNotice } from '../../components/issue-notice.js';
 import { MessageBox } from '../../components/workbench/MessageBox.js';
+import { studioToasts } from '../../components/toast.js';
 import './project-maintenance.css';
 
 type Upgrades = DesktopBridge['upgrades'];
@@ -31,7 +32,7 @@ export function ProjectMaintenance({ locale, source, upgrades, readDocuments, ch
   const [target, setTarget] = useState(''), [samples, setSamples] = useState<string[]>([]);
   const [plan, setPlan] = useState<UpgradePlan | null>(null), [operationId, setOperationId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true);
-  const [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
   const [engineHealth, setEngineHealth] = useState<EngineHealth | null>(null);
   const [checkingEngine, setCheckingEngine] = useState(false), [engineError, setEngineError] = useState('');
   const [confirm, setConfirm] = useState<{ kind: 'commit' | 'restore'; id: string; original: string } | null>(null);
@@ -75,7 +76,7 @@ export function ProjectMaintenance({ locale, source, upgrades, readDocuments, ch
   };
   const run = async (action: () => Promise<void>, inDialog = false) => {
     if (running.current) return;
-    running.current = true; setBusy(true); setError(''); setNotice('');
+    running.current = true; setBusy(true); setError('');
     try { await action(); }
     catch (reason) {
       if (inDialog) throw reason;
@@ -100,8 +101,8 @@ export function ProjectMaintenance({ locale, source, upgrades, readDocuments, ch
     const result = choice.kind === 'commit' ? await upgrades.commit(choice.id) : await upgrades.restore(choice.id);
     value(result);
     setConfirm(null); setPlan(null); setTarget('');
-    setNotice(choice.kind === 'commit' ? t('引擎迁移已提交。原副本可在维护记录中查看。', 'Engine migration committed. The original copy is listed in maintenance history.', 'エンジン移行を確定しました。元のコピーはメンテナンス履歴にあります。')
-      : t('已从原副本恢复。', 'Restored from the original copy.', '元のコピーから復元しました。'));
+    studioToasts.add({ type: 'success', title: choice.kind === 'commit' ? t('引擎迁移已提交。原副本可在维护记录中查看。', 'Engine migration committed. The original copy is listed in maintenance history.', 'エンジン移行を確定しました。元のコピーはメンテナンス履歴にあります。')
+      : t('已从原副本恢复。', 'Restored from the original copy.', '元のコピーから復元しました。') });
     if (result.ok && result.warnings.length) setError(result.warnings.map(issue => issue.message).join('\n'));
     try { await onProjectChanged(); setHistory(value(await upgrades.history())); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
@@ -122,7 +123,6 @@ export function ProjectMaintenance({ locale, source, upgrades, readDocuments, ch
       <p>{project.name} · {t('当前引擎', 'Current engine', '現在のエンジン')} <code>galcraft@{project.engineVersion}</code></p>
     </header>
     {error && <p role="alert" className="project-library-error">{error}</p>}
-    {notice && <p role="status">{notice}</p>}
     {engineRepair && <section className="project-maintenance-section" aria-busy={checkingEngine || busy}>
       <h2>{t('作品引擎检查', 'Project engine check', '作品エンジンの確認')}</h2>
       <p>{t('锁定版本', 'Locked version', '固定バージョン')} <code>galcraft@{engineHealth?.version ?? project.engineVersion}</code></p>
@@ -133,7 +133,7 @@ export function ProjectMaintenance({ locale, source, upgrades, readDocuments, ch
       {engineHealth?.issues.map((issue, index) => <IssueNotice key={index} issue={issue} locale={locale}/>)}
       <div className="gc-actions">
         <Button disabled={busy || checkingEngine} onClick={() => void run(() => checkEngine(false))}>{t('重新检查引擎', 'Recheck engine', 'エンジンを再確認')}</Button>
-        {engineHealth?.issues.some(issue => issue.actions.includes('supplyDependency')) && <Button tone="primary" disabled={busy || checkingEngine} onClick={() => void run(() => checkEngine(true))}>{t('导入精确引擎目录', 'Import exact engine folder', '指定バージョンのエンジンフォルダーを読み込む')}</Button>}
+        {engineHealth?.issues.some(issue => issue.actions.includes('supplyDependency')) && <Button tone="primary" disabled={busy || checkingEngine} onClick={() => void run(() => checkEngine(true))}>{t('导入所需版本的引擎', 'Import required engine version', '必要なバージョンのエンジンを読み込む')}</Button>}
       </div>
     </section>}
     <section className="project-maintenance-section">

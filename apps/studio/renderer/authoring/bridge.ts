@@ -3,7 +3,7 @@ import { AssetSchema, CharacterSchema, FlowSchema, GalleryEntrySchema, IdSchema,
 import type { Asset, AssetQuery as CatalogQuery, AssetReference, DocumentView, Issue, Ref, Result, Source, StudioBridge } from '@galcraft/contracts';
 import type { CompileInput } from '@galcraft/dsl';
 import { readTemplateDocuments } from '@galcraft/templates';
-import { parse } from '@galcraft/dsl';
+import { conditionSignatures, parse } from '@galcraft/dsl';
 import { prepareProjectPlugins } from './plugins.js';
 import type { AssetQuery, AuthoringServices, AuthoringSource, SceneSource } from './controller.js';
 
@@ -13,7 +13,7 @@ function fail<T>(code: string, message: string): Result<T> {
 }
 function catalogQuery(input: AssetQuery): CatalogQuery {
   return { kind: input.kind as CatalogQuery['kind'], folder: input.folder ?? null, characterId: input.characterId ?? null, sceneId: input.sceneId ?? null, locale: input.locale ?? null,
-    search: input.text, tags: input.tags ?? [], usage: input.usage ?? null, allowedKinds: input.allowedKinds, typeFields: input.typeFields,
+    search: input.text, assetIds: input.assetIds, tags: input.tags ?? [], usage: input.usage ?? null, allowedKinds: input.allowedKinds, typeFields: input.typeFields,
     reference: input.reference ?? 'any', review: input.review ?? 'any', sort: input.sort ?? 'name', direction: input.direction ?? 'asc',
     offset: input.offset, limit: input.limit, indexRevision: input.indexRevision ?? null };
 }
@@ -226,10 +226,7 @@ async function inputWithPlugins(bridge: StudioBridge, documents: DocumentView[])
     }
     if (referenceIssues.length) { await plugins.dispose(); return { ok: false, error: referenceIssues[0]!, issues: referenceIssues }; }
     input.pluginCommands = plugins.commandSpecs;
-    input.pluginConditions = Object.fromEntries(plugins.conditionSpecs.map(condition => [condition.key, {
-      args: condition.fields.map(field => field.type === 'number' || field.type === 'integer' ? 'number' as const :
-        field.type === 'boolean' ? 'boolean' as const : 'string' as const), returns: 'boolean' as const,
-    }]));
+    input.pluginConditions = conditionSignatures(plugins.conditionSpecs);
     return { ok: true as const, value: { input, dispose: plugins.dispose }, warnings: [] };
   } catch (error) {
     await plugins?.dispose();
@@ -262,7 +259,7 @@ export function createAuthoringServices(bridge: StudioBridge): AuthoringServices
     recordAssetUse: input => bridge.assets.recordUse(input),
     removeRecentAsset: input => bridge.assets.removeRecent(input),
     allAssetIds: async input => bridge.assets.allIds(catalogQuery({ ...input, offset: 0, limit: 40 })),
-    importAssets: paths => bridge.assets.import(paths),
+    importAssets: (paths, options) => bridge.assets.import(paths, options),
     getAsset: id => bridge.assets.get(id),
     inspectModelAsset: id => bridge.assets.inspectModel(id),
     describeAssets: input => bridge.assets.describe(input),

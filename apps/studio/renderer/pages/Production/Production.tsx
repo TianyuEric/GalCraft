@@ -65,7 +65,7 @@ import {
 import { unwrap } from "./bridge.js";
 import { ProductionSession, type ProductionDirectoryState, type ProductionRecord } from "./session.js";
 import "./production.css";
-import { UIPlanEditor } from "./UIPlanEditor.js";
+import { planDependencies, planStepTitle, UIPlanEditor } from "./UIPlanEditor.js";
 import { CompositionReview } from "./CompositionReview.js";
 import type { AuthoringServices } from "../../authoring/controller.js";
 import { quickLabels } from './QuickTask.js';
@@ -103,7 +103,7 @@ const states: Record<string, [string, string, string]> = {
   submitting: ["提交中", "Submitting", "送信中"],
   running: ["生成中", "Running", "生成中"],
   fetching: ["下载结果", "Fetching", "取得中"],
-  review: ["执行：生成完成", "Execution: generated", "実行：生成完了"],
+  review: ["生成完成，待查看候选", "Results ready to review", "生成結果を確認できます"],
   interrupted: ["状态待确认", "Needs reconciliation", "状態確認待ち"],
   failed: ["失败", "Failed", "失敗"],
   cancelled: ["已取消", "Cancelled", "キャンセル済み"],
@@ -297,8 +297,6 @@ export function Production({
     if (running.current) return;
     running.current = true;
     setBusy(true);
-    s.error = "";
-    s.diagnostic = null;
     try {
       await action();
       if (refresh) await s.refresh();
@@ -416,7 +414,20 @@ export function Production({
         ...(['adopt', 'recipe-import', 'ui-plan', 'save'] as const).filter(id => id === 'adopt' ? adoption : id === 'recipe-import' ? recipeImport : id === 'save' ? savePinned : uiProposal).map(id => ({ id, title: reviewTitle(id), icon: <FileText size={15}/>, dirty: id === 'ui-plan' && uiDirty })),
       ]} onSelect={id => setActiveReview(id === 'overview' ? '' : id as ReviewKind)} onPin={() => {}} onClose={async id => { if (id === 'overview') return false; await run(() => closeReview(id as ReviewKind)); return false; }}/></div>}
       {pendingReceipt && <div className="production-adoption-refresh" role="status"><p>{t('内容已采用，正在同步工作区。', 'Content adopted; synchronizing the workspace.', '採用済み。ワークスペースを同期しています。')}</p>{refreshError && <><p role="alert">{t('工作区刷新失败；采用已经完成，请重试刷新。', 'Workspace refresh failed. Adoption completed; retry refreshing.', '更新に失敗しました。採用済みです。更新を再試行してください。')} {refreshError}</p><Button disabled={busy} onClick={() => void run(() => refreshAdoption(pendingReceipt, false), false)}>{t('重试刷新', 'Retry refresh', '更新を再試行')}</Button></>}</div>}
-      {documentActive && activeReview === 'ui-plan' && uiProposal && placeExplorer(<nav className="production-plan-outline" aria-label={t('计划步骤', 'Plan steps', '計画のステップ')}><h3>{t('计划步骤与依赖', 'Plan steps and dependencies', '計画のステップと依存関係')}</h3>{uiProposal.steps.map((step, index) => <Button key={step.key} onClick={() => mediaRoot.current?.querySelectorAll('.plan-step-editor')[index]?.scrollIntoView({block:'start',behavior:'smooth'})}><span>{index + 1}. {step.description || step.key}<small>{t('先完成', 'After', '先行ステップ')}: {step.dependsOn.join(', ') || '—'}</small></span></Button>)}</nav>)}
+      {documentActive && activeReview === 'ui-plan' && uiProposal && placeExplorer(
+        <nav className="production-plan-outline" aria-label={t('计划步骤', 'Plan steps', '計画のステップ')}>
+          <h3>{t('计划步骤与依赖', 'Plan steps and dependencies', '計画のステップと依存関係')}</h3>
+          {uiProposal.steps.map((step, index) => <Button key={step.key} onClick={() => {
+            const destination = mediaRoot.current?.querySelectorAll<HTMLElement>('.plan-step-editor')[index];
+            destination?.focus({ preventScroll: true });
+            destination?.scrollIntoView({ block: 'start' });
+          }}>
+            <span>{index + 1}. {planStepTitle(step, index, locale)}
+              {step.dependsOn.length > 0 && <small>{t('先完成', 'After', '先行ステップ')} · {planDependencies(uiProposal.steps, step, locale)}</small>}
+            </span>
+          </Button>)}
+        </nav>
+      )}
       <header className="production-workbench-toolbar">
         <div className="production-section-select"><Choice label={t('制作分区','Production section','制作の区分')} value={tab} onChange={changeSection} options={[{value:'tasks',label:t('制作与候选','Production & candidates','制作と候補')},{value:'recipes',label:t('方案库','Scheme library','制作方法ライブラリ')},...(openConnections ? [] : [{value:'connections',label:t('连接与工具','Connections & tools','接続とツール')}])]}/></div>
         <ProductionCreateMenu locale={locale} busy={busy} entries={[
@@ -430,7 +441,7 @@ export function Production({
         {tab === 'tasks' && !active && !unavailableRecord && draft && !draft.submittedTaskId && <Button tone="quiet" disabled={busy} onClick={() => setRemoveDraft({ id: draft.id, name: draft.name || t('未命名草稿', 'Untitled draft', '無題の下書き') })}><Trash2 size={14}/>{t('删除草稿', 'Delete draft', '下書きを削除')}</Button>}
       </header>
       {!!s.data.migrationIssues?.length && <Disclosure><span>{t('制作数据需要处理','Production data needs attention','制作データの確認が必要です')} ({s.data.migrationIssues.length})</span><ul>{s.data.migrationIssues.map((message,index)=><li key={index}>{message}</li>)}</ul></Disclosure>}
-      {s.error && (
+      {s.error && s.revealedFeedback?.surface !== 'connections' && (
         <div role="alert" className="workbench-error">
           {s.diagnostic ? <IssueNotice issue={s.diagnostic} locale={locale}/> : <>
           <p>{/Cannot read|TypeError|undefined|SyntaxError/.test(s.error) ? t('无法完成此操作，请检查当前表单或重新打开工作台。详细信息可用于定位问题。', 'This action could not complete. Check the form or reopen the workbench; details can help diagnose it.', '処理できませんでした。フォームを確認するか、制作画面を開き直してください。') : s.error.replace(/^Error: /, '')}</p>
@@ -1351,6 +1362,7 @@ export function Production({
             )}
           </p>
           <Button
+            tone={uiPlan ? undefined : 'primary'}
             disabled={busy || !uiSource}
             onClick={() =>
               void run(async () => {

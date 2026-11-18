@@ -56,12 +56,18 @@ export function ServiceConnections({ session: s, locale="zh-CN", editWorkflow, i
   const [secret, setSecret] = useState(s.connectionGuiDraft?.secret??''), [advanced, setAdvanced] = useState<string | null>(s.connectionGuiDraft?.advanced??null);
   const [remove, setRemove] = useState<ConnectionConfig | null>(null), [report, setReport] = useState<CapabilityReport | null>(null);
   const sheet = useRef<HTMLElement>(null);
+  const errorRegion = useRef<HTMLDivElement>(null), reportHeading = useRef<HTMLHeadingElement>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [diagnostic, setDiagnostic] = useState<Issue | null>(null);
   const [baseline, setBaseline] = useState(s.connectionGuiDraft?.baseline??''), [discard, setDiscard] = useState(false);
   const [checkPurpose, setCheckPurpose] = useState<Purpose | null>(null), [checkImageUsage, setCheckImageUsage] = useState<ImageUsage>('background');
   const [checkWorkflow, setCheckWorkflow] = useState<string | null>();
   const [selection, setSelection] = useState<string[]>(s.connectionGuiDraft?.selection??[]);
+  useEffect(() => {
+    if (!active || workflowActive) return;
+    if (error || diagnostic) errorRegion.current?.focus();
+    else if (report) reportHeading.current?.focus();
+  }, [active, workflowActive, error, diagnostic, report]);
   const purposeLabel = (purpose: Purpose) => purposes[purpose] ?? s.data.operations?.find(item => item.definition.purpose === purpose)?.definition.title ?? purpose;
   const pluginProviders = s.data.providers ?? [], pluginProvider = pluginProviders.find(item => item.key === edit?.providerKey);
   const listedConnections = edit && !s.data.connections.some(connection => connection.id === edit.id) ? [...s.data.connections, edit] : s.data.connections;
@@ -98,10 +104,17 @@ export function ServiceConnections({ session: s, locale="zh-CN", editWorkflow, i
     if (!edit) return null;
     if (!pluginInputsValid(sheet.current)) throw new Error(local('请修正标出的字段。', 'Correct the highlighted fields.', '表示されたフィールドを修正してください。'));
     if (!edit.name.trim()) throw new Error(t("请填写连接名称"));
-    if (edit.protocol !== 'plugin' || edit.baseUrl) { const url = new URL(edit.baseUrl); if (!['http:', 'https:'].includes(url.protocol)) throw new Error(t("服务地址需使用 http 或 https")); }
+    if (edit.protocol !== 'plugin' || edit.baseUrl) {
+      const url = URL.parse(edit.baseUrl);
+      if (!url || !['http:', 'https:'].includes(url.protocol)) throw new Error(t("服务地址需使用 http 或 https"));
+    }
     if (!edit.purposes.length) throw new Error(t("请至少选择一个用途"));
     if (!checkOnly && !['plugin', 'comfyUI', 'webUI', 'gptSoVits'].includes(edit.protocol) && !edit.model.trim()) throw new Error(t("请填写模型名称；可先检查服务获取模型列表"));
-    const parameters = advanced === null ? edit.parameters : JSON.parse(advanced);
+    let parameters = edit.parameters;
+    if (advanced !== null) {
+      try { parameters = JSON.parse(advanced); }
+      catch { throw new Error(local('请在请求高级参数中修正 JSON 格式。', 'Correct the JSON in Advanced request parameters.', 'リクエストの詳細設定で JSON の形式を修正してください。')); }
+    }
     if (!parameters || Array.isArray(parameters) || typeof parameters !== 'object') throw new Error(t("高级参数应为 JSON 对象"));
     if (pluginProvider) { const invalid = validateFields(pluginProvider.configFields, parameters, field => field.label, locale); if (invalid.length) throw new Error(invalid.map(item => item.message).join(' · ')); }
     const updated = { ...edit, revision: edit.revision + 1, parameters };
@@ -146,8 +159,11 @@ export function ServiceConnections({ session: s, locale="zh-CN", editWorkflow, i
     {inspectorContainer && createPortal(inspector, inspectorContainer)}
     {workflowEditor}
     {edit && <section className="service-connection-sheet connection-workspace-editor" ref={sheet} hidden={workflowActive}><header><h2>{edit.name || t("配置服务")}</h2><span role="status">{dirty ? local("配置未保存", "Configuration unsaved", "設定未保存") : s.data.connections.some(c => c.id === edit.id) ? local("配置已保存", "Configuration saved", "設定保存済み") : local('尚未保存的新连接', 'New connection · not saved', '新規接続・未保存')}</span></header>
-      {error && <p role="alert" className="workbench-error">{error}</p>}
-      {diagnostic && <IssueNotice issue={diagnostic} locale={locale}/>}
+      <div className="connection-editor-content">
+      {(error || diagnostic) && <div ref={errorRegion} tabIndex={-1}>
+        {error && <p role="alert" className="workbench-error">{error}</p>}
+        {diagnostic && <IssueNotice issue={diagnostic} locale={locale}/>}
+      </div>}
       {stale && dirty && <p className="workbench-error" role="alert">{local('已保存的连接在本次编辑期间发生变化。当前输入已保留，请记录要保留的字段后取消并重新打开连接。', 'The saved connection changed while you were editing. Your input is retained. Note the fields you want to keep, then cancel and reopen the connection.', '編集中に保存済みの接続が変更されました。入力は保持されています。残す項目を控え、キャンセルして接続を開き直してください。')}</p>}
       <fieldset disabled={busy} className="workflow-edit-fields"><section className="connection-section"><h3>{local("基本信息", "Basic information", "基本情報")}</h3>
       {!s.data.connections.some(c => c.id === edit.id) && <Field label={t("服务类型")}><Choice label={t("服务类型")} value={provider} options={[...providers.map(p => ({ value: p.id, label: t(p.name) })), ...pluginProviders.map(p => ({ value: p.key, label: `${local('插件服务', 'Plugin service', 'プラグインサービス')} · ${p.key.split('/').at(-1)}` }))]} onChange={id => { setProvider(id); const plugin = pluginProviders.find(item => item.key === id); setEdit(plugin ? { ...preset('openai',locale,s.data), id: edit.id, name: plugin.key.split('/').at(-1)!, protocol: 'plugin', providerKey: plugin.key, purposes: [...plugin.purposes], parameters: fieldDefaults(plugin.configFields) } : { ...preset(id,locale,s.data), id: edit.id }); setAdvanced(null); setReport(null); }}/></Field>}
@@ -176,7 +192,7 @@ export function ServiceConnections({ session: s, locale="zh-CN", editWorkflow, i
       {edit.purposes.includes('text') && <div className="form-grid"><label className="check-row"><input type="checkbox" checked={edit.parameters.stream === true} onChange={e => parameter('stream', e.target.checked)}/>{t("流式接收回答")}</label><label className="check-row"><input type="checkbox" checked={edit.parameters.textVision === true} onChange={e => parameter('textVision', e.target.checked)}/>{t("模型支持图像输入")}</label>{edit.protocol === 'chatCompletions' && <Field label={t("思考模式（服务支持时生效）")}><Choice label={t("思考模式")} value={String((edit.parameters.request as { thinking?: { type?: string } } | undefined)?.thinking?.type ?? '')} options={[{ value: '', label: t("服务默认") }, { value: 'disabled', label: t("关闭（DeepSeek）") }, { value: 'enabled', label: t("开启（DeepSeek）") }]} onChange={value => { const request = { ...(edit.parameters.request as Record<string, Json> ?? {}) }; if (value) request.thinking = { type: value }; else delete request.thinking; parameter('request', request); }}/></Field>}</div>}
       <p className="field-help">{edit.protocol === 'comfyUI' ? t("工作流的模型、采样器和节点参数来自导入的 API 工作流；在工作流编辑器中配置输入、输出和用途。") : edit.purposes.includes('speech') ? t("音色、语言、语速与参考音频按每次配音任务填写；服务连接保存通用认证与模型。") : edit.purposes.includes('image') ? t("尺寸、数量和参考图在制作表单中填写；服务特有的质量、采样器等参数可在高级设置中补充。") : t("输出长度、采样温度和本轮要求在制作任务中设置。")} </p>
       </section>
-      <section className="connection-section"><h3>{local("高级设置", "Advanced settings", "詳細設定")}</h3>
+      <section className="connection-section"><h3>{local('连接检查', 'Connection check', '接続確認')}</h3>
       <div className="form-grid"><Field label={local('检查用途', 'Inspection purpose', '確認する用途')}><Choice label={local('检查用途', 'Inspection purpose', '確認する用途')} value={selectedPurpose ?? ''} options={edit.purposes.map(value => ({ value, label: purposeLabel(value) }))} onChange={value => { setCheckPurpose(value as Purpose); setReport(null); }}/></Field>{selectedPurpose === 'image' && <Field label={local('检查图像用途', 'Inspection image use', '確認する画像用途')}><Choice label={local('检查图像用途', 'Inspection image use', '確認する画像用途')} value={checkImageUsage} options={(['background', 'figure', 'cg', 'ui'] as const).map(value => ({ value, label: t(({ background: '背景', figure: '立绘', cg: 'CG', ui: 'UI 素材' })[value]) }))} onChange={value => { setCheckImageUsage(value as ImageUsage); setReport(null); }}/></Field>}</div>
       {edit.protocol === 'comfyUI' && <Field label={local('检查工作流', 'Inspection workflow', '確認するワークフロー')} help={local('仅用于本次连接检查，保留已保存的默认工作流。', 'Applies to this check. The saved default workflow is retained.', 'この接続確認にだけ使用します。保存済みの既定ワークフローは保持されます。')}>
         <Choice label={local('检查工作流', 'Inspection workflow', '確認するワークフロー')}
@@ -188,11 +204,12 @@ export function ServiceConnections({ session: s, locale="zh-CN", editWorkflow, i
           ]}
           onChange={value => { setCheckWorkflow(value === '@default' ? undefined : value || null); setReport(null); }}/>
       </Field>}
-      <Disclosure><span>{t("高级设置 · 超时、并行请求与服务参数")}</span><div className="form-grid"><Field label={t("同时执行的请求数")}><Input type="number" min={1} value={edit.concurrency} onChange={e => patch({ concurrency: Math.max(1, Number(e.target.value)) })}/></Field>{edit.purposes.map(p => <Field key={p} label={`${purposeLabel(p)}${t('超时（秒）')}`}><Input type="number" min={1} value={edit.timeoutSecByPurpose[p] ?? 600} onChange={e => patch({ timeoutSecByPurpose: { ...edit.timeoutSecByPurpose, [p]: Math.max(1, Number(e.target.value)) } })}/></Field>)}</div><Field label={t("高级参数 JSON（request 对象写服务请求参数）")}><Textarea rows={7} value={advanced ?? JSON.stringify(edit.parameters, null, 2)} onChange={e => setAdvanced(e.target.value)}/></Field></Disclosure>
-      {report && <section className="connection-inspection"><h3>{report.status === 'unavailable' ? t("连接检查未通过") : t("服务已响应")}</h3><p>{local('连接版本', 'Connection revision', '接続の版')} {report.connectionRevision} · <time dateTime={report.checkedAt}>{new Date(report.checkedAt).toLocaleString(locale)}</time> · {local('连接检查未发送生成请求', 'Connection check sent no generation request', '接続確認では生成リクエストを送信していません')}</p>{report.issues.length ? report.issues.map((issue, index) => <IssueNotice key={index} issue={issue} locale={locale}/>) : <p>{t("可选择下方模型。检查只读取服务信息，不发送生成请求；真实生成会在任务中单独确认。")}</p>}<div className="gc-actions">{report.models?.map(model => <Button key={model} onClick={() => patch({ model })}>{model}</Button>)}</div></section>}
+      {report && <section className="connection-inspection"><h3 ref={reportHeading} tabIndex={-1}>{report.status === 'unavailable' ? t("连接检查未通过") : t("服务已响应")}</h3><p>{local('连接版本', 'Connection revision', '接続の版')} {report.connectionRevision} · <time dateTime={report.checkedAt}>{new Date(report.checkedAt).toLocaleString(locale)}</time> · {local('连接检查未发送生成请求', 'Connection check sent no generation request', '接続確認では生成リクエストを送信していません')}</p>{report.issues.length ? report.issues.map((issue, index) => <IssueNotice key={index} issue={issue} locale={locale}/>) : <p>{t("可选择下方模型。检查只读取服务信息，不发送生成请求；真实生成会在任务中单独确认。")}</p>}<div className="gc-actions">{report.models?.map(model => <Button key={model} onClick={() => patch({ model })}>{model}</Button>)}</div></section>}
       </section>
+      <Disclosure><span>{local('请求高级参数', 'Advanced request parameters', 'リクエストの詳細設定')}</span><div className="form-grid"><Field label={t("同时执行的请求数")}><Input type="number" min={1} value={edit.concurrency} onChange={e => patch({ concurrency: Math.max(1, Number(e.target.value)) })}/></Field>{edit.purposes.map(p => <Field key={p} label={`${purposeLabel(p)}${t('超时（秒）')}`}><Input type="number" min={1} value={edit.timeoutSecByPurpose[p] ?? 600} onChange={e => patch({ timeoutSecByPurpose: { ...edit.timeoutSecByPurpose, [p]: Math.max(1, Number(e.target.value)) } })}/></Field>)}</div><Field label={t("高级参数 JSON（request 对象写服务请求参数）")}><Textarea rows={7} value={advanced ?? JSON.stringify(edit.parameters, null, 2)} onChange={e => setAdvanced(e.target.value)}/></Field></Disclosure>
       </fieldset>
-      <div className="dialog-actions"><Button disabled={busy} onClick={requestClose}>{t("取消")}</Button><Button disabled={busy || stale || !selectedPurpose} onClick={() => void run(check)}>{dirty || !saved ? t("保存并检查连接") : local('检查连接', 'Check connection', '接続を確認')}</Button><Button tone="primary" disabled={busy || stale || !!saved && !dirty} onClick={() => void run(async () => { await save(); })}>{t("保存连接")}</Button></div>
+      </div>
+      <footer className="dialog-actions"><Button disabled={busy} onClick={requestClose}>{t("取消")}</Button><Button disabled={busy || stale || !selectedPurpose} onClick={() => void run(check)}>{dirty || !saved ? t("保存并检查连接") : local('检查连接', 'Check connection', '接続を確認')}</Button><Button tone="primary" disabled={busy || stale || !!saved && !dirty} onClick={() => void run(async () => { await save(); })}>{t("保存连接")}</Button></footer>
     </section>}
     {!edit && !workflowActive && <section className="connection-workspace-editor connection-workspace-empty"><h2>{local("选择连接或本地工具", "Select a connection or local tool", "接続またはローカルツールを選択")}</h2><p>{local("连接配置与检查结果会保持在工作区。", "Connection configuration and inspection stay in this workspace.", "接続設定と確認結果をこのワークスペースに保持します。")}</p></section>}
     {active && discard && <MessageBox title={local('保存服务连接修改？', 'Save connection changes?', '接続の変更を保存しますか？')} description={local('连接设置尚未保存。继续编辑，或选择保存后关闭。', 'Connection settings have not been saved. Continue editing or save before closing.', '接続の変更は未保存です。編集を続けるか、保存して閉じてください。')} cancelLabel={local('继续编辑', 'Keep editing', '編集を続ける')} onClose={() => setDiscard(false)} actions={[

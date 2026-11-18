@@ -93,6 +93,24 @@ export const ProjectDocument: Story = { args: { page: 'editor', initialDocument:
 export const StartupAndHome: Story = { args: { page: 'editor', initialDocument: 'startup' } };
 export const Assets: Story = { args: { page: 'assets' } };
 export const AssetsDark: Story = { args: { page: 'assets', theme: 'dark' } };
+export const PropertyTools: Story = {
+  args: { page: 'editor' },
+  parameters: { docs: { description: { story: 'UXF-01 candidate. Real Studio renderer with in-memory services. Object properties and asset properties retain separate follow/pin sources. Hover or keyboard-focus the rail icons for tool names. Disk saving and service recovery require the real host.' } } },
+  play: async ({ canvas, canvasElement }) => {
+    const body = within(canvasElement.ownerDocument.body);
+    await waitFor(() => expect(canvasElement.querySelector('.authoring-scene-views')).toBeVisible());
+    await userEvent.click(canvas.getByRole('button', { name: '布局' }));
+    await userEvent.click(await body.findByRole('menuitem', { name: '显示素材属性' }));
+    await userEvent.click(canvas.getByRole('button', { name: '布局' }));
+    await userEvent.click(await body.findByRole('menuitem', { name: '显示素材库' }));
+    const row = () => canvasElement.querySelector<HTMLElement>(`[data-view="studio-assets"] [data-plugin-asset-id="${figureId}"] .asset-row-name`);
+    await waitFor(() => expect(row()).toBeVisible());
+    await userEvent.click(row()!);
+    await userEvent.click(canvas.getByRole('button', { name: '对象属性' }));
+    canvasElement.dataset.propertyToolsReady = 'true';
+  },
+};
+export const PropertyToolsDusk: Story = { ...PropertyTools, args: { page: 'editor', theme: 'dark' } };
 export const AssetToCharacter: Story = {
   args: { page: 'editor' },
   play: async ({ canvas, canvasElement }) => {

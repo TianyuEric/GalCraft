@@ -106,9 +106,15 @@ export function fieldHint(spec: FieldSpec, label: string, locale: string, comman
   const meaning=meanings[spec.path]?.[locale==='en'?1:locale==='ja'?2:0];
   return meaning ?? formHint(locale, label, spec.type, { ...spec, unit: (spec.unit && spec.unit !== 'none' ? spec.unit : /Ms$/.test(spec.path) ? 'ms' : /Sec$/.test(spec.path) ? 's' : undefined) });
 }
-export function initialFieldValue(spec: FieldSpec): unknown {
-  if (spec.path === 'id' && spec.refKind === 'statement') return createId();
-  if (spec.type === 'object') return Object.fromEntries((spec.children ?? []).filter(c => c.required || c.default != null).map(c => [c.path, initialFieldValue(c)]));
+export function initialFieldValue(spec: FieldSpec, creatingCommand = false): unknown {
+  if (spec.path === 'id' && spec.refKind === 'statement') return creatingCommand ? undefined : createId();
+  if (spec.type === 'object') return Object.fromEntries((spec.children ?? [])
+    .filter(child => child.required || child.default != null)
+    .flatMap(child => {
+      if (creatingCommand && spec.path === 'segment' && child.path === 'effects') return [];
+      const value = initialFieldValue(child, creatingCommand);
+      return creatingCommand && value == null && !child.nullable || value === undefined ? [] : [[child.path, value]];
+    }));
   return spec.default;
 }
 

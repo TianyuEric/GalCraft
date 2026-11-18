@@ -237,18 +237,22 @@ export function Plugins({
                   "開発ディレクトリを読み込む",
                 )
           }>
-          <header className="plugin-editor-heading"><h2>{modal === 'install' ? t('安装插件包', 'Install package', 'パッケージを追加') : t('加载开发目录', 'Load development directory', '開発ディレクトリを読み込む')}</h2><Button tone="quiet" disabled={busy} onClick={() => openModal('')}>{t('返回插件列表', 'Back to plugins', 'プラグイン一覧へ戻る')}</Button></header>
           {repair && <Identity label={t('需要安装的精确版本', 'Required exact package', '必要な正確なバージョン')} value={`${repair.id}@${repair.version}`} locale={locale}/>}
-          <Field label={t("本机路径", "Local path", "ローカルパス")}>
+          <p className="plugin-install-help">{modal === "development"
+            ? t('选择插件的开发目录。加载后 Studio 将使用目录中的开发入口。', 'Choose the plugin’s development directory. Studio loads its development entry point.', 'プラグインの開発ディレクトリを選択すると、Studio が開発用のエントリーポイントを読み込みます。')
+            : t('选择 .galplugin、.zip，或输入解包后的目录。先检查包和版本，再确认安装。', 'Choose a .galplugin or .zip file, or enter an unpacked directory. Inspect the package and version before installing.', '.galplugin、.zip、または展開したディレクトリを指定し、パッケージとバージョンを確認してからインストールします。')}</p>
+          <div className="plugin-install-path">
+          <Field name="plugin-local-path" label={t("本机路径", "Local path", "ローカルパス")} required>
             <Input
+              disabled={busy}
               value={path}
               onChange={(e) => {
                 setPath(e.target.value);
                 setInspection(null);
+                setError('');
               }}
             />
           </Field>
-          <div className="gc-actions">
             <Button disabled={busy}
               onClick={() =>
                 void run(async () => {
@@ -291,7 +295,7 @@ export function Plugins({
               <Button disabled={busy} onClick={() => openModal("")}>{t("取消", "Cancel", "キャンセル")}</Button>
               {inspection === null ? <>
             <Button tone="primary"
-              disabled={busy || !path}
+              disabled={busy || !path.trim()}
               onClick={() =>
                 void run(async () => {
                   if (modal === "development") {
@@ -318,7 +322,7 @@ export function Plugins({
                 })
               }
             >
-              {t("检查", "Inspect", "確認")}
+              {modal === "development" ? t('加载开发目录', 'Load development directory', '開発ディレクトリを読み込む') : t("检查", "Inspect", "確認")}
             </Button>
               </> : <>
               <Button

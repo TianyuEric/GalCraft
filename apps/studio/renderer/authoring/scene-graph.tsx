@@ -42,8 +42,8 @@ export function SceneGraph({ source, activeSceneId, locale, onNavigate, expanded
   const partial = model.nodes.some(node => node.partial || node.missing);
   return <section className="scene-relations" aria-label={t('场景关系图', 'Scene relationships', 'シーン関係図')}>
     <Toolbar aria-label={t('关系图工具', 'Graph tools', '関係図ツール')}>
-      <ToolbarButton size="sm" onClick={locate} disabled={!current}><LocateFixed/>{t('当前场景', 'Current scene', '現在のシーン')}</ToolbarButton>
-      <ToolbarButton size="sm" onClick={() => { void flow.current?.fitView({ padding: .2 }); }}><Focus/>{t('查看全部', 'Fit all', '全体表示')}</ToolbarButton>
+      <ToolbarButton size="sm" onClick={locate} disabled={!current}><LocateFixed/>{t('定位当前场景', 'Locate current scene', '現在のシーンに移動')}</ToolbarButton>
+      <ToolbarButton size="sm" onClick={() => { void flow.current?.fitView({ padding: .2 }); }}><Focus/>{t('查看全图', 'Fit whole graph', '図全体を表示')}</ToolbarButton>
       <ToolbarSeparator/>
       <ToolbarButton size="sm" aria-pressed={showList} onClick={() => setShowList(!showList)}>{t('关系列表', 'Connections', '接続一覧')}</ToolbarButton>
       {onExpand && <ToolbarButton size="sm" onClick={onExpand}>{expanded ? <Minimize2/> : <Expand/>}{expanded ? t('还原窗口', 'Restore window', '元のサイズ') : t('放大窗口', 'Expand window', 'ウィンドウを拡大')}</ToolbarButton>}
@@ -71,13 +71,12 @@ export function SceneGraph({ source, activeSceneId, locale, onNavigate, expanded
           'controls.ariaLabel': t('缩放与定位', 'Zoom and position', 'ズームと位置'),
           'controls.zoomIn.ariaLabel': t('放大', 'Zoom in', '拡大'),
           'controls.zoomOut.ariaLabel': t('缩小', 'Zoom out', '縮小'),
-          'controls.fitView.ariaLabel': t('查看全部', 'Fit all', '全体表示'),
         }}
         nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null}
         onInit={instance => { flow.current = instance; }}
         onNodeClick={(_, node) => { if (!node.data.missing) { setCurrent(node.id); onNavigate(node.id); } }}
         onEdgeClick={(_, edge) => { const relation = model.edges.find(item => item.id === edge.id); if (relation) onNavigate(relation.from, relation.statementId); }}>
-        <Background gap={24}/><Controls showInteractive={false}/>
+        <Background gap={24}/><Controls showInteractive={false} showFitView={false}/>
       </ReactFlow>
     </div>
     {showList && <div className="scene-relations-list">{model.edges.length ? model.edges.map(edge => <Button key={edge.id}

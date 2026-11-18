@@ -1,6 +1,6 @@
-import { createId, VersionSchema, ProjectSchema, type BuildInput, type Issue, type Result, type TargetCapability } from '@galcraft/contracts';
+import { createId, VersionSchema, ProjectSchema, type BuildInput, type Issue, type Result, type Target, type TargetCapability } from '@galcraft/contracts';
 import { Input } from '../../components/ui/input.js';
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Globe,
   Monitor,
@@ -36,6 +36,19 @@ export type PublishGuiDraft = {
 type ReleaseSettings = 'assets' | 'compatibility' | 'platform';
 type PublishView = 'release' | ReleaseSettings | 'engine';
 type CheckedRelease = { planId: string; issues: Issue[]; capabilityResults?: TargetCapability[]; input: BuildInput };
+export type ReleaseCheckState = 'checking' | 'complete' | 'failed' | 'stale';
+
+const sameIssueValue = (left: unknown, right: unknown): boolean => {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) || Array.isArray(right))
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => sameIssueValue(value, right[index]));
+  const entries = Object.entries(left), other = right as Record<string, unknown>;
+  return entries.length === Object.keys(other).length && entries.every(([key, value]) => Object.hasOwn(other, key) && sameIssueValue(value, other[key]));
+};
+const failureIssues = ({ error, issues }: Extract<Result<unknown>, { ok: false }>): Issue[] =>
+  // Service transport gives error and its entry in issues separate object identities.
+  issues.some(issue => sameIssueValue(issue, error)) ? issues : [error, ...issues];
 
 export function Publish({
   services,
@@ -44,7 +57,7 @@ export function Publish({
   changed,
   saveAll,
   documentActive = true, locateSource, onUnappliedChange, guiDraft, onGuiDraftChange, onHistoryReady,
-  onCheckIssues, onBuildStarted, onBuildReceipt, onBuildFailure, lastBuild, openProjectMaintenance, locateDependency,
+  onCheckIssues, onRecheckReady, onBuildStarted, onBuildReceipt, onBuildFailure, lastBuild, openProjectMaintenance, locateDependency,
 }: {
   services: AuthoringServices;
   source: AuthoringSource;
@@ -53,11 +66,12 @@ export function Publish({
   saveAll(): Promise<void>;
   documentActive?: boolean;
   locateSource?(source: import('@galcraft/contracts').Source): void;
-  onCheckIssues?(issues: Issue[]): void;
+  onCheckIssues?(issues: Issue[], state?: ReleaseCheckState): void;
+  onRecheckReady?(check: (() => Promise<void>) | null): void;
   locateDependency?(issue: Issue): void;
-  onBuildStarted?(planId: string): void;
+  onBuildStarted?(planId: string, target?: Target): void;
   onBuildReceipt?(planId: string, receipt: BuildReceipt): void;
-  onBuildFailure?(planId: string, issue: Issue, cancelled: boolean): void;
+  onBuildFailure?(planId: string, issue: Issue, cancelled: boolean, target?: Target): void;
   lastBuild?: { planId: string; receipt: BuildReceipt };
   openProjectMaintenance?(): void;
   onUnappliedChange?(dirty: boolean): void;
@@ -77,6 +91,18 @@ export function Publish({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const operationPending = useRef(false);
+  const [releaseFocus, setReleaseFocus] = useState<{ element: HTMLElement; selector: string | null; moved: boolean; release(): void } | null>(null);
+  useEffect(() => {
+    if (busy || !releaseFocus) return;
+    releaseFocus.release();
+    setReleaseFocus(null);
+    const current = document.activeElement;
+    if (releaseFocus.moved || current !== document.body && current !== document.documentElement) return;
+    const element = releaseFocus.element.isConnected ? releaseFocus.element
+      : releaseFocus.selector ? actionStripRef.current?.querySelector<HTMLElement>(releaseFocus.selector) : null;
+    element?.focus({ preventScroll: true });
+  }, [busy, releaseFocus]);
+  useEffect(() => () => { releaseFocus?.release(); }, [releaseFocus]);
   const [checking, setChecking] = useState(false);
   const [savedSelection, setSavedSelection] = useState<{ version: string; revision: number; signing: 'unsigned' | 'certificate' } | null>(null);
   const [mobile, setMobile] = useState<MobileDrafts>(guiDraft?.mobile ?? {});
@@ -125,8 +151,24 @@ export function Publish({
   const [publisher, setPublisher] = useState(guiDraft?.publisher??source.project.release?.publisher ?? '');
   const [brandIcon, setBrandIcon] = useState(guiDraft?.brandIcon??source.project.display.icon ?? '');
   const [windowsSigning, setWindowsSigning] = useState<'unsigned' | 'certificate'>(guiDraft?.windowsSigning??source.project.release?.windowsSigning ?? 'unsigned');
-  const [certificates, setCertificates] = useState<{ thumbprint: string; subject: string; expiresAt: string;authorUsable?:boolean;blockedReason?:string|null }[]>([]);
+  const [certificates, setCertificates] = useState<{ thumbprint: string; subject: string; expiresAt: string;authorUsable?:boolean;blockedReason?:string|null }[] | null>(null);
+  const usableCertificates = certificates?.filter(item => item.authorUsable !== false) ?? [];
   const [certificate, setCertificate] = useState(guiDraft?.certificate??'');
+  const checkState = useRef<ReleaseCheckState | null>(null);
+  const reportedCheckIssues = useRef<Issue[]>([]);
+  const activeCheck = useRef<object | null>(null);
+  const checkInput = JSON.stringify([target, mobile, output, fontMode, fallbackAssetId, keepAssets, steamAppId, steamRequired,
+    live2dPurpose, live2dLicenseConfirmed, entryMappings, version, brandName, executableName, publisher, brandIcon, windowsSigning,
+    certificate, oldSaveFiles, savedSelection, source.project.projectId, source.projectRevision, source.projectSavedRevision,
+    source.documentVersions, source.assetIndexRevision, source.scenes.map(scene => [scene.documentId, scene.revision, scene.savedRevision])]);
+  const currentCheckInput = useRef(checkInput);
+  currentCheckInput.current = checkInput;
+  const reportCheckState = (issues: Issue[], state: ReleaseCheckState) => {
+    if (state === 'complete') reportedCheckIssues.current = issues;
+    checkState.current = state;
+    onCheckIssues?.(issues, state);
+  };
+  useEffect(() => () => { activeCheck.current = null; }, []);
   const [fieldErrors, setFieldErrors] = useState<Record<string,string>>({});
   const [currentDocument, setCurrentDocument] = useState<PublishView>('release');
   const engineOpen = currentDocument === 'engine';
@@ -139,15 +181,6 @@ export function Publish({
   const resultRef = useRef<HTMLElement>(null);
   const pendingResultFocus = useRef(false);
   const actionStripRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const strip = actionStripRef.current, portal = document.getElementById('studio-portals');
-    if (!strip || !portal || !documentActive || engineOpen || settings) return;
-    const positionNotifications = () => portal.style.setProperty('--studio-toast-bottom', `${Math.max(44, window.innerHeight - strip.getBoundingClientRect().top + 8)}px`);
-    positionNotifications();
-    const observer = new ResizeObserver(positionNotifications); observer.observe(strip);
-    window.addEventListener('resize', positionNotifications);
-    return () => { observer.disconnect(); window.removeEventListener('resize', positionNotifications); portal.style.removeProperty('--studio-toast-bottom'); };
-  }, [documentActive, engineOpen, settings]);
   const [issueQuery, setIssueQuery] = useState('');
   const advancedRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState<boolean | null>(null);
@@ -172,7 +205,13 @@ export function Publish({
   });return()=>onHistoryReady?.(null);},[onHistoryReady]);
   useEffect(() => { onUnappliedChange?.(identityDirty); }, [identityDirty, onUnappliedChange]);
   useEffect(() => () => onUnappliedChange?.(false), [onUnappliedChange]);
-  useEffect(() => { setPlan(null); }, [target, mobile, output, fontMode, fallbackAssetId, keepAssets, steamAppId, steamRequired, live2dPurpose, live2dLicenseConfirmed, entryMappings, version, brandName, executableName, publisher, brandIcon, windowsSigning, certificate]);
+  useEffect(() => {
+    setPlan(null);
+    if (checkState.current && checkState.current !== 'stale') {
+      activeCheck.current = null;
+      reportCheckState(reportedCheckIssues.current, 'stale');
+    }
+  }, [checkInput]);
   useEffect(() => { setIssueQuery(''); }, [plan?.planId]);
   useEffect(()=>{
     const previous=identityBaseline.current,pending=new Set(publishIdentityChanges({target,steamAppId,version,brandName,brandIcon,executableName,publisher,windowsSigning} as PublishGuiDraft,previous)),latest=source.project;
@@ -287,28 +326,15 @@ export function Publish({
     ['engine', t('引擎版本与历史', 'Engine version & history', 'エンジンバージョンと履歴')],
   ] as const;
   const unverified=assets.filter(asset=>asset.variants.some(variant=>(variant.id===asset.activeVariantId||variant.role==='compatible')&&(!variant.targets[target]||variant.targets[target]==='unverified')));
-  const reportCheckIssues = (issues: Issue[]) => {
+  const reportCheckIssues = (issues: Issue[], state: 'complete' | 'failed' = 'complete') => {
     setSavedIssues(issues);
-    onCheckIssues?.(issues);
-    if (issues.length) focusSection(checksRef.current);
+    reportCheckState(issues, state);
   };
-  const checkSaved = async (selection = savedSelection): Promise<CheckedRelease | null> => {
-    setPlan(null);
-    setBuildCancelled(false);
-    reportCheckIssues([]);
-    if (!output.trim()) {
-      setFieldErrors({ output: t('请选择或填写输出目录', 'Choose an output directory', '出力ディレクトリを選択してください') });
-      showConfiguration('output');
-      return null;
-    }
-    if (!selection && !VersionSchema.safeParse(version).success) {
-      setFieldErrors({ version: t('请填写有效版本，例如 0.1.0', 'Enter a version, such as 0.1.0', '0.1.0 などのバージョンを入力してください') });
-      showConfiguration('version');
-      return null;
-    }
+  const checkSaved = async (current: () => boolean, selection = savedSelection): Promise<CheckedRelease | null> => {
     setChecking(true);
     try {
       const documents = unwrap(await bridge.documents.list());
+      if (!current()) return null;
       const projectDocument = documents.find(document => document.savedFiles['project.json']);
       if (!projectDocument) throw new Error(t('找不到已保存的作品文档。', 'The saved project document is unavailable.', '保存済みの作品文書が見つかりません。'));
       const savedProject = ProjectSchema.parse(JSON.parse(projectDocument.savedFiles['project.json']!).data);
@@ -322,19 +348,20 @@ export function Publish({
         throw new Error(t(`当前修改尚未保存。请审阅保存，或明确选用上次保存版本 ${savedVersion}。`, `Changes are unsaved. Review and save them, or choose the last saved release ${savedVersion}.`, `変更は未保存です。確認して保存するか、前回保存したバージョン ${savedVersion} を選択してください。`));
       }
       const compiled = await services.compilePreview?.(true, documents, { publish: true });
+      if (!current()) return null;
       if (!compiled) throw new Error(t('编译服务尚未就绪', 'Compiler unavailable', 'コンパイラーは未準備です'));
       if (!compiled.ok) {
-        reportCheckIssues(compiled.issues.includes(compiled.error) ? compiled.issues : [compiled.error, ...compiled.issues]);
+        reportCheckIssues(failureIssues(compiled), 'failed');
         return null;
       }
       const snapshot = compiled.value.snapshot;
       if (!snapshot) {
-        reportCheckIssues(compiled.value.issues);
         if (!compiled.value.issues.length) throw new Error(t('已保存内容尚未编译成功，请重新检查。', 'The saved content did not compile. Check it again.', '保存済みの内容をコンパイルできませんでした。再確認してください。'));
+        reportCheckIssues(compiled.value.issues);
         return null;
       }
       const signingRequired = target === 'windows' && snapshot.project.release?.windowsSigning === 'certificate';
-      if (signingRequired && !certificates.some(item => item.thumbprint === certificate && item.authorUsable !== false))
+      if (signingRequired && !usableCertificates.some(item => item.thumbprint === certificate))
         throw new Error(t('请读取并选择本次发行使用的本机证书。', 'Load and select the local certificate for this release.', '今回の配布用ローカル証明書を読み込んで選択してください。'));
       const input: BuildInput = {
         projectId: source.project.projectId,
@@ -355,13 +382,15 @@ export function Publish({
         live2d: { purpose: live2dPurpose, licenseConfirmed: live2dLicenseConfirmed },
       };
       const planned = await bridge.builds.planBuild(input);
+      if (!current()) return null;
       if (!planned.ok) {
-        reportCheckIssues([...compiled.value.issues, ...(planned.issues.includes(planned.error) ? planned.issues : [planned.error, ...planned.issues])]);
+        reportCheckIssues([...compiled.value.issues, ...failureIssues(planned)]);
         return null;
       }
       const nextPlan: CheckedRelease = { ...planned.value, input, issues: [...compiled.value.issues, ...planned.value.issues] };
       setPlan(nextPlan);
-      onCheckIssues?.(nextPlan.issues);
+      setSavedIssues([]);
+      reportCheckState(nextPlan.issues, 'complete');
       return nextPlan;
     } finally {
       setChecking(false);
@@ -373,7 +402,7 @@ export function Publish({
     setActiveBuild(checked);
     setBuildCancelled(false);
     try {
-      onBuildStarted?.(id);
+      onBuildStarted?.(id, checked.input.target);
       const built = await bridge.builds.build(id).catch((reason: unknown): Result<BuildReceipt> => ({
         ok: false,
         error: {
@@ -388,13 +417,12 @@ export function Publish({
       setCancelPending(false);
       if (!built.ok) {
         const cancelled = built.error.code === 'BUILD_CANCELLED';
-        onBuildFailure?.(id, built.error, cancelled);
+        onBuildFailure?.(id, built.error, cancelled, checked.input.target);
         if (cancelled) setBuildCancelled(true);
         else {
           if (built.error.code === 'BUILD_PLAN_STALE') setPlan(null);
           setError(issueText(built.error, locale));
         }
-        focusSection(checksRef.current);
         return;
       }
       pendingResultFocus.current = true;
@@ -416,15 +444,68 @@ export function Publish({
     if (warning) setReplacement({ checked, warning });
     else await buildChecked(checked);
   };
-  const checkRelease = (build: boolean) => void run(async () => {
-    const checked = await checkSaved().catch(reason => {
-      focusSection(checksRef.current);
+  const performCheck = async (build: boolean, selection = savedSelection, focusInvalid = true) => {
+    const request = {}, input = currentCheckInput.current;
+    activeCheck.current = request;
+    const current = () => activeCheck.current === request && currentCheckInput.current === input;
+    setPlan(null);
+    setBuildCancelled(false);
+    const invalid = !output.trim()
+      ? { field: 'output', message: t('请选择或填写输出目录', 'Choose an output directory', '出力ディレクトリを選択してください') }
+      : !selection && !VersionSchema.safeParse(version).success
+        ? { field: 'version', message: t('请填写有效版本，例如 0.1.0', 'Enter a version, such as 0.1.0', '0.1.0 などのバージョンを入力してください') }
+        : null;
+    if (invalid) {
+      setFieldErrors({ [invalid.field]: invalid.message });
+      if (focusInvalid) showConfiguration(invalid.field);
+      else reportCheckIssues([{ code: 'BUILD_CHECK_FAILED', owner: 'M11', severity: 'error', related: [], actions: ['retry'], message: invalid.message }], 'failed');
+      return;
+    }
+    reportCheckState(reportedCheckIssues.current, 'checking');
+    const checked = await checkSaved(current, selection).catch(reason => {
+      if (!current()) return null;
+      const issue: Issue = { code: 'BUILD_CHECK_FAILED', owner: 'M11', severity: 'error', related: [], actions: ['retry'],
+        message: reason instanceof Error ? reason.message : String(reason) };
+      setSavedIssues([issue]);
+      reportCheckState([issue], 'failed');
       throw reason;
     });
-    if (!checked) return;
+    if (!checked || !current()) return;
     if (build && !checked.issues.some(issue => issue.severity === 'error')) await requestBuild(checked);
-    else focusSection(checksRef.current);
-  });
+  };
+  const runLocalRelease = (operation: () => Promise<void>) => {
+    if (operationPending.current) return;
+    const element = document.activeElement;
+    if (element instanceof HTMLElement && element !== document.body && element !== document.documentElement) {
+      const action = element.getAttribute('data-release-action');
+      const selector = action === 'check' || action === 'build' ? `[data-release-action="${action}"]` : null;
+      const focus = { element, selector, moved: false, release: () => document.removeEventListener('focusin', moved) };
+      const moved = (event: FocusEvent) => {
+        if (event.target !== element && event.target !== document.body && event.target !== document.documentElement) focus.moved = true;
+      };
+      document.addEventListener('focusin', moved);
+      setReleaseFocus(focus);
+    }
+    void run(operation);
+  };
+  const checkRelease = (build: boolean) => runLocalRelease(() => performCheck(build));
+  const latestRecheck = useRef<() => Promise<void>>(() => Promise.resolve());
+  latestRecheck.current = () => ready ? run(() => performCheck(false, savedSelection, false)) : Promise.resolve();
+  const recheckMounted = useRef(false);
+  const recheckPending = useRef<Promise<void> | null>(null);
+  const externalRecheck = useCallback(() => {
+    if (!recheckMounted.current) return Promise.resolve();
+    if (recheckPending.current) return recheckPending.current;
+    const pending = latestRecheck.current();
+    recheckPending.current = pending;
+    void pending.finally(() => { if (recheckPending.current === pending) recheckPending.current = null; });
+    return pending;
+  }, []);
+  useEffect(() => {
+    recheckMounted.current = true;
+    onRecheckReady?.(externalRecheck);
+    return () => { recheckMounted.current = false; onRecheckReady?.(null); };
+  }, [onRecheckReady, externalRecheck]);
   const cancelBuild = (id: string) => {
     setCancelPending(true);
     void bridge.builds.cancel(id).then(result => {
@@ -457,7 +538,7 @@ export function Publish({
         <section className="publish-panel publish-configuration">
           <h2 tabIndex={-1}>{t('发行配置', 'Release configuration', '配布設定')}</h2>
           <fieldset className="publish-config-fields" disabled={busy}>
-          <div className="publish-targets">
+          <div className="publish-targets" role="group" aria-label={t('目标平台', 'Target platform', '対象プラットフォーム')}>
             <Button
               aria-pressed={target === "web"}
               onClick={() => {
@@ -494,8 +575,6 @@ export function Publish({
             </Button>
             {(["android", "ios"] as const).map(value => <Button key={value} aria-pressed={target === value} onClick={() => { setTarget(value); setPlan(null); }}><Smartphone size={16}/><strong>{targetLabel(value)}</strong><small>{value === "android" ? "APK / AAB" : "Xcode"}</small></Button>)}
           </div>
-          {(target === 'android' || target === 'ios') && <MobileTargetOptions target={target} value={mobile[target] ?? { builder: null, options: initialMobileOptions(target, source.project.projectId) }}
-            onChange={value => { setMobile(previous => ({ ...previous, [target]: value })); setPlan(null); }} builds={bridge.builds} locale={locale} chooseDirectory={async () => unwrap(await bridge.projects.chooseDirectory())}/>}
           <div className="publish-output-config"><Field name="output" required error={fieldErrors.output} label={t("输出目录", "Output directory", "出力ディレクトリ")}>
             <Input
               value={output}
@@ -555,6 +634,9 @@ export function Publish({
           })} title={t('应用版本到工作区，审阅保存后用于构建','Apply to the workspace; review and save before building','バージョンを作業状態に適用。保存後に構築できます')}><Check size={15}/>{t('应用版本修改', 'Apply version change', 'バージョン変更を適用')}</Button>
           </div>
 
+          {(target === 'android' || target === 'ios') && <MobileTargetOptions target={target} value={mobile[target] ?? { builder: null, options: initialMobileOptions(target, source.project.projectId) }}
+            onChange={value => { setMobile(previous => ({ ...previous, [target]: value })); setPlan(null); }} builds={bridge.builds} locale={locale} chooseDirectory={async () => unwrap(await bridge.projects.chooseDirectory())}/>}
+
           <details className="publish-brand-config">
             <summary>{target === 'windows' ? t('作品名称、图标与 Windows 身份', 'Work name, icon & Windows identity', '作品名・アイコン・Windows の情報') : t('作品名称与图标', 'Work name and icon', '作品名とアイコン')}</summary>
             <Field label={t('作品名称', 'Work name', '作品名')}><Input data-local-history={String(brandName !== source.project.name)} value={brandName} onChange={event => setBrandName(event.target.value)} /></Field>
@@ -571,12 +653,16 @@ export function Publish({
             <p>{t('应用后审阅保存，再检查已保存版本。名称和图标更改保留作品的存档身份。', 'Review and save before checking the saved release. Renaming keeps this work’s saved data identity.', '適用後に確認・保存してから配布を確認してください。名前を変更してもセーブの作品識別は維持されます。')}</p>
           </details>
           {target === 'windows' && (savedSelection?.signing ?? windowsSigning) === 'certificate' && <section className="publish-author-signing">
+            <h3>{t('本机签名证书', 'Local signing certificate', 'ローカル署名証明書')}</h3>
+            {!certificates && <p>{t('先读取本机证书，再选择此发行使用的证书。', 'Load the local certificates first, then choose one for this release.', 'ローカル証明書を読み込み、今回の配布用に選択してください。')}</p>}
             <Button onClick={() => void run(async () => { setCertificates(unwrap(await bridge.builds.signingCertificates())); setPlan(null); })}>{t('读取本机签名证书', 'Load local signing certificates', 'ローカル署名証明書を読み込む')}</Button>
-            <Field label={t('本次发行证书', 'Certificate for this release', '今回の配布用証明書')}><Choice label={t('本次发行证书', 'Certificate for this release', '今回の配布用証明書')} value={certificate}
+            <Field label={t('本次发行证书', 'Certificate for this release', '今回の配布用証明書')}><Choice label={t('本次发行证书', 'Certificate for this release', '今回の配布用証明書')} value={usableCertificates.some(item => item.thumbprint === certificate) ? certificate : ''}
+              disabled={!usableCertificates.length}
               onChange={value => { setCertificate(value); setPlan(null); }} options={[{ value: '', label: t('请选择本机证书', 'Select a local certificate', 'ローカル証明書を選択') },
-                ...certificates.filter(item=>item.authorUsable!==false).map(item => ({ value: item.thumbprint, label: `${item.subject} · ${item.expiresAt.slice(0, 10)} · ${item.thumbprint.slice(-8)}` }))]} /></Field>
+                ...usableCertificates.map(item => ({ value: item.thumbprint, label: `${item.subject} · ${item.expiresAt.slice(0, 10)} · ${item.thumbprint.slice(-8)}` }))]} /></Field>
+            {certificates && !usableCertificates.length && <p role="status">{t('本机没有可用于此发行的签名证书。导入可用证书后重新读取，或调整作品的签名方式。', 'No local certificate is available for this release. Import a usable certificate and reload the list, or change the project’s signing mode.', '今回使用できるローカル証明書がありません。利用可能な証明書を導入して再読み込みするか、作品の署名方式を変更してください。')}</p>}
             <p>{t('证书选择仅用于本次本机发行，不写入作品。签名失败会停止构建；证书信任状态显示在回执。', 'Certificate selection stays on this machine for this build. Signing failure stops the build; the receipt reports trust.', '証明書の選択は今回のローカル構築で使用します。署名失敗時は構築を停止し、信頼状態を結果に表示します。')}</p>
-            {certificates.filter(item=>item.authorUsable===false).map(item=><p key={item.thumbprint} className="field-help">{item.subject} · {t('此身份不可用于作者作品。', 'This identity is unavailable for author releases.', 'この証明書は作者の配布に使用できません。')}</p>)}
+            {certificates?.filter(item=>item.authorUsable===false).map(item=><p key={item.thumbprint} className="field-help">{item.subject} · {t('此身份不可用于作者作品。', 'This identity is unavailable for author releases.', 'この証明書は作者の配布に使用できません。')}</p>)}
           </section>}
 
           </fieldset>
@@ -608,7 +694,7 @@ export function Publish({
                 await saveAll();
                 const documents=unwrap(await bridge.documents.list()); if(documents.some(document=>document.dirty))return;
                 setVerificationPending(false); setSavedSelection(null); await changed();
-                if (await checkSaved(null)) focusSection(checksRef.current);
+                await performCheck(false, null);
               })
             }
           >
@@ -862,14 +948,14 @@ export function Publish({
               : ready === false ? t('构建服务尚未就绪', 'Build service unavailable', '構築サービス未準備')
               : buildCancelled ? t('构建已取消', 'Build cancelled', '構築を中止しました')
               : plan ? canBuild ? receiptPlan === plan.planId ? t('构建完成', 'Build complete', '構築完了') : t('检查通过，可以构建', 'Checks passed · ready to build', '確認済み・構築できます') : t(`存在 ${issueCounts.error} 项阻塞`, `${issueCounts.error} blockers`, `問題 ${issueCounts.error} 件`)
-              : savedIssues.length ? t('检查需要处理', 'Checks need attention', '確認結果を確認してください')
+              : savedIssues.length ? t('检查发现待处理问题', 'Checks found issues', '問題が見つかりました')
               : !savedSelection && (source.anyDirty || identityDirty) ? t('请保存修改或选用上次保存版本', 'Save changes or choose the last saved release', '変更を保存するか、前回の保存済みバージョンを選択してください')
               : t('已保存内容用于检查与构建', 'Checks and builds use saved content', '保存済みの内容を確認・構築します')}</span></p>
           <div className="gc-actions publish-build-actions">
             {activeBuild ? <Button disabled={cancelPending} onClick={() => cancelBuild(activeBuild.planId)}>{t('取消构建', 'Cancel build', '構築を中止')}</Button> : <>
-              <Button disabled={busy || !ready} onClick={() => checkRelease(false)}>{t('仅检查', 'Check only', '確認のみ')}</Button>
-              <Button tone="primary" disabled={busy || !ready} onClick={() => {
-                if (plan && canBuild && receiptPlan !== plan.planId) void run(() => requestBuild(plan));
+              <Button data-release-action="check" disabled={busy || !ready} onClick={() => checkRelease(false)}>{t('仅检查', 'Check only', '確認のみ')}</Button>
+              <Button data-release-action="build" tone="primary" disabled={busy || !ready} onClick={() => {
+                if (plan && canBuild && receiptPlan !== plan.planId) runLocalRelease(() => requestBuild(plan));
                 else checkRelease(true);
               }}>{plan && canBuild && receiptPlan !== plan.planId ? t(`构建 ${targetLabel(target)}`, `Build ${targetLabel(target)}`, `${targetLabel(target)} を構築`) : t('检查并构建', 'Check and build', '確認して構築')}<ArrowRight size={15}/></Button>
             </>}

@@ -31,7 +31,7 @@ export const EditorAndLayout: Story = { play: async ({ canvasElement }) => {
   await userEvent.click(canvas.getByRole('checkbox', { name: 'Wrap source lines' }));
   await userEvent.click(canvas.getByRole('button', { name: 'Apply editor preferences' }));
   await expect(canvas.getByTestId('editor-preview')).toHaveStyle({ fontFamily: 'Georgia', fontSize: '20px', whiteSpace: 'pre' });
-  await userEvent.click(canvas.getByRole('button', { name: 'Reset layout' }));
+  await userEvent.click(canvas.getByRole('button', { name: 'Apply balanced layout' }));
   await expect(canvas.getByTestId('layout-reset-count')).toHaveTextContent('1');
 } };
 export const DarkChinese: Story = { args: { theme: 'dark', locale: 'zh-CN' } };

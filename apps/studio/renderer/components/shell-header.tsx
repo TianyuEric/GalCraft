@@ -27,7 +27,7 @@ export function StudioMenubar({ locale, project, action }: { locale: StudioLocal
   return <>
     <Menubar className="studio-menubar" aria-label={t('主菜单', 'Main menu', 'メインメニュー')}>
       <MenubarMenu><MenubarTrigger>{t('文件', 'File', 'ファイル')}</MenubarTrigger><MenubarContent>
-        {item('projects', t('项目中心', 'Project center', '作品センター'), <FolderOpen />)}
+        {item('projects', t('作品中心', 'Project center', '作品センター'), <FolderOpen />)}
         {item('projectSettings', t('作品设置', 'Project settings', '作品設定'))}
         {item('startupHome', t('启动与主页', 'Startup & home', '起動とホーム'))}
         {item('closeProject', t('关闭作品', 'Close project', '作品を閉じる'))}<MenubarSeparator />

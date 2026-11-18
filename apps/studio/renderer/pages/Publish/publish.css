@@ -18,6 +18,10 @@
 .publish-workflow .publish-brand-config { margin-top: 16px; }
 .publish-workflow .publish-brand-config > .gc-field, .publish-workflow .publish-author-signing > .gc-field { margin-top: 12px; }
 .publish-workflow .publish-brand-config > .gc-button, .publish-workflow .publish-author-signing { margin-top: 12px; }
+.publish-workflow .publish-config-fields > .publish-mobile { margin-block-start: 16px; }
+.publish-workflow .publish-author-signing { padding-block-start: 16px; border-block-start: 1px solid var(--border); }
+.publish-workflow .publish-author-signing > h3 { margin-block-end: 8px; }
+.publish-workflow .publish-author-signing > p { margin-block: 8px; }
 .publish-workflow .publish-advanced { margin: 12px 0 0; border-bottom: 0; padding: 12px 0 0; }
 .publish-workflow .publish-advanced > summary { font-size: 14px; }
 .publish-workflow .publish-advanced > summary > span { display: block; margin: 8px 0 0 16px; color: var(--muted-foreground); font-size: 12px; font-weight: 400; line-height: 1.7; }

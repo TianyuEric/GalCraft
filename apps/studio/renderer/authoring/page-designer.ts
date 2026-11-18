@@ -42,6 +42,7 @@ import type { Asset, Character, BasicComponentKind, PageEditInput, PageEditOpera
 import { BasicComponentCatalog, createBasicComponent } from '@galcraft/templates/editor';
 import { pageDataEditor, pageInteractionEditor, pageLocalStateEditor } from './page-data-fields.js';
 import { PageBlueprintEditor, type BlueprintDraft } from './page-blueprint.js';
+import { PageDesignerMenu, type PageDesignerMenuAction } from './PageDesignerMenus.js';
 import { blueprintConversionProblem, validatePageBlueprint } from '@galcraft/templates';
 import type { UIInteraction } from '@galcraft/contracts';
 import type { BlueprintRunOptions } from '@galcraft/player-ui';
@@ -125,8 +126,10 @@ export class PageDesigner {
   private pageContexts = new Map<PageKey, Omit<PageViewContext, 'key'>>();
   private pageModes = this.node('div', '', 'designer-mode-switch designer-page-modes');
   private splitButton?: HTMLButtonElement;
+  private pageActionsRoot: Root | null = null;
+  private pageToolsRoot: Root | null = null;
   private updatePreviewControls?: () => void;
-  private workbench?: { showOutline(): void; showDirectory(): void; changed(): void; remember(): void };
+  private workbench?: { showOutline(): void; showDirectory(): void; openStyle(style: NamedStyle): void; changed(): void; remember(): void };
   private scrollFrame = 0;
   private behaviorDrafts: Record<Id, BlueprintDraft> = {};
   private behaviorViews = new Map<PageKey, { node: HTMLElement; root: Root }>();
@@ -134,13 +137,17 @@ export class PageDesigner {
   private activeBehaviorAbort: AbortController | null = null;
   private auxiliaryDocument: string | null = null;
   private stylePinned = false;
+  private pageOpenRequest = 0;
   private started:Promise<void>|null=null;
   constructor(private services: AuthoringServices, private changed: (receipt?: EditReceipt, refresh?: import('./controller.js').AuthoringRefresh) => Promise<void>, private locale = 'zh-CN', resume: {page:PageKey;selected:Id[];state:State;sample:string;styleDrafts:Record<string,string>;styleDraftOptions?:Record<string,NamedStyle>;pageContexts?:[PageKey,StoredPageView][];auxiliaryDocument?:string|null;animation?:UIAnimationManagerState|null;zoom?:'fit'|'100';behaviorDrafts?:Record<Id,BlueprintDraft>}|null = null,
     private openUiAssets?: (scope: { pageIds: Id[]; componentIds: Id[] }) => void, private pluginComponents: ComponentContribution[] = [], private pageChanged?: (key: PageKey, name: string) => void, private saveDocument?: () => Promise<void>, private locateSource?: (source:import('@galcraft/contracts').Source)=>void, private galleryOrigin?:()=>import('@galcraft/contracts').Source|null, private selectionChanged?:()=>void,private draftChanged?:()=>void) {
     if(resume){this.previewLocale=(resume as typeof resume & {previewLocale?:string|null}).previewLocale??null;this.page=resume.page;this.selected=new Set(resume.selected);this.state=resume.state;this.sample=resume.sample;this.zoom=resume.zoom??'fit';this.styleDrafts=resume.styleDrafts;this.styleDraftOptions=resume.styleDraftOptions??{};this.pageContexts=new Map((resume.pageContexts??[]).map(([key, value]) => [key, { mode: 'layout', locale: null, split: false, ...value }]));this.auxiliaryDocument=resume.auxiliaryDocument??null;this.animationResume=resume.animation??null;this.fieldInputDrafts=(resume as typeof resume & {fieldInputs?:PageFieldInputDrafts}).fieldInputs??{};}
     this.behaviorDrafts = resume?.behaviorDrafts ?? {};
   }
-  configureWorkbench(options: NonNullable<PageDesigner['workbench']>) { this.workbench = options; }
+  configureWorkbench(options: NonNullable<PageDesigner['workbench']>) {
+    this.workbench = options;
+    this.root.dataset.workbenchPage = '';
+  }
   capture() { this.rememberPageView(); return {previewLocale:this.previewLocale,page:this.page,selected:[...this.selected],state:this.state,sample:this.sample,zoom:this.zoom,styleDrafts:this.styleDrafts,styleDraftOptions:this.styleDraftOptions,pageContexts:[...this.pageContexts],auxiliaryDocument:this.auxiliaryDocument,animation:this.animationManager?.current?.capture()??this.animationResume,fieldInputs:this.fieldInputDrafts,behaviorDrafts:this.behaviorDrafts}; }
   hasBehaviorDrafts() { return Object.keys(this.behaviorDrafts).length > 0; }
   private rememberPageView() {
@@ -472,9 +479,15 @@ export class PageDesigner {
     return this.documents.some(document => document.documentId === documentId && document.dirty) || this.workbenchHasDraft(key);
   }
   workbenchHasDraft(key: string) {
-    return key === '@animations' && this.hasAnimationDraft() || key.startsWith('@draft:') && key.slice(7) in this.styleDrafts
-      || Object.keys(this.styleDrafts).some(id => this.styleDraftOptions[id]?.scope.pageId === this.workbenchDocumentId(key))
+    return key === '@animations' && this.hasAnimationDraft()
+      || Object.keys(this.styleDrafts).some(id => this.ownsStyleDraft(key, id))
       || Object.values(this.behaviorDrafts).some(draft => draft.pageId === this.workbenchDocumentId(key));
+  }
+  private ownsStyleDraft(key: string, draftKey: string) {
+    if (key.startsWith('@draft:')) return key.slice(7) === draftKey;
+    const style = this.styleDraftOptions[draftKey];
+    if (key.startsWith('@style:')) return style?.id === key.slice(7);
+    return style?.scope.pageId === this.workbenchDocumentId(key);
   }
   private historyScope() {
     if (this.galleryEditor) return { documentId: this.galleryEditor.documentId() ?? this.template.instanceId };
@@ -489,7 +502,7 @@ export class PageDesigner {
     if (key === '@animations') this.discardAnimationDraft();
     const pageId = this.workbenchDocumentId(key);
     for (const [id, draft] of Object.entries(this.behaviorDrafts)) if (draft.pageId === pageId) delete this.behaviorDrafts[id];
-    for (const id of Object.keys(this.styleDrafts)) if (key === `@draft:${id}` || this.styleDraftOptions[id]?.scope.pageId === pageId) {
+    for (const id of Object.keys(this.styleDrafts)) if (this.ownsStyleDraft(key, id)) {
       const editor = this.styleEditors.get(id); editor?.dispose(); editor?.node.remove();
       this.styleEditors.delete(id); delete this.styleDrafts[id]; delete this.styleDraftOptions[id];
     }
@@ -503,10 +516,13 @@ export class PageDesigner {
     this.canvas.hidden=false;this.drawInspector();void this.preview();
   }
   discardStyleDrafts() { for (const editor of this.styleEditors.values()) { editor.dispose(); editor.node.remove(); } this.styleEditors.clear(); this.styleDrafts = {};this.styleDraftOptions={}; this.center.classList.remove('has-style'); }
-  async openPage(id: string, notify = false) {
+  openPage(id: string, notify = false): Promise<void> {
+    return this.openPageForRequest(id, notify, ++this.pageOpenRequest);
+  }
+  private async openPageForRequest(id: string, notify: boolean, request: number) {
     if(this.started)await this.started;else if(!this.template)await this.start();
     await this.edits;
-    if(this.disposed)return;
+    if (this.disposed || request !== this.pageOpenRequest) return;
     const previous = this.workbenchPage();
     if (previous !== id) { this.rememberPageView(); this.cancelDrag?.(); this.stopBehaviorPreview(); }
     const isAuxiliary = id.startsWith('@') || id === 'gallery-content';
@@ -525,7 +541,8 @@ export class PageDesigner {
       const draftKey = id.startsWith('@draft:') ? id.slice(7) : undefined;
       const style = draftKey ? this.styleDraftOptions[draftKey] : this.template.styles.find(item => item.id === id.slice(7));
       if (!style) return;
-      await this.openPage(style.scope.pageId);
+      await this.openPageForRequest(style.scope.pageId, false, request);
+      if (this.disposed || request !== this.pageOpenRequest) return;
       this.root.setAttribute('data-page-auxiliary', '');
       this.navigating = false;
       this.selected = new Set(style.scope.componentId ? [style.scope.componentId] : []);
@@ -544,6 +561,7 @@ export class PageDesigner {
     this.drawTree(); this.drawInspector();
     const context = this.pageContexts.get(page.key);
     await this.preview();
+    if (this.disposed || request !== this.pageOpenRequest) return;
     if (this.page === page.key) this.restoreCanvasScroll(context);
     if (notify) this.pageChanged?.(page.key, this.pageLabel(page.key));
   }
@@ -566,6 +584,7 @@ export class PageDesigner {
   start():Promise<void> { return this.started??=(async()=>{await this.reload(); if (this.disposed) return; this.draw(); if(this.animationResume && !this.workbench)this.openAnimations(this.animationResume.target);await this.preview();this.restoreCanvasScroll(this.pageContexts.get(this.page));})(); }
   dispose() {
     if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame);
+    this.pageActionsRoot?.unmount(); this.pageToolsRoot?.unmount();
     for (const editor of this.numberEditors.values()) editor.root.unmount(); this.numberEditors.clear();
     for (const view of this.behaviorViews.values()) view.root.unmount(); this.behaviorViews.clear();
     this.animationManagerRoot?.unmount();this.animationManagerRoot=null; for (const root of this.colorProperties) root.unmount(); this.colorProperties = []; this.templateWorkspace?.root.unmount(); this.templateWorkspace=null; for (const editor of this.styleEditors.values()) editor.dispose(); this.styleEditors.clear(); this.pluginProperties?.unmount(); this.pluginProperties = null; this.cancelDrag?.(); this.disposed = true; this.generation++; this.geometry?.dispose(); this.geometry = null; this.player?.dispose(); this.player = null; this.resize?.disconnect(); this.backgroundRelease?.(); for(const dialog of (this.workbenchCanvas ? this.center : this.root).querySelectorAll('dialog'))dialog.close(); }
@@ -631,7 +650,15 @@ export class PageDesigner {
     } catch(error) { return {ok:false as const,error:{code:'PAGE_IMAGE_APPLY',message:String(error),severity:'error' as const,owner:'M01' as const,related:[],actions:[]},issues:[]}; }
   }
   private currentPage() { return this.template.pages.find(page => page.key === this.page)!; }
-  private drawChrome() {
+  private modeHint(navigating: boolean) {
+    if (this.workbench) return navigating
+      ? this.t('用页面控件体验跳转。返回「画布」继续编辑。', 'Use the page controls to try navigation. Return to Canvas to edit.', 'ページの操作で移動を試せます。「キャンバス」に戻ると編集を続けられます。')
+      : this.t('点击选中组件，Shift + 点击多选。方向键移动 1 px，Shift + 方向键移动 10 px。', 'Click a component to select it, or Shift-click to select several. Use arrow keys to move by 1 px or Shift-arrow by 10 px.', 'クリックで部品を選択し、Shift＋クリックで複数選択できます。矢印キーで 1 px、Shift＋矢印キーで 10 px 移動できます。');
+    return navigating
+      ? this.t('导航预览：点击页面控件体验跳转。返回设计后继续编辑。','Navigation preview: use page controls to navigate. Return to Design to edit.','ナビゲーションプレビュー：ページの操作で移動します。編集はデザインに戻って行います。')
+      : designerText('设计模式点击组件；Shift 多选；方向键移动，Shift + 方向键移动 10 像素。', this.locale);
+  }
+  private drawStandaloneChrome() {
     const header = this.node('header', '', 'designer-heading');
     const title = this.node('div'); title.append(this.node('h1', '页面设计'), this.node('p', '独立页面、公开组件与导航'));
     const actions=this.node('div','','designer-heading-actions');
@@ -646,7 +673,7 @@ export class PageDesigner {
       const result = await this.services.bridge.documents.save(plan.value.planId); if (!result.ok) throw new Error(result.error.message);
       await this.reload(); await this.changed(); this.notice.textContent = `已保存 ${result.value.saved.length} 个关联文档`;
     })), this.iconAction('撤销','M9 5 3 11l6 6 M3 11h11a7 7 0 0 1 7 7', () => this.history('undo')), this.iconAction(this.t('恢复','Redo','やり直す'),'m15 5 6 6-6 6 M21 11H10a7 7 0 0 0-7 7', () => this.history('redo')));
-    const hint=this.node('p','设计模式点击组件；Shift 多选；方向键移动，Shift + 方向键移动 10 像素。','designer-mode-hint');
+    const hint=this.node('p',this.modeHint(this.navigating),'designer-mode-hint');
     const modes=this.node('div','','designer-mode-switch');modes.setAttribute('role','group');modes.ariaLabel=this.t('页面模式','Page mode','ページモード');
     const design=this.iconAction(this.t('设计','Design','デザイン'),'m4 20 4-1L20 7l-3-3L5 16z',()=>this.setWorkbenchPreview({mode:'design'}));design.setAttribute('aria-pressed',String(!this.navigating));
     const navigation=this.iconAction('导航预览','m9 4 12 8-12 8z',()=>this.setWorkbenchPreview({mode:'preview'}));navigation.setAttribute('aria-pressed',String(this.navigating));modes.append(design,navigation);
@@ -654,14 +681,30 @@ export class PageDesigner {
     reading.append(this.action(this.t('头像阅读','Portrait reading','ポートレート付き'),()=>this.change(next=>applyReadingPreset(next,'portrait'))),this.action(this.t('通透阅读','Clear reading','透過表示'),()=>this.change(next=>applyReadingPreset(next,'clear'))));
     const batchPortraits = this.action(this.t('批量开启立绘头像', 'Enable figure portraits in bulk', '立ち絵のポートレートを一括有効化'), () => this.enableFigurePortraits());
     batchPortraits.dataset.portraitBatch = ''; batchPortraits.title = this.t('为立绘入场与重置设置默认头像；已有取景保持，差分继续继承已有取景。可在立绘属性中逐个微调。', 'Enable default portraits for figure entries and resets. Preserve existing crops and let replacements inherit them. Fine-tune each in figure properties.', '立ち絵の登場とリセットに既定のポートレートを設定し、既存の範囲を保持します。差分は範囲を継承し、立ち絵のプロパティで個別調整できます。'); reading.append(batchPortraits);
-    const startup=this.action(this.t('开屏预览','Preview startup','起動画面をプレビュー'),()=>this.previewWorkbenchStartup());startup.dataset.startupPreview='';preview.append(...(this.workbench ? [startup] : [modes,startup]));header.append(title,actions);
+    const startup=this.action(this.t('开屏预览','Preview startup','起動画面をプレビュー'),()=>this.previewWorkbenchStartup());startup.dataset.startupPreview='';preview.append(modes,startup);header.append(title,actions);
     if (this.openUiAssets) {
       const assets = this.iconAction('UI 素材', 'M3 3h18v18H3z M3 17l6-6 4 4 3-3 5 5 M16 7h.01',
         () => this.openUiAssets?.({ pageIds: [this.currentPage().id], componentIds: [...this.selected] }));
       assets.title = this.t('制作页面背景、边框和图标素材', 'Create page backgrounds, frames and icons', 'ページ背景・枠・アイコン素材を制作');
       group(this.t('素材', 'Assets', '素材')).append(assets);
     }
+    const toolbar = this.drawPreviewToolbar();
+    const styleToggle=this.iconAction(this.t('样式','Styles','スタイル'),'m8 6-6 6 6 6M16 6l6 6-6 6',
+      ()=>this.setWorkbenchStyle(this.center.classList.contains('has-style') ? 'closed' : 'selection'));
+    styleToggle.dataset.styleToggle='';styleToggle.setAttribute('aria-pressed','false');
+    toolbar.append(styleToggle);
+    this.updateNavigationChrome = navigating => {
+      for (const control of [...edit.querySelectorAll('button'), ...templates.querySelectorAll('button'), ...reading.querySelectorAll('button')]) control.disabled = navigating;
+      design.setAttribute('aria-pressed', String(!navigating));
+      navigation.setAttribute('aria-pressed', String(navigating));
+      hint.textContent = this.modeHint(navigating);
+    };
+    return { header, toolbar, hint };
+  }
+  private drawPreviewToolbar() {
     const toolbar = this.node('div', '', 'designer-toolbar');
+    toolbar.setAttribute('role', 'group');
+    toolbar.ariaLabel = this.t('页面预览设置', 'Page preview settings', 'ページプレビューの設定');
     const choices = this.workbenchPreviewOptions();
     const select = <T extends string>(label: string, values: PreviewOption<T>[], value: T, changed: (value: T) => Promise<void>) => {
       const control = this.node('select'); control.ariaLabel = label;
@@ -673,39 +716,94 @@ export class PageDesigner {
     states.dataset.previewState = '';
     const samples = select(designerText('页面样例',this.locale), choices.samples, this.sample, sample => this.setWorkbenchPreview({ sample }));
     samples.dataset.previewSample = '';
-    const zoom = select(this.t('预览倍率','Preview zoom','プレビュー倍率'), choices.zoom, this.zoom, zoom => this.setWorkbenchPreview({ zoom }));
+    const zoomLabel = this.workbench ? this.t('缩放', 'Zoom', 'ズーム') : this.t('预览倍率', 'Preview zoom', 'プレビュー倍率');
+    const zoom = select(zoomLabel, choices.zoom, this.zoom, zoom => this.setWorkbenchPreview({ zoom }));
     zoom.dataset.previewZoom = '';
-    const menuLanguage = select(this.t('Player 菜单语言','Player menu language','Player メニュー言語'), choices.locales,
+    const localeLabel = this.workbench ? this.t('菜单语言', 'Menu language', 'メニュー言語') : this.t('Player 菜单语言', 'Player menu language', 'Player メニュー言語');
+    const menuLanguage = select(localeLabel, choices.locales,
       this.previewLocale ?? choices.defaultLocale, locale => this.setWorkbenchPreview({ locale }));
     menuLanguage.dataset.previewLocale = '';
-    const styleToggle=this.iconAction(this.t('样式','Styles','スタイル'),'m8 6-6 6 6 6M16 6l6 6-6 6',
-      ()=>this.setWorkbenchStyle(this.center.classList.contains('has-style') ? 'closed' : 'selection'));
-    styleToggle.dataset.styleToggle='';styleToggle.setAttribute('aria-pressed','false');
-    toolbar.append(this.node('span', '同一 Player · 独立样例资料'), states, samples, menuLanguage, zoom, ...(this.workbench ? [] : [styleToggle]));
+    if (this.workbench) {
+      for (const control of [states, samples, menuLanguage, zoom]) {
+        const field = this.node('label', '', 'designer-preview-field');
+        field.append(this.node('span', control.ariaLabel ?? ''), control);
+        toolbar.append(field);
+      }
+    } else {
+      toolbar.append(this.node('span', '同一 Player · 独立样例资料'), states, samples, menuLanguage, zoom);
+    }
     this.updatePreviewControls = () => {
       states.value = this.state; samples.value = this.sample; zoom.value = this.zoom;
       menuLanguage.value = this.previewLocale ?? choices.defaultLocale;
     };
-    this.updateNavigationChrome = navigating => {
-      for (const control of [...edit.querySelectorAll('button'), ...templates.querySelectorAll('button'), ...reading.querySelectorAll('button')]) control.disabled = navigating;
-      design.setAttribute('aria-pressed', String(!navigating));
-      navigation.setAttribute('aria-pressed', String(navigating));
-      hint.textContent = navigating
-        ? this.t('导航预览：点击页面控件体验跳转。返回设计后继续编辑。','Navigation preview: use page controls to navigate. Return to Design to edit.','ナビゲーションプレビュー：ページの操作で移動します。編集はデザインに戻って行います。')
-        : designerText('设计模式点击组件；Shift 多选；方向键移动，Shift + 方向键移动 10 像素。', this.locale);
+    return toolbar;
+  }
+  private drawWorkbenchBar() {
+    const row = this.node('div', '', 'designer-page-bar');
+    this.pageModes.setAttribute('role', 'group');
+    this.pageModes.ariaLabel = this.t('页面模式', 'Page mode', 'ページモード');
+    const modes: Record<PageMode, string> = {
+      layout: this.t('画布', 'Canvas', 'キャンバス'), style: this.t('样式', 'Styles', 'スタイル'),
+      behavior: this.t('行为', 'Behavior', '動作'), preview: this.t('导航预览', 'Navigation preview', 'ナビゲーションプレビュー'),
     };
-    return { header, toolbar, hint };
+    for (const mode of Object.keys(modes) as PageMode[]) {
+      const button = this.action(modes[mode], () => this.setPageMode(mode));
+      button.dataset.mode = mode;
+      this.pageModes.append(button);
+    }
+    const splitLabel = this.t('画布与行为并排', 'Show canvas and behavior side by side', 'キャンバスと動作を並べて表示');
+    this.splitButton = this.action(this.t('并排', 'Side by side', '並べて表示'), () => this.splitBehavior());
+    this.splitButton.ariaLabel = splitLabel;
+    this.splitButton.title = splitLabel;
+    const panels = this.node('div', '', 'designer-page-panel-controls');
+    const actions = this.node('div'), tools = this.node('div');
+    panels.append(this.splitButton, actions, tools);
+    this.pageActionsRoot = createRoot(actions);
+    this.pageToolsRoot = createRoot(tools);
+    this.pageToolsRoot.render(createElement(PageDesignerMenu, {
+      label: this.t('显示工具', 'Show tools', 'ツールを表示'), kind: 'tools', items: [
+        { label: this.t('页面目录', 'Page directory', 'ページ一覧'), run: () => this.workbench?.showDirectory() },
+        { label: this.t('页面大纲', 'Page outline', 'ページ構成'), run: () => this.workbench?.showOutline() },
+      ],
+    }));
+    row.append(this.pageModes, panels);
+    return row;
+  }
+  private renderPageActions() {
+    if (!this.pageActionsRoot) return;
+    const disabled = this.navigating;
+    const withVisibleCanvas = (run: () => void) => () => {
+      if (this.mode === 'style' || this.mode === 'behavior') this.setPageMode('layout');
+      run();
+    };
+    const items: PageDesignerMenuAction[] = [
+      { label: this.t('作品模板', 'Project templates', '作品テンプレート'), disabled,
+        run: withVisibleCanvas(() => this.templates(this.root.querySelector<HTMLElement>('[data-designer-menu="actions"]'))) },
+      { label: this.t('界面动画', 'Interface animations', 'UIアニメーション'), disabled, run: withVisibleCanvas(() => this.openAnimations()) },
+      { label: this.t('开屏预览', 'Preview startup', '起動画面をプレビュー'), run: withVisibleCanvas(() => { void this.previewWorkbenchStartup(); }) },
+    ];
+    if (this.openUiAssets) items.push({ label: this.t('UI 素材', 'UI assets', 'UI 素材'),
+      run: () => this.openUiAssets?.({ pageIds: [this.currentPage().id], componentIds: [...this.selected] }) });
+    if (this.page === 'story') items.push(
+      { label: this.t('头像阅读', 'Portrait reading', 'ポートレート付き'), disabled, run: () => { void this.change(next => applyReadingPreset(next, 'portrait')); } },
+      { label: this.t('通透阅读', 'Clear reading', '透過表示'), disabled, run: () => { void this.change(next => applyReadingPreset(next, 'clear')); } },
+      { label: this.t('批量开启立绘头像', 'Enable figure portraits in bulk', '立ち絵のポートレートを一括有効化'),
+        disabled: disabled || !components(this.currentPage().root).some(item => item.part === 'story.readingPanel' && item.content.portrait === true),
+        title: this.t('使用角色的默认立绘头像，保留已有取景。', 'Use default figure portraits and keep existing crops.', '既定の立ち絵ポートレートを使い、既存の表示範囲を保持します。'),
+        run: () => { void this.enableFigurePortraits(); } },
+    );
+    this.pageActionsRoot.render(createElement(PageDesignerMenu, { label: this.t('页面操作', 'Page actions', 'ページ操作'), kind: 'actions', items }));
   }
   private draw() {
     const center = this.center;
     if (this.workbench) center.addEventListener('scroll', () => {
       if (!this.scrollFrame) this.scrollFrame = requestAnimationFrame(() => { this.scrollFrame = 0; this.workbench?.remember(); });
     });
-    const chrome = this.workbenchCanvas ? undefined : this.drawChrome();
     this.canvas.dataset.mode = this.navigating ? 'preview' : 'design';
     this.surface.ariaHidden = String(!this.navigating);
     this.surface.addEventListener('focusin', () => { if (!this.navigating) this.canvas.focus({ preventScroll: true }); });
-    this.canvas.ariaLabel = this.t('页面设计画布；从页面组件树选择组件，使用方向键移动', 'Page design canvas; select components in the component tree and move with arrow keys', 'ページデザインキャンバス。部品ツリーで選択し、矢印キーで移動');
+    this.canvas.ariaLabel = this.workbench && !this.workbenchCanvas ? this.t('页面画布', 'Page canvas', 'ページキャンバス')
+      : this.t('页面设计画布；从页面组件树选择组件，使用方向键移动', 'Page design canvas; select components in the component tree and move with arrow keys', 'ページデザインキャンバス。部品ツリーで選択し、矢印キーで移動');
     this.canvas.append(this.surface, this.overlay);
     this.canvas.addEventListener('click', event => {
       if (!this.navigating) { event.preventDefault(); event.stopPropagation(); }
@@ -757,34 +855,30 @@ export class PageDesigner {
       void this.move(event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0,
         event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0);
     };
-    if (chrome) {
-      center.append(chrome.toolbar, this.canvas, chrome.hint);
+    if (!this.workbenchCanvas) {
+      if (this.workbench) {
+        const toolbar = this.drawPreviewToolbar();
+        const hint = this.node('p', this.modeHint(this.navigating), 'designer-mode-hint');
+        this.canvas.setAttribute('role', 'region');
+        this.updateNavigationChrome = navigating => {
+          hint.textContent = this.modeHint(navigating);
+          this.canvas.setAttribute('aria-description', hint.textContent);
+        };
+        center.append(toolbar, this.canvas, hint);
+        this.root.append(this.drawWorkbenchBar());
+      } else {
+        const chrome = this.drawStandaloneChrome();
+        center.append(chrome.toolbar, this.canvas, chrome.hint);
+        this.root.append(chrome.header);
+      }
       const layout = this.node('div', '', 'designer-layout');
       if (this.tree.dataset.workbench !== 'true') layout.append(this.tree);
       layout.append(center);
       if (this.inspector.dataset.workbench !== 'true') layout.append(this.inspector);
-      if (this.workbench) {
-        const row = this.node('div', '', 'designer-page-bar');
-        this.pageModes.setAttribute('role', 'group');
-        this.pageModes.ariaLabel = this.t('页面模式', 'Page mode', 'ページモード');
-        const labels = { layout: this.t('布局', 'Layout', 'レイアウト'), style: this.t('样式', 'Styles', 'スタイル'), behavior: this.t('行为', 'Behavior', '動作'), preview: this.t('导航预览', 'Navigation preview', 'ナビゲーションプレビュー') };
-        for (const [key, label] of Object.entries(labels)) {
-          const button = this.action(label, () => this.setPageMode(key as PageMode));
-          button.dataset.mode = key;
-          this.pageModes.append(button);
-        }
-        const panels = this.node('div', '', 'designer-page-panel-controls');
-        this.splitButton = this.action(this.t('画布与行为并排', 'Show canvas and behavior side by side', 'キャンバスと動作を並べて表示'), () => this.splitBehavior());
-        panels.append(this.splitButton);
-        panels.append(this.action(this.t('页面目录', 'Page directory', 'ページ一覧'), () => this.workbench?.showDirectory()),
-          this.action(this.t('页面大纲', 'Page outline', 'ページ構成'), () => this.workbench?.showOutline()));
-        row.append(this.pageModes, panels);
-        this.root.append(row);
-      }
-      this.root.append(chrome.header, this.notice, layout);
+      this.root.append(this.notice, layout);
     } else center.append(this.canvas);
     this.drawTree(); this.drawInspector();
-    if (this.workbench) this.updatePageMode(); else if (chrome) this.styleEditor();
+    if (this.workbench) this.updatePageMode(); else if (!this.workbenchCanvas) this.styleEditor();
   }
   private async editInstances(label:string, operations:PageEditOperation[]) {
     if(this.navigating)return;
@@ -913,6 +1007,7 @@ export class PageDesigner {
   }
   private drawTree() {
     if (this.workbenchCanvas) return;
+    this.renderPageActions();
     const reading=this.root.querySelector<HTMLElement>('[data-reading-actions]');if(reading)reading.hidden=this.page!=='story';
     this.tree.replaceChildren();
     this.instanceTools();
@@ -1002,7 +1097,12 @@ export class PageDesigner {
     delete this.inspector.dataset.componentId;
     this.inspector.replaceChildren(this.node('small', `${this.pageLabel(this.page)} · ${designerText({normal:'普通',hover:'悬浮',pressed:'按下',focus:'焦点',disabled:'禁用',selected:'选中',locked:'业务锁定',empty:'空槽'}[this.state],this.locale)}`));
     const styleToggle=this.root.querySelector<HTMLButtonElement>('[data-style-toggle]');if(styleToggle)styleToggle.disabled=this.navigating;
-    if(this.navigating){this.inspector.append(this.node('h2',this.t('导航预览','Navigation preview','ナビゲーションプレビュー')),this.node('p',this.t('正在体验真实 Player 页面。返回设计后可以修改属性。','Previewing the real Player page. Return to Design to edit properties.','実際の Player ページを表示中。属性の編集はデザインに戻って行います。')));return;}
+    if (this.navigating) {
+      this.inspector.append(this.node('h2', this.t('导航预览', 'Navigation preview', 'ナビゲーションプレビュー')),
+        this.node('p', this.workbench ? this.t('返回「画布」编辑页面属性。', 'Return to Canvas to edit page properties.', '「キャンバス」に戻ってページのプロパティを編集します。')
+          : this.t('正在体验真实 Player 页面。返回设计后可以修改属性。', 'Previewing the real Player page. Return to Design to edit properties.', '実際の Player ページを表示中。属性の編集はデザインに戻って行います。')));
+      return;
+    }
 
     if (this.page === 'characters') {
       const mount = this.node('div'), root = createRoot(mount); this.inspector.append(mount); this.colorProperties.push(root);
@@ -1034,6 +1134,7 @@ export class PageDesigner {
       image.alt=designerText('页面背景',this.locale);image.hidden=true;card.append(image,caption);
       if(background.imageId)void this.backgroundPreview(background.imageId,image,caption);
       const choose=this.iconAction(background.imageId?'更换背景图片':'选择背景素材','M3 3h18v18H3ZM3 16l6-6 5 5 3-3 4 4M16 7h.01',()=>this.pickImage('页面背景',background.imageId,null,choose,choice=>this.pickerChange(next=>{next.pages.find(p=>p.key===this.page)!.background.imageId=choice.assetId;})));
+      choose.dataset.focusKey=`page:${this.currentPage().id}:background:image:choose`;
       const clear=this.iconAction('清除背景图片','M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',()=>this.change(next=>{next.pages.find(p=>p.key===this.page)!.background.imageId=null;}));clear.disabled=!background.imageId;
       card.append(choose,clear);this.inspector.append(card);
       });
@@ -1147,7 +1248,12 @@ export class PageDesigner {
         }
         dialog.append(this.node('p', sources.join('\n')));
         if(computed)dialog.append(codeBlock(JSON.stringify({layout:component.layout,effective:{position:computed.position,left:computed.left,top:computed.top,width:computed.width,height:computed.height,display:computed.display,gap:computed.gap,transform:computed.transform,zIndex:computed.zIndex}},null,2),'json',this.locale));
-        for(const style of this.template.styles.filter(style=>style.scope.pageId===this.currentPage().id&&(style.scope.componentId===null||style.scope.componentId===component.id)))dialog.append(this.action(this.t(`定位样式：${style.name}`,`Open style: ${style.name}`,`スタイルを開く：${style.name}`),()=>this.styleEditor(style.id)));
+        for (const style of this.template.styles.filter(style => style.scope.pageId === this.currentPage().id && (style.scope.componentId === null || style.scope.componentId === component.id))) {
+          dialog.append(this.action(this.t(`打开样式「${style.name}」`, `Open ${style.name}`, `${style.name}を開く`), () => {
+            if (this.workbench) this.workbench.openStyle(style);
+            else this.styleEditor(style.id);
+          }));
+        }
       });
       const images = visual.images ?? component.normal.images ?? {};
       const imageSlots=componentDefinition(component.part)?.imageSlots??[];
@@ -1159,6 +1265,7 @@ export class PageDesigner {
           (target.images ??= {})[slotPicker.value] = { assetId:choice.assetId, variantId:choice.variantId??choice.asset.activeVariantId, mode: 'contain', positionX: .5, positionY: .5,
             colorMode: 'original', tint: null, opacity: 1, slices: null, borders: null, fillCenter: false };
         }));});
+      chooseImage.dataset.focusKey=`page:${this.currentPage().id}:component:${component.id}:state:${this.state}:images:choose`;
       if(imageSlots.length){
         const presets=this.action(this.t('常用图标','Common icons','よく使うアイコン'),async()=>{const assets=this.services.bridge.assets;if(!assets){this.notice.textContent=this.t('当前宿主未提供素材服务','Asset services are unavailable','素材サービスを利用できません');return;}const result=await assets.iconPresets();if(!result.ok){this.notice.textContent=result.error.message;return;}
           openActionIconPicker({root:this.workbenchCanvas ? this.center : this.root,presets:result.value,locale:this.locale,origin:presets,select:async key=>{const imported=await assets.importIconPreset({key,componentId:component.id,state:this.state});if(!imported.ok)throw new Error(imported.error.message);
@@ -1300,8 +1407,12 @@ export class PageDesigner {
   private styleEditor(styleId?:string, createNew=false, draftKeyOverride?:string) {
     if(this.navigating)return;
     this.root.querySelector('[data-style-toggle]')?.setAttribute('aria-pressed','true');
-    const selected = [...this.selected][0] ?? null, page = this.currentPage();
-    const draftKey=draftKeyOverride??(createNew?`${page.id}/${createId()}`:`${page.id}/${styleId??selected??'page'}`);
+    const selection = [...this.selected][0] ?? null, activePage = this.currentPage();
+    const existing = createNew ? undefined : this.template.styles.find(style =>
+      styleId ? style.id === styleId : style.scope.pageId === activePage.id && style.scope.componentId === selection);
+    const liveKey = existing && [...this.styleEditors].find(([, editor]) => editor.node.dataset.styleId === existing.id)?.[0];
+    const storedKey = existing && Object.keys(this.styleDrafts).find(key => this.styleDraftOptions[key]?.id === existing.id);
+    const draftKey = draftKeyOverride ?? liveKey ?? storedKey ?? `${activePage.id}/${createNew ? createId() : existing?.id ?? selection ?? 'page'}`;
     const center = this.center;
     if(!center.querySelector('.designer-style-divider')){
       const divider=this.node('div','','designer-style-divider');divider.tabIndex=0;divider.setAttribute('role','separator');divider.setAttribute('aria-orientation','horizontal');divider.ariaLabel=this.t('调整样式面板高度','Resize style pane','スタイルパネルの高さ');
@@ -1310,23 +1421,35 @@ export class PageDesigner {
       divider.onpointerdown=event=>{divider.setPointerCapture(event.pointerId);divider.onpointermove=move=>resize(center.getBoundingClientRect().bottom-move.clientY);divider.onpointerup=()=>{divider.onpointermove=null;divider.releasePointerCapture(event.pointerId);};};center.append(divider);
     }    for (const saved of this.styleEditors.values()) saved.node.hidden = true;
     const saved = this.styleEditors.get(draftKey); if (saved) { saved.synchronize(); saved.node.hidden = false; center.classList.add('has-style');this.scheduleFit(); return; }
-    const existing = createNew?undefined:this.template.styles.find(style => styleId?style.id===styleId:style.scope.pageId === page.id && style.scope.componentId === selected);
+    const scopeTarget = existing?.scope ?? this.styleDraftOptions?.[draftKey]?.scope;
+    const page = this.template.pages.find(item => item.id === scopeTarget?.pageId) ?? activePage;
+    const selected = scopeTarget ? scopeTarget.componentId : selection;
+    const component = selected ? findComponent(this.template, selected) : undefined;
+    const pageName = this.pageLabel(page.key), targetName = component ? this.componentLabel(component) : pageName;
     const id = existing?.id ?? createId([this.documents, this.template]);
-    const emptyStyle: NamedStyle = { id, name: `${this.page} 样式`, activation: 'page', scope: { pageId: page.id, componentId: selected },
+    const emptyStyle: NamedStyle = { id, name: this.t(`${targetName}样式`, `${targetName} style`, `${targetName}のスタイル`), activation: 'page', scope: { pageId: page.id, componentId: selected },
       language: 'css', sourcePath: `ui/styles/${id}.source.css`, sourceRevision: 0, compiledPath: null, compiledSourceRevision: null, assets: [], issues: [] };
     let style: NamedStyle = existing ?? emptyStyle;
     const baselineStyle=style;style=this.styleDraftOptions?.[draftKey]??style;
     const files = Object.assign({}, ...this.documents.map(doc => doc.files)) as Record<string, string>;
     const dialog = this.node('section', '', 'designer-style-workspace'); dialog.ariaLabel = this.t('作用域 CSS / SCSS', 'Scoped CSS / SCSS', 'スコープ CSS / SCSS');
-    dialog.dataset.styleId = id;
+    dialog.dataset.styleId = style.id;
     const heading = this.node('header');const closeStyle=this.iconAction(this.t('关闭样式视图','Close styles','スタイルを閉じる'),'m6 6 12 12M18 6 6 18',()=>{
       if (this.workbench && this.mode === 'style' && this.workbenchIsPage(this.workbenchPage())) this.setPageMode('layout');
       else { dialog.hidden=true;center.classList.remove('has-style','focus-style');this.root.querySelector('[data-style-toggle]')?.setAttribute('aria-pressed','false'); }
       this.canvas.focus();this.scheduleFit();
-    }); closeStyle.classList.add('designer-style-close'); closeStyle.replaceChildren(actionIcon('close')); heading.append(this.node('strong',`${this.page} / ${selected?this.componentLabel(findComponent(this.template,selected)!):this.t('页面','Page','ページ')} / ${this.state}`),closeStyle); dialog.append(heading); center.append(dialog); center.classList.add('has-style');
-    const scope=this.node('p',this.t(`作用域：${selected?findComponent(this.template,selected)!.part:this.page}`,`Scope: ${selected?findComponent(this.template,selected)!.part:this.page}`,`スコープ：${selected?findComponent(this.template,selected)!.part:this.page}`));
+    });
+    closeStyle.classList.add('designer-style-close'); closeStyle.replaceChildren(actionIcon('close'));
+    const target = this.node('div', '', 'designer-style-target');
+    target.append(this.node('strong', targetName), this.node('small', component
+      ? this.t(`${pageName}中的组件`, `Component on ${pageName}`, `${pageName}のコンポーネント`)
+      : this.t('应用于整个页面', 'Applies to the whole page', 'ページ全体に適用')));
+    heading.append(target, closeStyle); dialog.append(heading); center.append(dialog); center.classList.add('has-style');
+    const scope = this.node('details', '', 'designer-style-reference');
+    scope.append(this.node('summary', this.t('CSS 选择器参考', 'CSS selector reference', 'CSS セレクターの参照')),
+      this.node('code', `[data-gc-part="${component?.part ?? page.root.part}"]`));
     const source = this.node('div','','designer-style-source'); source.ariaLabel = this.t('样式源码','Style source','スタイルソース');
-    const defaultSource = `[data-gc-part="${selected ? findComponent(this.template, selected)!.part : components(page.root)[1]?.part ?? page.root.part}"] {\n  color: #466b92;\n}`;
+    const defaultSource = `[data-gc-part="${component?.part ?? components(page.root)[1]?.part ?? page.root.part}"] {\n  color: #466b92;\n}`;
     let committedSource = files[baselineStyle.sourcePath] ?? defaultSource, committedLanguage = baselineStyle.language, committedName=baselineStyle.name,committedActivation=baselineStyle.activation;
     const initial = this.styleDrafts[draftKey] ?? committedSource;
     const result = this.node('div','','designer-style-diagnostics');result.setAttribute('role','status');
@@ -1336,8 +1459,14 @@ export class PageDesigner {
     const activation=this.node('select');activation.ariaLabel=this.t('样式激活方式','Style activation','スタイルの有効化');
     for(const [value,label] of [['page',this.t('页面自动生效','Automatic on page','ページで自動有効')],['command',this.t('剧情 applyStyle 激活','Activate with applyStyle','applyStyle で有効')]]){const option=this.node('option',label);option.value=value!;activation.append(option);}activation.value=style.activation??'page';
     const pin=this.action(this.t('固定样式目标','Pin style target','スタイルの対象を固定'),()=>{this.stylePinned=!this.stylePinned;pin.setAttribute('aria-pressed',String(this.stylePinned));});pin.setAttribute('aria-pressed',String(this.stylePinned));
-    const controls=this.node('div','','designer-style-controls');controls.append(styleName,language,activation,pin);
-    dialog.append(scope,controls,source,result);
+    const controls = this.node('div', '', 'designer-style-controls');
+    for (const field of [styleName, language, activation]) {
+      const label = this.node('label');
+      label.append(this.node('span', field.ariaLabel!), field);
+      controls.append(label);
+    }
+    controls.append(pin);
+    dialog.append(controls, scope, source, result);
     configureMonacoWorkers();
     const model=monaco.editor.createModel(initial,style.language,monaco.Uri.parse(`inmemory://galcraft/${id}.${style.language}`));
     monaco.editor.defineTheme('galcraft-source-light',{base:'vs',inherit:true,rules:[{token:'attribute.name',foreground:'9B2226'}],colors:{}});
@@ -1371,14 +1500,16 @@ export class PageDesigner {
         syncing = false;
         if (view) editor.restoreViewState(view);
       }
-      style = latest; committedSource = value; committedLanguage = style.language;committedName=style.name;committedActivation=style.activation;
+      style = latest; dialog.dataset.styleId = style.id;
+      committedSource = value; committedLanguage = style.language;committedName=style.name;committedActivation=style.activation;
+      styleName.value = style.name; activation.value = style.activation ?? 'page';
       language.value = style.language; monaco.editor.setModelLanguage(model, style.language);
       updateDraft(); diagnostics();
     };
     this.styleEditors.set(draftKey, { node: dialog, synchronize, dispose: () => { changed.dispose(); editor.dispose(); model.dispose(); } });
     updateDraft(); diagnostics();
     let compiling = false;
-    const compileAction = this.action('编译并应用', async () => {
+    const compileAction = action(this.t('编译并应用', 'Compile and apply', 'コンパイルして適用'), async () => {
       if (compiling) return;
       compiling = true; compileAction.disabled = true; language.disabled = true;
       result.textContent = this.t('正在编译并应用…','Compiling and applying…','コンパイルして適用中…');
@@ -1390,6 +1521,7 @@ export class PageDesigner {
         const planned=await prepare({label:this.t('修改命名样式','Edit named style','名前付きスタイルを編集'),...(latest?{styleId:latest.id}:{}),name:requestedName,pageId:page.id,componentId:selected,language:style.language,activation:activation.value as 'page'|'command',source:requestedSource});
         if(!planned.ok)throw new Error(planned.error.message);
         style=planned.value.template.styles.find(item=>item.id===(planned.value.created.styles[0]??latest?.id))!;
+        dialog.dataset.styleId = style.id;
         await this.apply(planned.value.edit);committedSource=requestedSource;committedLanguage=style.language;committedName=style.name;committedActivation=style.activation;updateDraft();diagnostics();
         result.textContent=style.issues.some(issue=>issue.severity==='error')?this.t('源码已应用 · 预览保留最后有效样式','Source applied · preview keeps the last valid style','ソースを適用・プレビューは最後の有効なスタイル'):this.t('已编译并应用 · 工作内容未保存','Compiled and applied · unsaved changes','コンパイルして適用・未保存');return;
       }
@@ -1416,15 +1548,15 @@ export class PageDesigner {
       if(!style.issues.length)result.textContent=this.t('编译成功 · 工作内容未保存','Compiled · changes are unsaved','コンパイル完了・変更は未保存');
       } catch (reason) { result.textContent = reason instanceof Error ? reason.message : String(reason); }
       finally { compiling = false; compileAction.disabled = false; language.disabled = false; }
-    });
+    }, 'authoring-primary');
     const footer=this.node('div','','designer-style-actions');
-    footer.append(this.action(this.t('聚焦源码','Focus source','ソースに集中'),()=>{center.classList.toggle('focus-style');editor.focus();this.fitPreview();}),this.action(this.t('查看生成 CSS','View compiled CSS','生成 CSS を表示'),()=>{const files=Object.assign({},...this.documents.map(document=>document.files));const content=style.compiledPath?files[style.compiledPath]??'':'';const preview=this.node('details');preview.open=true;preview.append(this.node('summary',style.compiledPath??this.t('尚未编译','Not compiled yet','未コンパイル')),codeBlock(content,'css',this.locale));dialog.append(preview);}),this.action(this.t('采用画布单位','Adopt canvas units','キャンバス単位を使用'),()=>{const next=adoptCanvasStyle(model.getValue());editor.executeEdits('galcraft-canvas-units',[{range:model.getFullModelRange(),text:next,forceMoveMarkers:true}]);updateDraft();result.textContent=this.t('已更新草稿，编译并应用后写入作品。','Draft updated. Compile and apply to save it to the project.','下書きを更新しました。コンパイル・適用で作品に反映します。');}),compileAction);
+    footer.append(compileAction, this.action(this.t('聚焦源码','Focus source','ソースに集中'),()=>{center.classList.toggle('focus-style');editor.focus();this.fitPreview();}),this.action(this.t('查看生成 CSS','View compiled CSS','生成 CSS を表示'),()=>{const files=Object.assign({},...this.documents.map(document=>document.files));const content=style.compiledPath?files[style.compiledPath]??'':'';const preview=this.node('details');preview.open=true;preview.append(this.node('summary',style.compiledPath??this.t('尚未编译','Not compiled yet','未コンパイル')),codeBlock(content,'css',this.locale));dialog.append(preview);}),this.action(this.t('采用画布单位','Adopt canvas units','キャンバス単位を使用'),()=>{const next=adoptCanvasStyle(model.getValue());editor.executeEdits('galcraft-canvas-units',[{range:model.getFullModelRange(),text:next,forceMoveMarkers:true}]);updateDraft();result.textContent=this.t('已更新草稿，编译并应用后写入作品。','Draft updated. Compile and apply to save it to the project.','下書きを更新しました。コンパイル・適用で作品に反映します。');}));
     const remove=this.action(this.t('删除样式','Delete style','スタイルを削除'),()=>this.safely(async()=>{const existing=this.template.styles.find(item=>item.id===style.id);if(existing)await this.editInstances(this.t('删除命名样式','Delete named style','名前付きスタイルを削除'),[{kind:'style.remove',styleId:style.id}]);this.styleEditors.get(draftKey)?.dispose();this.styleEditors.delete(draftKey);delete this.styleDrafts[draftKey];delete this.styleDraftOptions[draftKey];dialog.remove();this.draftChanged?.();this.styleEditor();}));footer.append(remove);dialog.append(footer);
     if(typeof requestAnimationFrame==='function')this.scheduleFit();
   }
-  private templates() {
+  private templates(origin = document.activeElement as HTMLElement | null) {
     if(this.templateWorkspace){this.templateWorkspace.node.hidden=false;this.templateWorkspace.node.scrollIntoView({block:'start'});return;}
-    const center=this.center, origin=document.activeElement as HTMLElement|null;
+    const center=this.center;
     const panel=this.node('section','','designer-template-workspace'), header=this.node('header','','designer-template-heading'), mount=this.node('div');
     const root=createRoot(mount);
     const close=()=>{root.unmount();panel.remove();center.classList.remove('has-template');this.templateWorkspace=null;this.drawInspector();if(origin?.isConnected)origin.focus({preventScroll:true});};
@@ -1496,7 +1628,7 @@ export class PageDesigner {
     const style=center?.querySelector<HTMLElement>('.designer-style-workspace:not([hidden])');
     const toolbar=center?.querySelector<HTMLElement>('.designer-toolbar');
     const availableWidth=center?center.clientWidth-24:this.canvas.clientWidth;
-    const chromeHeight = this.workbenchCanvas ? 16 : (toolbar?.offsetHeight ?? 40) + 72;
+    const chromeHeight = this.workbenchCanvas ? 16 : (toolbar?.offsetHeight ?? 40) + (this.workbench ? 64 : 72);
     const styleHeight = style && center?.classList.contains('has-style') ? style.offsetHeight + 24 : 0;
     const availableHeight = center ? Math.max(140, center.clientHeight - chromeHeight - styleHeight) : Infinity;
     this.canvas.style.width=this.zoom==='100'?`${canvas.width}px`:`${Math.max(100,Math.min(availableWidth,availableHeight*canvas.width/canvas.height))}px`;

@@ -666,6 +666,7 @@ export class StudioProduction implements NonNullable<StudioHandlerContext['produ
     const ctx = await this.current(),
       { service, project, recipes, ui } = ctx;
     switch (method) {
+      case 'problemSnapshot': return ok({ projectId: project.projectId, tasks: service.listTaskProblems() });
       case 'readDraft': return service.loadFormDraft(input.draftId);
       case 'listDrafts': {
         const drafts = [];

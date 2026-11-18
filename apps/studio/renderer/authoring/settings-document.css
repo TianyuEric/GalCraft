@@ -1,0 +1,72 @@
+.gc-workbench .authoring-settings-document.settings-document {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  align-items: start;
+  gap: 24px 32px;
+  max-inline-size: 56rem;
+  margin-inline: auto;
+  padding: 24px;
+}
+.project-settings-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-block-end: 16px;
+  border-block-end: 1px solid var(--border);
+}
+.project-settings-title { display: grid; gap: 4px; min-inline-size: 0; }
+.project-settings-title :is(h1, h2) {
+  margin: 0;
+  font-size: 22px;
+  line-height: 30px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.project-settings-title p,
+.settings-document .player-name-editor > p {
+  margin: 0;
+  max-inline-size: 66ch;
+  color: var(--foreground-secondary);
+  font-size: 14px;
+  line-height: 22px;
+  overflow-wrap: anywhere;
+}
+.settings-document :is(.player-name-editor, .project-language-editor) {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  min-inline-size: 0;
+}
+.settings-document :is(.player-name-editor, .project-language-editor) > h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 650;
+}
+.settings-document .player-name-form { gap: 12px; }
+:is(#app, #studio-portals) .settings-document .player-name-form :is(.authoring-field, .gc-field) { margin: 0; }
+.player-name-form > [hidden] { display: none; }
+.settings-document .player-name-form > .field-error:empty { display: none; }
+.settings-document .player-name-form > button { justify-self: start; }
+.settings-document .player-name-editor > .dialog-actions { justify-content: start; flex-wrap: wrap; margin: 0; }
+.settings-document .project-language-editor .gc-field { margin: 0; }
+.settings-document .project-language-editor fieldset { margin: 0; }
+.project-details-editor {
+  display: grid;
+  gap: 24px;
+  max-inline-size: 46rem;
+  margin-inline: auto;
+  padding: 24px;
+}
+.project-details-editor .story-structure-fields { gap: 24px; }
+.project-details-group { display: grid; gap: 12px; min-inline-size: 0; }
+.project-details-group h3 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 650; }
+.project-details-group .gc-field { max-inline-size: 36rem; margin: 0; }
+.project-details-advanced { gap: 0; }
+.project-details-advanced h3 { margin-block-end: 8px; }
+.project-details-advanced .gc-disclosure-trigger { justify-content: start; border-block-start: 1px solid var(--border); }
+.project-details-advanced [data-open]:not(button) { padding-block-end: 12px; }
+.project-details-advanced [data-open]:not(button) > .gc-field { margin-block-start: 12px; }

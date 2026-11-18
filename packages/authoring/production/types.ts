@@ -50,6 +50,9 @@ export type TaskItem = { parameterSources?: Record<string, 'operation' | 'scheme
   candidateIds: Id[]; selectedCandidateId: Id | null; needsReview: boolean; issues: Issue[] };
 export type Task = { origin?: ProductionOrigin | null; externalActions?: Record<string,{action:string;candidateId?:Id;itemId?:Id;plan?:import('@galcraft/contracts').EditPlan}>; submissionCalls?: string[]; stagePolicy?: 'interactive' | 'external'; collaboration?: import('@galcraft/contracts').CollaborationContext; executionCollaboration?: import('@galcraft/contracts').CollaborationContext; externalCallId?: string; previousTaskId?: Id; previousItemId?: Id; schemaVersion: 1; id: Id; projectId: Id; revision: number; name: string; createdAt: string; updatedAt: string; presetId: Id | null; sourceDraftId: Id | null; context: ContextPart[]; items: TaskItem[]; policy: 'waitForSelection' | 'continueWithRule'; selectionRule: 'firstValid' | null };
 export type TaskSummary = Pick<Task, 'id' | 'name' | 'revision' | 'createdAt' | 'updatedAt'> & { items: Pick<TaskItem, 'id' | 'state'>[] };
+export type ProductionItemProblem = { itemId: Id; attemptId: Id; issues: Issue[] };
+export type ProductionTaskProblem = { id: Id; name: string; revision: number; failures: ProductionItemProblem[] };
+export type ProductionProblemSnapshot = { projectId: Id; tasks: ProductionTaskProblem[] };
 export type Candidate = { operation?: ProductionOperation; operationSnapshot?: import('@galcraft/contracts').ProductionOperationSnapshot; schemaVersion: 1; id: Id; taskId: Id; itemId: Id; createdAt: string; artifacts: Artifact[]; partial: boolean; backgroundPreview: BackgroundPreview | null; parentCandidateIds: Id[]; input: Json;
   idAliases?: Record<Id, Id>;
   idCommands?: CommandSpec[];

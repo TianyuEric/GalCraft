@@ -2,7 +2,7 @@ import { localizeRecipe } from '@galcraft/authoring/recipes/operations';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { createId, ObjectTargetSchema, StageStationSchema, StageWeatherPresets, VersionRefSchema } from '@galcraft/contracts';
-import { parse, patchFields, toDocumentPatch } from '@galcraft/dsl';
+import { CoreCommandSpecs, createCommandArgs, parse, patchFields, toDocumentPatch } from '@galcraft/dsl';
 import { AnimationPresets, createAnimationPreset } from '@galcraft/stage/presets';
 import { applyReadingPreset, componentDefinition, createUIAnimationPreset, findComponent, putUIAnimation, readTemplateDocuments, templateEdit, UIAnimationPresets } from '@galcraft/templates';
 import { CollaborationError } from '@galcraft/collaboration';
@@ -82,7 +82,14 @@ function scene(owner,input,context){
 }
 const editFor=(document,label,patches,refs=[])=>({label,origin:'preset',expected:[{ref:{kind:'document',id:document.documentId},revision:document.revision}],patches,preparedAssets:[],requiredRefs:refs});
 function writeStatement(source,command,args,label,refs=[]){
-  const {node,text,document}=source,id=node?.id??createId(source.project.documents),after=`${command} ${JSON.stringify(args)} @${id};`;
+  const {node,text,document,project}=source, allocate=()=>createId(project.documents), id=node?.id??allocate();
+  if(!node){
+    const projectDocument=[...project.documents.values()].find(item=>item.files['project.json']);
+    const textLocale=projectDocument?JSON.parse(projectDocument.files['project.json']).data.languages?.textDefault??'zh-CN':'zh-CN';
+    const spec=CoreCommandSpecs.find(item=>item.key===command);
+    args=createCommandArgs(spec,args,{textLocale},allocate);
+  }
+  const after=`${command} ${JSON.stringify(args)} @${id};`;
   const terminal=source.parsed.cst.find(item=>item.valid&&['end','changeScene','return','jumpLabel'].includes(item.command)&&!item.object?.value?.when),at=node?.start??terminal?.start??text.length;
   return editFor(document,label,[{kind:'text',documentId:document.documentId,edits:[{start:at,end:node?.end??at,before:node?text.slice(node.start,node.end):'',after:node?after:`${at&&!text.slice(0,at).endsWith('\n')?'\n':''}${after}\n`}]}],refs);
 }
@@ -122,7 +129,7 @@ export async function preparePresetEdit(owner,raw,context,check){
       if(preset.lifecycle==='property'){
         if(source.node&&!['setAnimation','setComplexAnimation'].includes(source.node.command))fail('ANIMATION_STATEMENT','Select an animation statement, or use statementId:null to append one.');
         const target=fields.stageTarget??args.target;if(!target)fail('ANIMATION_TARGET','Choose the stage, a concrete object or a station.');
-        const next={...args,animationId:args.animationId??createId(project.documents),target,animation:preset.animation,keepFinal:preset.keepFinal,loop:preset.loop};for(const key of ['presetId','resourceId','segments','parameters'])delete next[key];
+        const next={...args,...(source.node?{animationId:args.animationId??createId(project.documents)}:{}),target,animation:preset.animation,keepFinal:preset.keepFinal,loop:preset.loop};for(const key of ['presetId','resourceId','segments','parameters'])delete next[key];
         edit=writeStatement(source,'setComplexAnimation',next,'Apply stage animation preset');
       }else{
         const background=source.node?.command==='changeBg',exit=preset.lifecycle==='exit';

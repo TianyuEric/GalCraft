@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { WorkflowBinding } from '@galcraft/authoring/production';
-import { createId, type ProductionOperationSnapshot } from '@galcraft/contracts';
+import { createId, DiagnosticError, type Issue, type ProductionOperationSnapshot } from '@galcraft/contracts';
 import { Button, Modal } from '../../components/controls.js';
+import { IssueNotice } from '../../components/issue-notice.js';
 import { WorkflowEditor } from './WorkflowEditor.js';
 import { MessageBox } from '../../components/workbench/MessageBox.js';
 import { readWorkflow, type WorkflowDraft } from './workflow-model.js';
 import { workflowDiagnostics, workflowOperationDiagnostics } from '@galcraft/generation-services/validation';
 
-export function WorkflowDialog({ initialText, initialImportText, initialBaseline = initialText, initialPaste = '', initialPasteBaseline = initialPaste, locale, save, saveDraft, availableRevision, configurationDraftRevision, existingWorkflows = [], onIdentityChange, operations = [], outputConnections, discoverOutputs, close, inline = false, active = true, onState, closeRequest = 0, chooseImport }: {
+export function WorkflowDialog({ initialText, initialImportText, initialBaseline = initialText, initialPaste = '', initialPasteBaseline = initialPaste, locale, save, saveDraft, availableRevision, configurationDraftRevision, existingWorkflows = [], onIdentityChange, operations = [], outputConnections, discoverOutputs, close, inline = false, active = true, onState, closeRequest = 0, chooseImport, recoveredIssue, onOperationStart }: {
   initialText: string; locale: string; save(workflow: WorkflowBinding): Promise<WorkflowBinding | void>; close(): void; inline?: boolean;
   active?: boolean;
   saveDraft?(workflow: WorkflowDraft, paste: string): Promise<void>; availableRevision?: number | null; configurationDraftRevision?: number | null;
@@ -16,22 +17,33 @@ export function WorkflowDialog({ initialText, initialImportText, initialBaseline
   initialImportText?: string; initialBaseline?: string; initialPaste?: string; initialPasteBaseline?: string;
   onState?(state: { text: string; baseline: string; paste: string; pasteBaseline: string; dirty: boolean; title: string }): void; closeRequest?: number;
   chooseImport?(): Promise<{ path: string; text: string } | null>;
+  recoveredIssue?: Issue;
+  onOperationStart?(): void;
 }) {
   const t = (zh: string, en: string, ja: string) => locale === 'en' ? en : locale === 'ja' ? ja : zh;
   const [text, setText] = useState(initialText), [expanded, setExpanded] = useState(false);
   const [confirm, setConfirm] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [diagnostic, setDiagnostic] = useState<Issue | null>(null);
+  const [recoveryConsumed, setRecoveryConsumed] = useState(false);
+  useEffect(() => { setRecoveryConsumed(false); }, [recoveredIssue]);
   const [baseline, setBaseline] = useState(initialBaseline), [paste, setPaste] = useState(initialPaste);
   const [pasteBaseline, setPasteBaseline] = useState(initialPasteBaseline);
   const [saved, setSaved] = useState(''), [attempted, setAttempted] = useState(false);
   const [pendingImport, setPendingImport] = useState<{ workflow: WorkflowDraft; full: boolean; existing?: WorkflowBinding } | null>(null);
-  const errorRef = useRef<HTMLParagraphElement>(null);
-  useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const activeRecovery = recoveryConsumed ? undefined : recoveredIssue;
+  const localMatchesRecovery = activeRecovery && (diagnostic?.code === activeRecovery.code && diagnostic.message === activeRecovery.message
+    || !diagnostic && error === activeRecovery.message);
+  const displayedIssue = activeRecovery && !localMatchesRecovery ? activeRecovery : diagnostic;
+  useEffect(() => { if (error || displayedIssue) errorRef.current?.focus(); }, [error, displayedIssue]);
   const dirty = text !== baseline || paste !== pasteBaseline;
   let name = t('未命名工作流', 'Untitled workflow', '無題ワークフロー'); try { name = JSON.parse(text).name || name; } catch { /* Keep the editable invalid JSON. */ }
   useEffect(() => onState?.({ text, baseline, paste, pasteBaseline, dirty, title: name }), [text, baseline, paste, pasteBaseline, dirty, name]);
   const requestClose = () => { if (!busy) { if (dirty) setConfirm(true); else close(); } };
   useEffect(() => { if (closeRequest) requestClose(); }, [closeRequest]);
+  const beginOperation = () => { setRecoveryConsumed(true); setError(''); setDiagnostic(null); onOperationStart?.(); };
   const saveText = async () => {
+    beginOperation();
     JSON.parse(text);
     const binding = readWorkflow(text);
     if (!binding) throw new Error(t('请修正工作流 API 图及输入、输出映射。', 'Correct the workflow API graph and input/output mappings.', 'API グラフと入出力の設定を修正してください。'));
@@ -44,9 +56,10 @@ export function WorkflowDialog({ initialText, initialImportText, initialBaseline
   };
   const commit = async (draftOnly = false) => {
     if (busy) return;
-    setBusy(true); setError(''); setAttempted(!draftOnly);
+    setBusy(true); setAttempted(!draftOnly);
+    if (draftOnly) beginOperation();
     try { if (draftOnly && saveDraft) { const binding = readWorkflow(text); if (!binding) throw new Error(t('请先修正配置 JSON 的数据结构；未完成映射可以保留。', 'Correct the configuration JSON structure. Incomplete mappings can be kept.', '設定 JSON の構造を修正してください。未完成の設定は保持できます。')); await saveDraft(binding, paste); setBaseline(text); setPasteBaseline(paste); setSaved(t('配置草稿已保存，可跨作品继续编辑；当前可用配置保持原版本。', 'Configuration draft saved for reuse across projects. The available version is retained.', '設定下書きを保存しました。他の作品でも編集でき、利用可能な版は保持されます。')); } else { await saveText(); if (!inline) close(); } }
-    catch (error) { setError(String(error).replace(/^Error: /, '')); setConfirm(false); }
+    catch (error) { if (error instanceof DiagnosticError) setDiagnostic(error.issue); else setError(String(error).replace(/^Error: /, '')); setConfirm(false); }
     finally { setBusy(false); }
   };
   const applyImport = (workflow: WorkflowDraft, expectedRevision?: number | null) => { setText(JSON.stringify(workflow, null, 2)); setSaved(''); if (expectedRevision !== undefined) onIdentityChange?.(expectedRevision); setPendingImport(null); setPaste(''); };
@@ -57,7 +70,7 @@ export function WorkflowDialog({ initialText, initialImportText, initialBaseline
   };
   const title = t('ComfyUI 执行图与映射', 'ComfyUI graph and mapping', 'ComfyUI グラフとマッピング');
   const content = <>
-      {error && <p className="field-error" role="alert" tabIndex={-1} ref={errorRef}>{error}</p>}
+      {(error || displayedIssue) && <div tabIndex={-1} ref={errorRef}>{displayedIssue ? <IssueNotice issue={displayedIssue} locale={locale}/> : <p className="field-error" role="alert">{error}</p>}</div>}
       <p role="status" className="field-help">{availableRevision ? t(`当前可用版本 ${availableRevision}；保存草稿只保留编辑，更新可用配置后才用于后续制作。`, `Available revision ${availableRevision}. Saving a draft keeps edits; updating the available configuration changes future production.`, `利用可能な版 ${availableRevision}。下書き保存は編集のみを保持し、設定更新後に次の制作へ反映します。`) : t('尚无可用配置。可先保存配置草稿，完成映射后再保存为可用。', 'No available configuration yet. Save a draft now and make it available after completing mappings.', '利用可能な設定はありません。下書きを保存し、設定完了後に利用可能にします。')}</p>
       {configurationDraftRevision != null && <p className="field-help">{t(`配置草稿版本 ${configurationDraftRevision}`, `Configuration draft revision ${configurationDraftRevision}`, `設定下書きの版 ${configurationDraftRevision}`)}</p>}
       <fieldset disabled={busy} className="workflow-edit-fields"><WorkflowEditor text={text} change={value => { setText(value); setSaved(''); }} importDraft={paste} onImportDraftChange={setPaste} locale={locale} expanded={expanded} onExpand={() => setExpanded(!expanded)} chooseImport={chooseImport} operations={operations} outputConnections={outputConnections} discoverOutputs={discoverOutputs} attempted={attempted} initialImportText={initialImportText} onImported={imported}/></fieldset>

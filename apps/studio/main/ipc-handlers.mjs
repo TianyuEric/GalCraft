@@ -104,6 +104,9 @@ export function createStudioHandlers(host) {
       overview: async (...args) => {
         return host.production ? await host.production.call('overview', ...args) : fail('PRODUCTION_PROVIDER_UNAVAILABLE', '制作服务尚未就绪', 'M10');
       },
+      problemSnapshot: async () => {
+        return host.production ? await host.production.call('problemSnapshot') : fail('PRODUCTION_PROVIDER_UNAVAILABLE', '制作服务尚未就绪', 'M10');
+      },
       context: async (...args) => {
         return host.production ? await host.production.call('context', ...args) : fail('PRODUCTION_PROVIDER_UNAVAILABLE', '制作服务尚未就绪', 'M10');
       },
@@ -617,7 +620,10 @@ export function createStudioHandlers(host) {
         return host.assets ? host.assets.discardBackground(args[0]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
       },
       import: async (...args) => {
-        return host.assets ? host.assets.import(args[0]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
+        return host.assets ? host.assets.importBatch(args[0], args[1]?.batchId, args[1]?.projectId) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
+      },
+      listImportBatches: async (...args) => {
+        return host.assets ? host.assets.listImportBatches(args[0]) : fail('ASSET_PROVIDER_UNAVAILABLE', '素材服务尚未就绪', 'M04');
       },
     },
     operations: {
@@ -648,6 +654,13 @@ export function createStudioHandlers(host) {
       },
     },
     plugins: {
+      commandContracts: async () => {
+        const acquired = await host.plugins?.acquireDefinitions?.(host.projects?.currentSession ?? null, { allowMissing: true });
+        if (!acquired) return ok({ commands: [], conditions: [] });
+        if (!acquired.ok) return acquired;
+        try { return ok({ commands: acquired.value.commands, conditions: acquired.value.conditions ?? [] }); }
+        finally { await acquired.value.release(); }
+      },
       commandSpecs:async()=>{const acquired=await host.plugins?.acquireDefinitions?.(host.projects?.currentSession??null,{allowMissing:true});if(!acquired)return ok([]);if(!acquired.ok)return acquired;try{return ok(acquired.value.commands);}finally{await acquired.value.release();}},
       list: async (...args) => {
         return host.plugins ? host.plugins.list(host.projects?.currentSession ?? null) : fail('PLUGIN_PROVIDER_UNAVAILABLE', '插件服务尚未就绪', 'M09');
@@ -677,7 +690,7 @@ export function createStudioHandlers(host) {
       },
       save: async (...args) => {
         const config = ConnectionConfigSchema.parse(args[0]);
-        return ok(await host.connections.save(config, args[1]));
+        return ok(await host.connections.save(config, args[1] ?? undefined));
       },
       test: async (...args) => {
         const selection = ConnectionSelectionSchema.parse(args[0]);

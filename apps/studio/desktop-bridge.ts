@@ -116,6 +116,7 @@ export type ProductionBridge = {
     }
   >;
   overview(input?: { taskId: string | null }): Promise<Result<Overview>>;
+  problemSnapshot(): Promise<Result<import('@galcraft/authoring/production').ProductionProblemSnapshot>>;
   discardDraft: Call<string, void>;
   removeTaskRecord: Call<string, void>;
   saveDraft: Call<

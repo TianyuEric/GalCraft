@@ -30,3 +30,10 @@
 .collaboration-rounds .collaboration-nav-item{border-bottom:1px solid var(--border)}
 .collaboration-central-detail{margin-top:16px;border-top:1px solid var(--border)}
 .collaboration-story.collaboration-central-story{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+.collaboration-config-fields > .collaboration-config-location { flex: 1 1 200px; min-width: 0; margin: 0; }
+.collaboration-config-location dt { font-size: 12px; line-height: 16px; font-weight: 500; }
+.collaboration-config-location dd { margin: 8px 0 0; color: var(--foreground-secondary); }
+.collaboration-scope-fields { display: grid; gap: 16px; min-width: 0; padding: 0; margin: 0; border: 0; }
+.collaboration-scope-fields > .gc-field { max-width: 620px; margin: 0; }
+.collaboration-scope-fields > section > p { max-width: 68ch; }
+.collaboration-scope-fields [data-field="generation-limit"] input { max-width: 168px; }

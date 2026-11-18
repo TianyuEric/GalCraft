@@ -16,6 +16,7 @@ export type AuthoringToolbarProps = {
   hasStatements: boolean;
   readOnly: boolean;
   pluginTools: boolean;
+  contextActions?: { label: string; run(): void }[];
   changeView(view: AuthoringToolbarProps['view']): void;
   sideBySide?: { views: readonly AuthoringToolbarProps['view'][]; open(view: AuthoringToolbarProps['view']): void; close(): void };
   play(from: 'entry' | 'scene' | 'statement'): void;
@@ -49,6 +50,7 @@ export function AuthoringToolbar(props: AuthoringToolbarProps) {
       <IconAction label={`${t('保存当前文档 · Ctrl+S', 'Save document · Ctrl+S', '文書を保存 · Ctrl+S')} · ${status}`} disabled={props.saveState === 'saving'} onClick={() => props.action('save')}><Save/>{props.dirty && <i className="authoring-save-dot"/>}</IconAction>
     </div>
     <span className="authoring-save-state" data-dirty={props.dirty} role="status">{status}</span>
+    {props.contextActions?.map(action => <Button key={action.label} tone="quiet" className="authoring-context-return" onClick={action.run}>{action.label}</Button>)}
     <div className="authoring-play-tools">
       <Button tone="primary" onClick={() => props.play(from)} title={from === 'statement' ? t('从此句试玩', 'Play from this line', 'この文からテスト') : from === 'scene' ? t('从当前场景试玩', 'Play from this scene', 'このシーンからテスト') : t('从头试玩', 'Play from beginning', '最初からテスト')}><Play/>{t('试玩', 'Playtest', 'テスト')}</Button>
       <DropdownMenu><DropdownMenuTrigger render={<Button tone="primary" className="authoring-play-range"/>} aria-label={t('选择试玩起点', 'Choose playtest start', 'テスト開始位置を選択')} title={t('选择试玩起点', 'Choose playtest start', 'テスト開始位置を選択')}><ChevronDown/></DropdownMenuTrigger>

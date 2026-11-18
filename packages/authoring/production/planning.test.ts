@@ -249,6 +249,16 @@ describe('M10 planning independent of the desktop host', () => {
     expect(background.ok && background.value.patches.find(patch => patch.kind === 'text')).toMatchObject({
       edits: [{ before: '"Old001"', after: '"Art001"' }],
     });
+    item.backgroundPreview = null;
+    context.choices[result.id] = { mode: 'bind' };
+    const implicit = await reviewProductionCandidates([result], [], context);
+    const implicitPatch = implicit.ok && implicit.value.patches.find(patch => patch.kind === 'text');
+    expect(implicitPatch && implicitPatch.kind === 'text' && implicitPatch.edits.map(edit => edit.after)).toEqual(
+      expect.arrayContaining(['"Art001"', '"cover"', '0.5', '0.5']));
+    context.choices[result.id] = { mode: 'bind', placement: 'new' };
+    const newBackground = await reviewProductionCandidates([result], [], context);
+    const newPatch = newBackground.ok && newBackground.value.patches.find(patch => patch.kind === 'text');
+    expect(newPatch && newPatch.kind === 'text' && newPatch.edits[0]?.after).toContain('"durationMs":400');
     context.choices[result.id] = { mode: 'library' };
     expect(await reviewProductionCandidates([result], [], context)).toMatchObject({ ok: true, value: { patches: [] } });
   });

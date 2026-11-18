@@ -71,14 +71,26 @@
 .character-directory-label small { font-size:12px; line-height:18px; color:var(--muted-foreground); }
 .character-directory-pending { width:6px; height:6px; border-radius:50%; background:var(--primary); flex:none; }
 
-.character-document-editor[data-character-object=true] { container-type:inline-size; padding:16px; }
+.character-document:has(> .character-document-editor[data-character-object=true]) { height:100%; min-height:0; overflow:hidden; }
+.character-document-editor[data-character-object=true] { container-type:inline-size; display:flex; flex-direction:column; min-height:0; height:100%; overflow:hidden; padding:16px; }
 [data-character-object=true] .character-manager { min-height:0; }
+[data-character-object=true] .character-manager { flex:1; overflow:auto; scrollbar-gutter:stable; padding-inline-end:8px; }
 [data-character-object=true] .character-document-heading { flex-wrap:wrap; gap:4px 12px; }
 [data-character-object=true] .character-document-heading h2 { line-height:26px; overflow-wrap:anywhere; }
 [data-character-object=true] .character-section-tabs { padding:8px 0 0; margin-bottom:16px; border-bottom:1px solid var(--border); }
 [data-character-object=true] .character-section-tabs button { border-bottom:1px solid transparent; border-end-start-radius:0; border-end-end-radius:0; }
 [data-character-object=true] .character-section-tabs button[aria-pressed=true] { border-bottom-color:var(--primary); }
-[data-character-object=true] .character-manager-footer { flex-wrap:wrap; margin-top:16px; }
+[data-character-object=true] .character-manager-footer { flex:none; flex-wrap:wrap; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+.character-profile-name { max-width:440px; }
+[data-character-object=true] .character-manager-detail > div[hidden] { display:none; }
+.character-profile-references { margin:20px 0 24px; }
+.character-profile-references h3 { margin:0 0 8px; font-size:14px; line-height:20px; font-weight:500; }
+.character-profile-references > p, .character-profile-settings p { color:var(--muted-foreground); font-size:12px; line-height:18px; }
+.character-profile-settings { padding:12px 0; border-top:1px solid var(--border); }
+.character-profile-settings > summary { cursor:pointer; font-size:13px; line-height:20px; font-weight:500; }
+.character-profile-settings[open] > summary { margin-bottom:16px; }
+.character-profile-settings .character-role-field { margin-bottom:12px; }
+.character-profile-name > .character-error { margin:0 0 16px; }
 .character-asset-section { border-top:1px solid var(--border); margin-top:20px; padding-top:8px; }
 .character-asset-section summary, .shared-difference-remove summary { cursor:pointer; font-size:13px; line-height:24px; }
 .character-asset-section h4 { margin:8px 0; }

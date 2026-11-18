@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, within } from '@testing-library/react';
+import { act, fireEvent, render, within, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { JsonSchema, type StudioBridge } from '@galcraft/contracts';
 import { FixtureIds } from '@galcraft/contracts/fixtures';
@@ -34,7 +34,7 @@ it('applies and routes commands to the pinned properties source until the centra
     await act(async () => { workspace = await mountAuthoring(app, services); });
     fireEvent.click(within(app).getByRole('button', { name: 'Direction' }));
     fireEvent.click(app.querySelector<HTMLElement>(`.authoring-center [data-statement-id="${FixtureIds.statements[1]}"]`)!);
-    fireEvent.click(within(app).getByRole('button', { name: 'Inspector' }));
+    fireEvent.click(within(app).getByRole('button', { name: 'Object properties' }));
     fireEvent.click(within(app).getByRole('button', { name: 'Pin properties source' }));
     await act(async () => { await workspace!.openDocument({ kind: 'scene', objectId: FixtureIds.bookshop }); });
 
@@ -73,6 +73,7 @@ it('applies and routes commands to the pinned properties source until the centra
     const stage = app.querySelector<HTMLElement>('[data-view="studio-stage"]:not([hidden])')!;
     expect(within(stage).getByRole<HTMLButtonElement>('button', { name: 'Play current performance' }).disabled).toBe(true);
     expect(stage.querySelector('[data-source-panel="stage"] [role="status"]')?.textContent).toContain('Open a scene document');
+    expect(within(stage).getAllByText(/Open a scene document/)).toHaveLength(1);
   } finally {
     await act(async () => { workspace?.dispose(); });
     unmount();
@@ -121,5 +122,33 @@ it('restores two scene groups and commits from the visible writing pane to its o
     await act(async () => { workspace?.dispose(); });
     unmount();
     vi.unstubAllGlobals();
+  }
+});
+
+it('returns a character reference from pinned properties to the inspected scene and keeps that pin', async () => {
+  stubBrowser();
+  const { container, unmount } = render(<div id="app" data-locale="en" data-theme="light"/>);
+  const app = container.firstElementChild as HTMLElement;
+  const { services } = studioFixture('normal', 'en', 'light');
+  let workspace: Awaited<ReturnType<typeof mountAuthoring>> | undefined;
+  try {
+    await act(async () => { workspace = await mountAuthoring(app, services); });
+    fireEvent.click(within(app).getByRole('button', { name: 'Direction' }));
+    fireEvent.click(app.querySelector<HTMLElement>(`.authoring-center [data-statement-id="${FixtureIds.statements[1]}"]`)!);
+    fireEvent.click(within(app).getByRole('button', { name: 'Object properties' }));
+    let inspector = app.querySelector<HTMLElement>('[data-view="studio-inspector"]')!;
+    await act(async () => { fireEvent.change(inspector.querySelector<HTMLSelectElement>('[data-field="speaker"] select')!, { target: { value: FixtureIds.an } }); });
+    fireEvent.click(within(app).getByRole('button', { name: 'Pin properties source' }));
+    await act(async () => { await workspace!.openDocument({ kind: 'scene', objectId: FixtureIds.bookshop }); });
+    inspector = app.querySelector<HTMLElement>('[data-view="studio-inspector"]')!;
+    await act(async () => { fireEvent.click(inspector.querySelector<HTMLElement>(`[data-character-reference="${FixtureIds.an}"]`)!); });
+    await waitFor(() => expect(app.querySelector(`[data-view="character:${FixtureIds.an}"] .character-manager`)).toBeTruthy());
+    await act(async () => { fireEvent.click(within(app).getByRole('button', { name: 'Return to original line' })); });
+    expect(app.querySelector(`[data-tab-view="scene:${FixtureIds.street}"]`)?.getAttribute('aria-selected')).toBe('true');
+    expect(app.querySelector('[data-source-panel="inspector"]')?.getAttribute('data-source-scene')).toBe(FixtureIds.street);
+    expect(app.querySelector(`.authoring-center [data-statement-id="${FixtureIds.statements[1]}"]`)?.classList.contains('selected')).toBe(true);
+  } finally {
+    await act(async () => { workspace?.dispose(); });
+    unmount(); vi.unstubAllGlobals();
   }
 });

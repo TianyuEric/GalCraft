@@ -79,7 +79,7 @@ export function WorkbenchPreferences({ preferences, onChange, onResetLayout }: {
     <section className="workbench-preference-section">
       <h2>{t('布局', 'Layout', 'レイアウト')}</h2>
       <p>{t('拖动工作台分隔线调整尺寸。使用布局菜单保存或应用个人命名布局。', 'Drag workbench dividers to resize panels. Use the Layout menu to save or apply personal named layouts.', '仕切りをドラッグしてパネルのサイズを調整します。レイアウトメニューから名前を付けて保存・適用できます。')}</p>
-      <Button disabled={busy} onClick={() => void run(onResetLayout)}>{t('恢复默认布局', 'Reset layout', 'レイアウトをリセット')}</Button>
+      <Button disabled={busy} onClick={() => void run(onResetLayout)}>{t('应用平衡布局', 'Apply balanced layout', '標準レイアウトを適用')}</Button>
     </section>
   </section>;
 }

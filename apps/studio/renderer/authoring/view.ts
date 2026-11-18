@@ -3,7 +3,9 @@ import { Collaboration } from '../pages/Collaboration/Collaboration.js';
 import { domButton } from '../components/dom-button.js';
 import { AuthoringToolbar } from './AuthoringToolbar.js';
 import { issueText } from '../components/issue-text.js';
-import { IssueNotice } from '../components/issue-notice.js';
+import { Problems, type WorkbenchProblem, type ProblemsState } from './problems.js';
+import { ProblemMonitor } from './problem-monitor.js';
+import { importBatchProblems, productionTaskProblems } from './problem-sources.js';
 import { showContentPopover } from '../components/workbench/content-popover.js';
 import type { DocumentWorkspace } from '../components/workbench/document-workspace.js';
 import { createId, DefaultStudioPreferences, NativeAnimationSchema, StageWeatherPresets } from '@galcraft/contracts';
@@ -19,7 +21,7 @@ import { createAssetDetails } from './asset-details.js';
 import { showObjectMenu, isObjectMenuKey, objectMenuSelection } from '../components/workbench/ObjectMenu.js';
 import { assetPagination } from './asset-pagination.js';
 import { AssetImportSummary } from './asset-import-result.js';
-import { failedAssetPaths, mergeAssetImportResult, type AssetImportResult } from './asset-import-model.js';
+import { assetImportBatchResult, failedAssetPaths, mergeAssetImportResult, type AssetImportResult } from './asset-import-model.js';
 import { mountSelectedAssetsSheet } from './selected-assets-sheet.js';
 import { createPlayerNameEditor } from './player-name.js';
 import { ProjectLanguageEditor, type ProjectLanguageEditorHandle } from './project-languages.js';
@@ -44,10 +46,10 @@ import { codeBlock } from '../components/code-block.js';
 import { prepareNativeDialog } from '../components/motion.js';
 import { installTransientScrollbars } from '@galcraft/player-ui';
 /// <reference types="vite/client" />
-import type { Asset, AssetKind, AssetListIdentity, BackgroundAdoptionScope, BackgroundReference, BuildReceipt, CharacterDifference, FieldSpec, Id, Issue, Json, Ref, Result, SceneDecorLayer, SceneEntryPresentation, Source, StudioBridge, StudioPreferences } from '@galcraft/contracts';
+import type { Asset, AssetKind, AssetListIdentity, BackgroundAdoptionScope, BackgroundReference, BuildReceipt, CharacterDifference, FieldSpec, Id, Issue, Json, Ref, Result, SceneDecorLayer, SceneEntryPresentation, Source, StudioBridge, StudioPreferences, WorkspaceResume } from '@galcraft/contracts';
 import { IdSchema } from '@galcraft/contracts';
-import { createCommandRegistry, parse, parseExpression, printExpression } from '@galcraft/dsl';
-import { AuthoringController, classifyAssetDrop, mergeDialoguePaste, previewDialoguePaste } from './controller.js';
+import { commandCreationDefaults, createCommandRegistry, isCommandCreationField, parse, parseExpression, printExpression } from '@galcraft/dsl';
+import { AuthoringController, classifyAssetDrop, mergeDialoguePaste, previewDialoguePaste, type AuthoringSaveFailure } from './controller.js';
 import type { AssetQuery, AuthoringServices, AuthoringSource, StatementEditTarget, StudioLocale } from './controller.js';
 import { mountScriptEditor } from './script-editor.js';
 import './workspace.css';
@@ -97,7 +99,7 @@ import './assets-workbench.css';
 import { createWorkbenchChapter, moveWorkbenchObjects, renameWorkbenchObject } from './workbench-objects.js';
 import type { EditInput, EditReceipt, SavePlan } from '@galcraft/contracts';
 import { Production, tr } from '../pages/Production/Production.js';
-import { ProductionSession, type ProductionDirectoryState } from '../pages/Production/session.js';
+import { normalizeProductionFeedback, ProductionSession, type ProductionDirectoryState, type ProductionFeedback } from '../pages/Production/session.js';
 import { initialProductionDirectory } from '../pages/Production/ProductionDirectory.js';
 import { unwrap as unwrapProduction, workbenchBridge } from '../pages/Production/bridge.js';
 import { Plugins } from '../pages/Plugins/Plugins.js';
@@ -119,7 +121,7 @@ import { StudioPluginHost } from '../pages/Plugins/studio-host.js';
 import type { StudioSlot, StudioScope, StudioCorePage, PluginToolResult } from '@galcraft/plugins/contracts';
 import { createStudioAuthorServices } from '../pages/Plugins/author-services.js';
 import { ResourceProcessors, type ResourceProcessorGuiDraft } from '../pages/Plugins/resource-processors.js';
-import { StartupEditor, type StartupAssetField, type StartupPreviewKind } from './startup-editor.js';
+import { StartupEditor, hasStartupFieldInput, type StartupAssetField, type StartupPreviewKind } from './startup-editor.js';
 import { initialAnimation } from './animation-timeline.js';
 import { AnimationWorkbench } from './professional/AnimationWorkbench.js';
 import { AnimationPresetPicker } from './professional/AnimationPresetPicker.js';
@@ -132,7 +134,7 @@ import { LeasedAudioLoopEditor } from './professional/LeasedAudioLoopEditor.js';
 import { openPlayerPreview } from './player-preview.js';
 import { attachWritingHistory, resetWritingHistory } from './writing-history.js';
 import { InputDraftStore, captureFieldInputs, type FieldInputDraft } from './input-drafts.js';
-import { retainedWorkspaceInput, workspaceInputVersionsMatch } from './input-recovery.js';
+import { retainedWorkspaceInput, workspaceInputVersionsMatch, withoutRecoveredCharacterInput } from './input-recovery.js';
 import { RecoveredInput, type RecoveredInputGroup } from './RecoveredInput.js';
 import { publishIdentityChanges } from '../pages/Publish/publish-identity.js';
 
@@ -151,6 +153,10 @@ type PersistentWorkspaceInput = {
   retained?: Json | null;
 };
 
+type ProblemResume = NonNullable<NonNullable<WorkspaceResume['workbench']>['problems']>;
+type OperationProblem = NonNullable<ProblemResume['operations']>[number];
+type ProblemDocument = NonNullable<WorkspaceResume['workbench']>['documents'][number];
+const problemDocument = ({ id, kind, title, objectId }: ProblemDocument): ProblemDocument => ({ id, kind, title, ...(objectId ? { objectId } : {}) });
 type CharacterSessionDraft = CharacterGuiDraft & { views?: Record<Id, Pick<CharacterGuiDraft, 'section' | 'differenceId'>> };
 type Page = 'projects' | 'editor' | 'assets' | 'pages' | 'production' | 'assistant' | 'collaboration' | 'plugins' | 'connections' | 'maintenance' | 'publish' | `extension:${string}`;
 const supportPages = ['collaboration', 'plugins', 'connections', 'maintenance', 'publish'] as const;
@@ -238,7 +244,8 @@ function commandAssetIds(fields: readonly FieldSpec[], value: Record<string, unk
   }); return [...new Set(ids)];
 }
 type ReferenceOption = Ref & AnimationTargetOption;
-type FieldContext = { services: ShellServices; projectId: Id; scope: HTMLElement; sceneId?: Id; characterId?: Id; voiceLocale?: string; modelAsset?: Asset; figureKind?: 'image' | 'live2d'; command?: string; draft?: boolean; fieldPath?: string;
+type FieldContext = { services: ShellServices; projectId: Id; scope: HTMLElement; sceneId?: Id; characterId?: Id; voiceLocale?: string; modelAsset?: Asset; figureKind?: 'image' | 'live2d'; command?: string; draft?: boolean; fieldPath?: string; operation?: Json;
+  editCharacter?(id: Id): HTMLElement;
   animationInstances?: { id: string; name: string }[];
 differences?: readonly CharacterDifference[]; characterName?: string;
   highlightObject?(id: string): void; locateObject?(option: AnimationTargetOption): void;
@@ -279,6 +286,7 @@ function inputFor(spec: FieldSpec, value: unknown, onCommit: FieldCommit, assets
     if(current){const details=el('details');details.append(el('summary','',tr(locale,'当前引用详情','Current reference details','現在の参照の詳細')),el('code','',current));root.append(details);}return root;
   }
   if (ownIdentity || spec.path === 'id' && spec.refKind === 'statement') {
+    if (context?.draft && value == null) return el('p', 'field-help', tr(locale, '插入时自动生成', 'Assigned when inserted', '挿入時に自動生成'));
     const identity = el('input'); identity.readOnly = true; identity.value = String(value ?? ''); identity.ariaLabel = tr(locale, '自动生成的标识', 'Automatically generated ID', '自動生成された ID');
     identity.title = tr(locale, '系统生成并维护，修改正文不会改变标识', 'Managed by the system; editing text keeps this ID', '自動生成され、本文の編集では変更されません');
     const details=el('details','authoring-identity'); details.append(el('summary','',tr(locale,'标识（自动生成）','ID (generated)','ID（自動生成）')),identity,button(tr(locale,'复制标识','Copy ID','ID をコピー'),()=>navigator.clipboard.writeText(identity.value)));
@@ -291,18 +299,38 @@ function inputFor(spec: FieldSpec, value: unknown, onCommit: FieldCommit, assets
   if (spec.path === 'framing' && spec.type === 'object') {
     const group = el('div', 'authoring-framing'), presets = el('select');
     presets.ariaLabel = tr(locale, '立绘取景预设', 'Character framing preset', '立ち絵の構図プリセット');
-    const labels: Record<FramingPreset, [string,string,string]> = { upper:['上半身（默认）','Upper body (default)','上半身（既定）'], far:['远景','Long shot','遠景'], medium:['中景','Medium shot','中景'], near:['近景','Close-up','近景'], full:['全身','Full body','全身'] };
+    const labels: Record<FramingPreset, [string,string,string]> = { upper:['上半身','Upper body','上半身'], far:['远景','Long shot','遠景'], medium:['中景','Medium shot','中景'], near:['近景','Close-up','近景'], full:['全身','Full body','全身'] };
+    if (context?.draft) {
+      const inherited = context.operation === 'replace'
+        ? tr(locale, '沿用原取景', 'Keep existing framing', '元の構図を引き継ぐ')
+        : tr(locale, '默认取景（全身）', 'Default framing (full body)', '既定の構図（全身）');
+      presets.append(new Option(inherited, 'inherit'));
+    }
     for (const preset of framingPresets) { const option = el('option','',tr(locale,...labels[preset])); option.value=preset;presets.append(option); }
     const custom = el('option','',tr(locale,'自定义','Custom','カスタム'));custom.value='custom';presets.append(custom);
     const size = framingSize?.(); presets.disabled = !size;
     if (!size) presets.title = tr(locale,'选择具有尺寸信息的立绘素材后使用预设','Choose a portrait asset with known dimensions','サイズ情報のある立ち絵素材を選択してください');
-    presets.value = value == null ? 'upper' : size ? framingPresets.find(preset => {
+    presets.value = value == null ? context?.draft ? 'inherit' : 'upper' : size ? framingPresets.find(preset => {
       const candidate=portraitFraming(preset,size.sourceHeight,size.canvasHeight), current=value as Record<string,unknown>;
       return current.mode===candidate.mode && current.crop==null && current.offsetX===0 && Math.abs(Number(current.scale)-candidate.scale)<.00001 && Math.abs(Number(current.offsetY)-candidate.offsetY)<.01;
     }) ?? 'custom' : 'custom';
-    presets.onchange=()=>{const nextSize=framingSize?.();if(nextSize && presets.value!=='custom')onCommit(portraitFraming(presets.value as FramingPreset,nextSize.sourceHeight,nextSize.canvasHeight));};
     const details=el('details','framing-custom');details.append(el('summary','',tr(locale,'微调取景','Adjust framing','構図を調整')));
-    details.append(inputFor({...spec,path:'framing-custom'},value,onCommit,assets,references,locale,false,framingSize,context));
+    const customFields = (framing: unknown) => inputFor({ ...spec, path: 'framing-custom' }, framing, next => {
+      presets.value = 'custom';
+      return onCommit(next);
+    }, assets, references, locale, false, framingSize, context);
+    let editor = customFields(value);
+    details.append(editor);
+    presets.onchange = async () => {
+      const selection = presets.value, nextSize = framingSize?.();
+      if (selection === 'custom' || selection !== 'inherit' && !nextSize) return;
+      const framing = selection === 'inherit' ? null : portraitFraming(selection as FramingPreset, nextSize!.sourceHeight, nextSize!.canvasHeight);
+      const result = await onCommit(framing);
+      if (result && !result.ok || presets.value !== selection) return;
+      const next = customFields(framing);
+      editor.replaceWith(next);
+      editor = next;
+    };
     group.append(presets,details);return group;
   }
   if (spec.path === 'speaker' && spec.type === 'object') {
@@ -312,7 +340,11 @@ function inputFor(spec: FieldSpec, value: unknown, onCommit: FieldCommit, assets
     const speaker = value as { kind?: string; id?: string } | null;
     if (speaker?.id && !references.some(item => item.id === speaker.id)) { const option = el('option', '', speaker.id); option.value = speaker.id; input.append(option); }
     input.value = speaker?.kind === 'character' ? speaker.id ?? '' : '';
-    input.addEventListener('change', () => onCommit(input.value ? { kind: 'character', id: input.value } : { kind: 'narrator' })); return input;
+    input.addEventListener('change', () => onCommit(input.value ? { kind: 'character', id: input.value } : { kind: 'narrator' }));
+    if (speaker?.kind === 'character' && speaker.id && context?.editCharacter && references.some(item => item.kind === 'character' && item.id === speaker.id)) {
+      const group = el('span', 'authoring-reference'); group.append(input, context.editCharacter(speaker.id)); return group;
+    }
+    return input;
   }
   if (spec.path === 'model' && context?.modelAsset) {
     const root = el('section', 'portrait-model-controls');
@@ -365,7 +397,7 @@ function inputFor(spec: FieldSpec, value: unknown, onCommit: FieldCommit, assets
         row.append(button('−', () => { values = values.filter((_, at) => at !== index); onCommit([...values] as Json); draw(); }));
         list.append(row);
       });
-      list.append(button(tr(locale, '添加一项', 'Add item', '項目を追加'), () => { values.push(asJson(spec.item ? initialFieldValue(spec.item) : null)); onCommit([...values] as Json); draw(); }));
+      list.append(button(tr(locale, '添加一项', 'Add item', '項目を追加'), () => { values.push(asJson(spec.item ? initialFieldValue(spec.item, context?.draft === true) : null)); onCommit([...values] as Json); draw(); }));
     };
     draw();
     return list;
@@ -382,9 +414,11 @@ function inputFor(spec: FieldSpec, value: unknown, onCommit: FieldCommit, assets
         onApply: async choice => { context.cache(choice.asset); const result = await onCommit(choice.assetId);
           if ((!result||result.ok) && group.isConnected) { group.replaceWith(inputFor(spec,choice.assetId,onCommit,[...assets.filter(item=>item.id!==choice.assetId),choice.asset],references,locale,ownIdentity,framingSize,context));void loadVisibleAssetThumbnails(context.services); }
           return result ?? { ok: true, value: undefined, warnings: [] }; } }); }, 'asset-reference-trigger');
+      trigger.ariaLabel = label(spec);
       if (selected?.kind === 'image') { const image=el('img'); image.alt='';image.dataset.assetId=selected.id;image.dataset.variantId=selected.activeVariantId;trigger.append(image); }
       else trigger.append(actionIcon(selected?.kind === 'audio' ? 'play' : 'folder'));
       const caption=el('span','asset-reference-caption',selected?.name ?? (value ? tr(locale,'当前引用 · 未载入','Current reference · not loaded','現在の参照 · 未読込') : tr(locale,'搜索并选择素材','Search and choose an asset','素材を検索して選択')));
+      caption.id = `asset-reference-${createId()}`; trigger.setAttribute('aria-describedby', caption.id);
       caption.append(el('small','',selected ? `${selected.kind} · ${selected.folder.join('/') || selected.sourceName}` : allowedKinds.join(' / ')));trigger.append(caption,actionIcon('search'));group.append(trigger);
       if (value && spec.nullable) { const clear=button('',()=>{void onCommit(null);},'asset-reference-clear'); clear.ariaLabel=tr(locale,'清除素材引用','Clear asset reference','素材参照を解除');clear.append(actionIcon('close'));group.append(clear); }
       const advanced=el('details','reference-manual');advanced.append(el('summary','',tr(locale,'按标识指定','Specify ID','ID で指定')));
@@ -422,6 +456,8 @@ function inputFor(spec: FieldSpec, value: unknown, onCommit: FieldCommit, assets
     input.value = typeof value === 'string' ? value : '';
     input.addEventListener('change', () => onCommit(input.value || null));
     const group = el('span', 'authoring-reference'); group.append(input);
+    if (spec.refKind === 'character' && typeof value === 'string' && context?.editCharacter && options.some(option => option.id === value))
+      group.append(context.editCharacter(value));
     const manual = el('input'); manual.placeholder = tr(locale,'高级：粘贴已有对象的 ID','Advanced: paste an existing object ID','詳細：既存オブジェクトの ID'); manual.setAttribute('aria-label', `${label(spec)} ID`);
     manual.value = typeof value === 'string' ? value : '';
     manual.addEventListener('change', () => {
@@ -438,9 +474,15 @@ function inputFor(spec: FieldSpec, value: unknown, onCommit: FieldCommit, assets
   }
   if (spec.type === 'enum') {
     const input = el('select'); input.ariaLabel = label(spec); input.setAttribute('aria-required', String(spec.required));
-    if (value == null && spec.default == null) { const blank = el('option', '', tr(locale, '请选择', 'Choose…', '選択してください')); blank.value = ''; input.append(blank); }
+    const inheritStation = context?.draft && context.command === 'changeFigure' && context.operation === 'replace' && spec.path === 'station' && !spec.required;
+    if (value == null && spec.default == null || inheritStation) {
+      const blank = el('option', '', inheritStation
+        ? tr(locale, '沿用原设置', 'Keep existing position', '元の位置を引き継ぐ')
+        : tr(locale, '请选择', 'Choose…', '選択してください'));
+      blank.value = ''; input.append(blank);
+    }
     for (const option of spec.enumValues ?? []) { const node = el('option', '', enumLabel(option,locale,context?.command)); node.value = option; input.append(node); }
-    input.value = typeof value === 'string' ? value : String(spec.default ?? ''); input.addEventListener('change', () => onCommit(input.value)); return input;
+    input.value = typeof value === 'string' ? value : String(spec.default ?? ''); input.addEventListener('change', () => onCommit(context?.draft && !input.value ? null : input.value)); return input;
   }
   const input = spec.type === 'string' && spec.path === 'text' ? el('textarea') : el('input');
   if (input instanceof HTMLInputElement) input.type = spec.type === 'number' || spec.type === 'integer' ? 'number' : 'text';
@@ -484,9 +526,32 @@ export class AuthoringWorkspace {
   private productionUnapplied = false;
   private publishUnapplied = false;
   private releaseIssues: Issue[] = [];
+  private releaseCheckStale = false;
+  private releaseCheckIncomplete = false;
+  private releaseCheckFailures: Issue[] = [];
+  private readonly operationProblems = new Map<string, OperationProblem & { action?: WorkbenchProblem['action'] }>();
+  private readonly ignoredProblemAttempts = new Set<string>();
+  private readonly hiddenImportBatches = new Set<string>();
+  private problemMonitor: ProblemMonitor | null = null;
+  private problemsChecking = false;
+  private problemCheckIssue: Issue | null = null;
+  private engineReadIssue: Issue | null = null;
+  private retainedProductionFeedback: ProductionFeedback[] = [];
+  private productionFeedbackSignature = '';
+  private publishRecheck: (() => Promise<void>) | null = null;
+  private releaseCheckKnown = false;
+  private releaseCheckedSource = '';
+  private buildAttemptId = '';
+  private readonly sourceNoticeAttempts = new Set<string>();
+  private readonly sourceToastIds = new Set<string>();
+  private problemsState: ProblemsState = { query: '', severity: 'all', selected: null, scrollTop: 0 };
+  private readonly problemsNode = el('div', 'studio-problems-mount');
+  private problemsRoot: Root | null = null;
+  private readonly saveProblemSources = new WeakMap<AuthoringSaveFailure, AuthorDocument>();
   private issueReturn: 'publish' | 'problems' | null = null;
   private output: OutputState = { scrollTop: 0 };
   private outputFailure?: OutputFailure;
+  private selectedBuildProblem: OperationProblem | null = null;
   private pendingBuild?: string;
   private outputNode = el('div', 'studio-output-scroll');
   private outputRoot: Root | null = null;
@@ -512,6 +577,15 @@ export class AuthoringWorkspace {
   private productionDirectoryRequested = false;
   private productionChanged = () => {
     if (!this.production) return;
+    const feedback = this.production.feedback;
+    const signature = JSON.stringify(feedback);
+    if (signature !== this.productionFeedbackSignature) {
+      this.productionFeedbackSignature = signature;
+      this.retainedProductionFeedback = structuredClone([...feedback]);
+      this.rememberWorkbench();
+      this.notifySourceProblems();
+      queueMicrotask(() => { if (!this.disposed && !this.switchingProject) this.render(); });
+    }
     const record = this.production.selectedRecord, previous = this.productionDirectoryState.record;
     if (record?.id !== previous?.id || record?.kind !== previous?.kind) {
       this.productionDirectoryState = { ...this.productionDirectoryState, record };
@@ -593,9 +667,12 @@ export class AuthoringWorkspace {
   private assetRangeAnchor: Id | null = null;
   private assetInspectorView: { asset: Asset; variantId: Id | null; pinned: boolean; referenceRevision: string; locale: string; node: HTMLElement; summary: HTMLElement; visibility: HTMLElement } | null = null;
   private assetRows = new Map<Id,{asset:Asset;locale:string;node:HTMLElement}>();
-  private characterNode = el('div', 'character-document');
   private readonly characterRegions = new Map<Id, { node: HTMLElement; root: Root }>();
-  private characterExplorer = el('div', 'character-explorer');
+  private readonly characterInputs = new Map<Id, { applyCurrent(): Promise<boolean>; isComposing?(): boolean }>();
+  private readonly startupInputs = new Map<HTMLElement, import('./startup-editor.js').StartupEditorInput>();
+  private readonly recoveringCharacterDrafts = new Set<Id>();
+  private readonly characterReferenceOrigins = new Map<Id, { projectId: Id; document: AuthorDocument; sceneId: Id; documentId: Id; revision: number; statementId: Id | null;
+    view: AuthoringController['view']; context: ReturnType<AuthoringWorkspace['sceneViewContext']>; focus: ReturnType<typeof captureAuthoringFocus> }>();
   private characterSelected: Id | undefined;
   private readonly characterDirectoryNode = el('div', 'character-explorer');
   private characterDirectoryRoot: Root | null = null;
@@ -605,7 +682,6 @@ export class AuthoringWorkspace {
   private characterDocumentIds = new Map<Id, Id>();
   private characterHistory = new Map<Id, NonNullable<CharacterManagerProps['historyState']>>();
   private characterAsset: Asset | null = null;
-  private characterRoot: Root | null = null;
   private characterDraft = false;
   private graphNode = el('div', 'scene-graph-document');
   private sceneToolbars = new Map<Id, { node: HTMLElement; root: Root }>();
@@ -676,13 +752,54 @@ export class AuthoringWorkspace {
   private messageValue = '';
   private noticeIssue: import('@galcraft/contracts').Issue | null = null;
   private noticeRecovery: { label: string; run(): void } | undefined;
+  private noticeHasProblem = false;
   get message() { return this.messageValue; }
-  set message(value: string) { this.messageValue = value; this.noticeIssue = null; this.noticeRecovery = undefined; }
+  set message(value: string) { this.messageValue = value; this.messageRevision++; this.noticeIssue = null; this.noticeRecovery = undefined; this.noticeAsset = null; this.noticeHasProblem = false; }
   private messageTone = 'info';
   private noticeAsset: string | null = null;
-  private noticeTimer: ReturnType<typeof setTimeout> | null = null;
-  private noticeText = '';
-  private noticeExpires = 0;
+  private messageRevision = 0;
+  private presentedMessageRevision = -1;
+  private dismissedMessageRevision = -1;
+  private presentedMessageSignature = '';
+  private readonly messageToastId = `authoring-message:${crypto.randomUUID()}`;
+  private readonly modelToastId = `${this.messageToastId}:model`;
+  private modelPreparationSubscription: (() => void) | null = null;
+
+  /** Short feedback only; domain diagnostics and return context retain their owned surfaces. */
+  private syncMessage(): void {
+    if (this.disposed || !this.shellRoot) return;
+    if (!this.message) {
+      if (this.presentedMessageSignature) studioToasts.close(this.messageToastId);
+      this.presentedMessageSignature = '';
+      return;
+    }
+    const revision = this.messageRevision;
+    if (this.dismissedMessageRevision === revision) return;
+    const type = this.messageTone === 'error' || this.messageTone === 'warning' || this.messageTone === 'success' ? this.messageTone : 'info';
+    const issueSource = this.noticeIssue?.source, assetId = this.noticeAsset;
+    const recovery = this.noticeHasProblem && this.controller.source ? {
+      label: tr(this.controller.preferences.locale, '查看问题', 'View problems', '問題を表示'), run: () => this.showProblems(),
+    } : this.noticeRecovery ?? (assetId ? {
+      label: tr(this.controller.preferences.locale, '查看引用', 'View references', '参照を表示'), run: () => { void this.findAssetReferences(assetId); },
+    } : issueSource ? {
+      label: tr(this.controller.preferences.locale, '定位问题', 'Locate issue', '問題へ移動'), run: () => { void this.locateIssue(issueSource); },
+    } : undefined);
+    const timeout = type === 'error' || recovery ? 0 : 4500;
+    const signature = JSON.stringify([this.message, type, timeout, recovery?.label]);
+    if (revision === this.presentedMessageRevision && signature === this.presentedMessageSignature) return;
+    const projectId = this.controller.source?.project.projectId;
+    const options = { title: this.message, type, timeout,
+      actionProps: recovery ? { children: recovery.label, onClick: () => {
+        if (projectId === this.controller.source?.project.projectId) recovery.run();
+      } } : undefined, onClose: () => {
+      // Closing a reminder keeps the input, diagnostic, receipt and ongoing operation intact.
+      if (this.messageRevision === revision) this.dismissedMessageRevision = revision;
+    } };
+    if (revision === this.presentedMessageRevision) studioToasts.update(this.messageToastId, options);
+    else studioToasts.add({ id: this.messageToastId, ...options });
+    this.presentedMessageRevision = revision;
+    this.presentedMessageSignature = signature;
+  }
   private assetTypes: AssetTypeCatalogEntry[] = [];
   private assetProjectEpoch = 0;
   private assetQueryGeneration = 0;
@@ -693,11 +810,14 @@ export class AuthoringWorkspace {
   assetPage: { items: Asset[]; total: number; indexRevision: number } | null = null;
   selectedAssets = new Set<Id>();
   selectedAtIndexRevision: number | null = null;
+  private assetSelectionEpoch = 0;
   queryAtSelection: AssetQuery | null = null;
   private assetCache = new Map<Id, Asset>();
   private selectedDetails: AssetListIdentity[] | null = null;
   private missingSelected: Id[] = [];
-  private assetImportResults: { id: number; result: AssetImportResult }[] = [];
+  private assetImportResults: { id: string | number; result: AssetImportResult }[] = [];
+  private assetImportHistoryOpen = false;
+  private assetBatchScope: { id: string; origin: NonNullable<NonNullable<import('@galcraft/contracts').WorkspaceResume['workbench']>['assets']>; anchor: Id | null; focus: ReturnType<typeof captureAuthoringFocus> } | null = null;
   private assetImportSequence = 0;
   private focusedAssetId: Id | null = null;
   private get focusedAsset(): Asset | null { return this.focusedAssetId ? this.assetCache.get(this.focusedAssetId) ?? null : null; }
@@ -742,7 +862,7 @@ export class AuthoringWorkspace {
     else if (key === 's') { event.preventDefault(); void this.save(event.shiftKey); }
     else if (['z','y'].includes(key) && event.target === document.body) { event.preventDefault(); void this.shellAction(key === 'y' || event.shiftKey ? 'redo' : 'undo'); }
   };
-  constructor(readonly root: HTMLElement, readonly services: ShellServices) { this.controller = new AuthoringController(services); this.inputDraftStore = new InputDraftStore(services.bridge.authoringPreferences, message => { this.messageTone = 'error'; this.message = tr(this.controller.preferences.locale, '未应用输入保存失败：', 'Unable to retain unapplied input: ', '未適用入力を保存できません：') + message; }); installTransientScrollbars(root); observeFormHints(root); }
+  constructor(readonly root: HTMLElement, readonly services: ShellServices) { this.controller = new AuthoringController(services); this.inputDraftStore = new InputDraftStore(services.bridge.authoringPreferences, message => { this.messageTone = 'error'; this.message = tr(this.controller.preferences.locale, '未应用输入保存失败：', 'Unable to retain unapplied input: ', '未適用入力を保存できません：') + message; this.updateStatus(); }); installTransientScrollbars(root); observeFormHints(root); }
   private t(key: keyof typeof words['zh-CN']): string { return words[this.controller.preferences.locale][key]; }
   private references(): ReferenceOption[] {
     const source = this.controller.source;
@@ -776,6 +896,7 @@ export class AuthoringWorkspace {
     this.restoreAssetWorkspace();
     await this.restoreInputDraft(); this.inputDraftReady = true;
     await this.resumeWorkbench(active);
+    this.startProblemMonitor();
     if (this.controller.source) void this.checkRecovery();
     const collaborationBridge=this.services.bridge as import('../../desktop-bridge.js').DesktopBridge;
     if (collaborationBridge.onCollaborationChanged) this.collaborationSubscriptions.push(collaborationBridge.onCollaborationChanged(() => {
@@ -849,16 +970,25 @@ export class AuthoringWorkspace {
   private async refreshEngineHealth(): Promise<void> {
     const projectId = this.controller.source?.project.projectId;
     if (!projectId || !this.services.bridge.engines?.health) return;
-    const health = await this.services.bridge.engines.health().catch(() => null);
-    if (health?.ok && projectId === this.controller.source?.project.projectId)
-      this.controller.engineIssue = health.value.issues.find(issue => issue.severity === 'error') ?? null;
+    try {
+      const health = await this.services.bridge.engines.health();
+      if (projectId !== this.controller.source?.project.projectId || this.disposed) return;
+      this.engineReadIssue = health.ok ? null : health.error;
+      if (health.ok) this.controller.engineIssue = health.value.issues.find(issue => issue.severity === 'error') ?? null;
+    } catch (error) {
+      if (projectId === this.controller.source?.project.projectId && !this.disposed) this.engineReadIssue = this.problemReadFailure(error);
+    }
   }
   dispose(): void {
+    this.stopProblemMonitor();
     this.sidebarView?.view.dispose();
     this.scriptMounts.clear();
     void this.flushInputDrafts().catch(() => {});
     this.disposed=true;
-    for(const cached of this.projectGuiDrafts.values()){cached.production?.stop();cached.startup.root?.unmount();cached.character.root?.unmount();cached.project.languageRoot?.unmount();cached.project.playerNameEditor?.dispose();for(const form of cached.forms.values())form.dispose?.();}this.projectGuiDrafts.clear();
+    this.modelPreparationSubscription?.(); this.modelPreparationSubscription = null;
+    studioToasts.close(this.messageToastId);
+    studioToasts.close(this.modelToastId);
+    for(const cached of this.projectGuiDrafts.values()){cached.production?.stop();cached.startup.root?.unmount();cached.project.languageRoot?.unmount();cached.project.playerNameEditor?.dispose();for(const form of cached.forms.values())form.dispose?.();}this.projectGuiDrafts.clear();
     window.removeEventListener('keydown', this.commandShortcut, true);
     this.insertions.clear();
     for (const form of this.formDocuments.values()) form.dispose?.(); this.formDocuments.clear();
@@ -870,10 +1000,10 @@ export class AuthoringWorkspace {
     for (const session of this.scriptSessions.values()) session.editor.dispose(); this.scriptSessions.clear(); this.writingInputs.clear();
     this.resourceProcessorRoot?.unmount(); this.resourceProcessorRoot = null;
     this.disposeCharacterRegions();
-    this.playerNameEditor?.dispose();this.languageRoot?.unmount(); this.startupRoot?.unmount(); this.characterRoot?.unmount(); this.graphRoot?.unmount(); this.projectsRoot?.unmount(); this.workbench?.unmount(); this.productionRoot?.unmount();
+    this.playerNameEditor?.dispose();this.languageRoot?.unmount(); this.startupRoot?.unmount(); this.graphRoot?.unmount(); this.projectsRoot?.unmount(); this.workbench?.unmount(); this.productionRoot?.unmount();
     for (const toolbar of this.sceneToolbars.values()) toolbar.root.unmount();
     this.sceneToolbars.clear();
-    this.outputRoot?.unmount(); this.preferencesRoot?.unmount();
+    this.outputRoot?.unmount(); this.preferencesRoot?.unmount(); this.problemsRoot?.unmount();
     this.shellRoot?.unmount(); this.shellRoot = null; this.controller.close(); void this.studioPlugins?.dispose();
   }
   private presetLifecycle(args: Record<string, unknown>, preset: AppliedAnimationPreset) {
@@ -984,6 +1114,7 @@ export class AuthoringWorkspace {
         }));
       } : undefined,
       sceneId: this.controller.scene?.sceneId, characterId, characterName:character?.name,differences:character?.differences??[],
+      editCharacter: !draft && scene ? id => this.characterReferenceButton(id, scene.sceneId, this.controller.selection?.primaryId ?? null, this.controller.view) : undefined,
       voiceLocale:this.controller.source!.project.languages.voiceDefault,
       modelAsset: this.assetCache.get(String(args.assetId ?? '')), figureKind, draft, cache: asset => this.assetCache.set(asset.id,asset),
       assetEditor: (root, value, commit) => {
@@ -1013,7 +1144,7 @@ export class AuthoringWorkspace {
   }
   private async loadQuickAssets(): Promise<void> {
     const result = await this.services.queryAssets({ kind: null, text: '', offset: 0, limit: 40 });
-    if (!result.ok) { this.message = result.error.message; return; }
+    if (!result.ok) { this.messageTone = result.error.severity; this.message = result.error.message; this.updateStatus(); return; }
     result.value.items.forEach(asset => this.assetCache.set(asset.id, asset));
     const source=this.controller.source;if(!source||!this.services.getAsset)return;
     const registry=createCommandRegistry(source.project.engineVersion), ids=new Set<Id>();
@@ -1041,7 +1172,7 @@ export class AuthoringWorkspace {
     const designer=this.designer?.capture()??this.designerResume;
     const currentVersions=source.documentVersions??[{ documentId: source.projectDocumentId, revision: source.projectRevision }, ...source.scenes.map(scene => ({ documentId: scene.documentId, revision: scene.revision }))];
     const language=this.languageEditor.current?.capture()??this.languageGuiDraft,playerName=this.playerNameEditor?.capture()??this.playerNameGuiDraft;
-    const otherDirty=!!(this.scriptDrafts.size||this.writingDrafts.size||this.unappliedInput(true,false)||language&&(JSON.stringify(language.draft)!==language.baseline||language.additional)||playerName&&JSON.stringify(playerName.values)!==JSON.stringify(playerName.baseline)||Object.keys(this.characterGuiDraft?.drafts??{}).length||Object.keys(this.startupGuiDraft?.buffers??{}).length||Object.keys(designer?.fieldInputs??{}).length||Object.keys(designer?.behaviorDrafts??{}).length||[...this.formDocuments.values()].some(form=>form.dirty()));
+    const otherDirty=!!(this.scriptDrafts.size||this.writingDrafts.size||this.unappliedInput(true,false)||language&&(JSON.stringify(language.draft)!==language.baseline||language.additional)||playerName&&JSON.stringify(playerName.values)!==JSON.stringify(playerName.baseline)||Object.keys(this.characterGuiDraft?.drafts??{}).length||hasStartupFieldInput(this.startupGuiDraft)||Object.keys(designer?.fieldInputs??{}).length||Object.keys(designer?.behaviorDrafts??{}).length||[...this.formDocuments.values()].some(form=>form.dirty()));
     const dirty=otherDirty||this.publishUnapplied;
     if(dirty&&!this.inputOriginVersions)this.inputOriginVersions=structuredClone(currentVersions);
     if(!dirty)this.inputOriginVersions=null;
@@ -1083,8 +1214,19 @@ export class AuthoringWorkspace {
       const matches = workspaceInputVersionsMatch(content, source.project, source.projectDocumentId, versions);
       this.recoveryReviewed = draft.recoveryReviewed ?? false;
       if (!matches) {
-        this.retainedInput = retainedWorkspaceInput(content, source.project); this.recoveryReviewed = false;
-        this.message = tr(this.controller.preferences.locale,'部分输入的来源已变化。请复核保留的输入后继续。','The source of some inputs changed. Review the retained inputs before continuing.','一部の入力元が変更されました。保持した入力を確認してください。');
+        let remaining: Json | null = content;
+        if (draft.character?.drafts && typeof draft.character.drafts === 'object' && !Array.isArray(draft.character.drafts)) {
+          // Character forms retain their own base for three-way merging. An
+          // unrelated save must not demote those inputs to a raw recovery blob.
+          this.characterGuiDraft = structuredClone(draft.character); this.characterSelected = draft.character.selected ?? undefined;
+          this.inputOriginVersions = [...versions].map(([documentId, revision]) => ({ documentId, revision }));
+          this.documents = restoredAuthorDocuments([...this.documents, ...draft.documents.filter(document => document.kind === 'character' || document.kind === 'characters')]);
+          if (draft.active === 'characters' || draft.active.startsWith('character:')) { this.activeDocument = draft.active; this.page = 'editor'; }
+          this.adoptLegacyCharacterDocuments();
+          remaining = withoutRecoveredCharacterInput(content, source.project);
+        }
+        this.retainedInput = retainedWorkspaceInput(remaining, source.project); this.recoveryReviewed = false;
+        if (this.retainedInput) { this.messageTone = 'warning'; this.message = tr(this.controller.preferences.locale,'部分输入的来源已变化。请复核保留的输入后继续。','The source of some inputs changed. Review the retained inputs before continuing.','一部の入力元が変更されました。保持した入力を確認してください。'); }
       } else {
         this.inputOriginVersions=structuredClone(draft.versions);this.scriptDrafts = new Map(draft.scripts); this.writingDrafts = new Map(draft.writing); this.designerResume = draft.designer;
         for (const scene of source.scenes) {
@@ -1099,7 +1241,7 @@ export class AuthoringWorkspace {
           ...draft.startup,
           displayPending: draft.startup.displayPending ?? draft.otherUnapplied ?? draft.unapplied ?? false,
         };
-        this.startupDraft = !!this.startupGuiDraft && (Object.keys(this.startupGuiDraft.buffers).length > 0 ||
+        this.startupDraft = !!this.startupGuiDraft && (hasStartupFieldInput(this.startupGuiDraft) ||
           !!this.startupGuiDraft.displayPending && JSON.stringify(this.startupGuiDraft.display) !== JSON.stringify(source.project.display));
         this.languageGuiDraft = draft.language; this.playerNameGuiDraft = draft.playerName;
         this.productionGuiResume = draft.production; this.projectDraft = draft.projectCreate;
@@ -1107,10 +1249,11 @@ export class AuthoringWorkspace {
         this.documents = restoredAuthorDocuments(draft.documents.filter(document => document.kind !== 'scene' || source.scenes.some(scene => scene.sceneId === document.objectId)));
         const active = restoredAuthorDocumentId(draft.active), page = draft.page === 'assistant' ? 'production' : draft.page;
         this.activeDocument = active; this.page = page;
+        this.adoptLegacyCharacterDocuments();
         if (draft.sceneId && source.scenes.some(scene => scene.sceneId === draft.sceneId)) this.controller.selectScene(draft.sceneId);
         this.controller.changeView(draft.view);
         for (const form of [...draft.forms ?? []].sort((a,b)=>Number(!a.id.startsWith('insertion:'))-Number(!b.id.startsWith('insertion:')))) { if (!await this.restoreFormInput(form)) this.recoveredForms.push(form); }
-        if (this.documents.some(document => document.id === active)) { this.activeDocument = active; this.page = page; }
+        if (active !== 'characters' && this.documents.some(document => document.id === active)) { this.activeDocument = active; this.page = page; }
       }
       if ((this.recoveredForms.length || this.retainedInput) && !this.recoveryReviewed) this.openRecoveredInput();
     } finally { this.inputDraftRestoredProject = projectId; const normalized=this.captureInputDraft();if(normalized){const serialized=JSON.stringify(normalized);this.lastInputContent.set(projectId,serialized);if(original&&serialized!==JSON.stringify(original))this.inputDraftStore.schedule(projectId,JSON.parse(serialized) as Json);}this.inputDraftRestoring = false; }
@@ -1173,7 +1316,7 @@ export class AuthoringWorkspace {
     return { designer:this.designer?.capture()??this.designerResume, scripts:new Map(this.scriptDrafts),writing:new Map(this.writingDrafts),
       production:this.production,productionUnapplied:this.productionUnapplied,publish:this.publishGuiDraft,publishUnapplied:this.publishUnapplied,resourceProcessor:this.resourceProcessorGuiDraft,resourceProcessorUnapplied:this.resourceProcessorUnapplied,
       startup:{node:this.startupNode,root:this.startupRoot,inspector:this.startupInspector,dirty:this.startupDraft},
-      character:{node:this.characterNode,root:this.characterRoot,explorer:this.characterExplorer,dirty:this.characterDraft,selected:this.characterSelected,gui:this.characterGuiDraft,search:this.characterSearch,documentIds:this.characterDocumentIds,history:this.characterHistory},
+      character:{dirty:this.characterDraft,selected:this.characterSelected,gui:this.characterGuiDraft,search:this.characterSearch,documentIds:this.characterDocumentIds,history:this.characterHistory},
       project:{node:this.projectNode,general:this.projectGeneral,languageNode:this.languageNode,languageRoot:this.languageRoot,languageEditor:this.languageEditor,playerNameEditor:this.playerNameEditor},
       forms:this.formDocuments,insertions:this.insertions,documents:this.documents,active:this.activeDocument,page:this.page,scenes:new Map(this.sceneContexts),selected:this.treeSelected };
   }
@@ -1215,7 +1358,7 @@ export class AuthoringWorkspace {
       this.projectGuiDrafts.set(oldId,this.captureProjectGui());
       this.production?.stop();this.productionSubscription?.();this.productionSubscription=null;this.production=null;
       this.startupRoot=null;this.startupNode=el('div','startup-document');this.startupInspector=el('div','startup-inspector-mount');this.startupDraft=false;
-      this.characterRoot=null;this.characterNode=el('div','character-document');this.characterExplorer=el('div','character-explorer');this.characterDraft=false;
+      this.characterDraft=false;
       this.languageRoot=null;this.projectNode=el('section','authoring-settings-document');this.projectGeneral=el('div');this.languageNode=el('div');this.languageEditor=createRef<ProjectLanguageEditorHandle>();this.playerNameEditor=null;
       this.formDocuments=new Map();this.insertions=new Map();
     }
@@ -1227,18 +1370,27 @@ export class AuthoringWorkspace {
       this.projectGuiDrafts.delete(currentId!);this.designerResume=cached.designer;this.scriptDrafts=cached.scripts;this.writingDrafts=cached.writing;
       this.production=cached.production;this.productionUnapplied=cached.productionUnapplied;this.publishGuiDraft=cached.publish;this.publishUnapplied=cached.publishUnapplied;this.resourceProcessorGuiDraft=cached.resourceProcessor;this.resourceProcessorUnapplied=cached.resourceProcessorUnapplied;
       this.startupNode=cached.startup.node;this.startupRoot=cached.startup.root;this.startupInspector=cached.startup.inspector;this.startupDraft=cached.startup.dirty;
-      this.characterNode=cached.character.node;this.characterRoot=cached.character.root;this.characterExplorer=cached.character.explorer;this.characterDraft=cached.character.dirty;this.characterSelected=cached.character.selected;this.characterGuiDraft=cached.character.gui;this.characterSearch=cached.character.search;
+      this.characterDraft=cached.character.dirty;this.characterSelected=cached.character.selected;this.characterGuiDraft=cached.character.gui;this.characterSearch=cached.character.search;
       this.characterDocumentIds = cached.character.documentIds; this.characterHistory = cached.character.history;
       this.projectNode=cached.project.node;this.projectGeneral=cached.project.general;this.languageNode=cached.project.languageNode;this.languageRoot=cached.project.languageRoot;this.languageEditor=cached.project.languageEditor;this.playerNameEditor=cached.project.playerNameEditor;
       this.formDocuments=cached.forms;this.insertions=cached.insertions;this.documents=cached.documents;this.activeDocument=cached.active;this.page=cached.page;this.sceneContexts=cached.scenes;this.treeSelected=cached.selected;
       if(this.production){this.productionSubscription=this.production.subscribe(this.productionChanged);this.production.start();}
-      this.message=tr(this.controller.preferences.locale,'已恢复此作品的编辑位置和未应用草稿。','Restored this project’s editing position and unapplied drafts.','この作品の編集位置と未適用の下書きを復元しました。');
-    }else if(oldId)this.message=tr(this.controller.preferences.locale,'已打开协作作品。原作品的未应用草稿保留在本次 Studio 会话中。','Collaboration project opened. Unapplied drafts for the previous project remain in this Studio session.','連携作品を開きました。前の作品の未適用の下書きは、この Studio セッションで保持されます。');
+      this.messageTone = 'success'; this.message=tr(this.controller.preferences.locale,'已恢复此作品的编辑位置和未应用草稿。','Restored this project’s editing position and unapplied drafts.','この作品の編集位置と未適用の下書きを復元しました。');
+    }else if(oldId){this.messageTone = 'info'; this.message=tr(this.controller.preferences.locale,'已打开协作作品。原作品的未应用草稿保留在本次 Studio 会话中。','Collaboration project opened. Unapplied drafts for the previous project remain in this Studio session.','連携作品を開きました。前の作品の未適用の下書きは、この Studio セッションで保持されます。');}
     this.render();
     }finally{this.switchingProject=false;void this.reportAuthoringDrafts();}
   }
   private async projectChanged(): Promise<void> {
+    const previousSwitchingProject = this.switchingProject;
+    this.switchingProject = true;
+    this.stopProblemMonitor();
+    try {
+    // Disposing old panels can persist input. Keep the queued snapshot, not the cleared intermediate state.
+    await this.inputDraftStore.flush();
     this.assetProjectEpoch++;
+    this.modelPreparationSubscription?.(); this.modelPreparationSubscription = null;
+    this.preparingModel = false; this.modelPreparationStatus = '';
+    this.message = ''; studioToasts.close(this.messageToastId); studioToasts.close(this.modelToastId); this.presentedMessageSignature = '';
     this.assetQueryGeneration++; this.assetFocusGeneration++; this.assetPreviewGeneration++;
     this.importingAssets = false;
     this.mattingBusy = false;
@@ -1248,7 +1400,11 @@ export class AuthoringWorkspace {
     this.inputDraftRestoredProject = null; this.professionalInputs.clear();this.inputOriginVersions=null;this.characterGuiDraft = null; this.startupGuiDraft = null; this.languageGuiDraft = null; this.playerNameGuiDraft = null; this.productionGuiResume = null; this.recoveredForms = []; this.retainedInput = null;this.recoveryReviewed=false;
     this.characterDocumentIds = new Map(); this.characterHistory = new Map();
     this.publishGuiDraft=null;this.publishUnapplied=false;this.resourceProcessorGuiDraft=null;this.resourceProcessorUnapplied=false;
-    this.releaseIssues = []; this.issueReturn = null; this.outputFailure = undefined; this.pendingBuild = undefined;
+    this.releaseIssues = []; this.releaseCheckFailures = []; this.releaseCheckStale = false; this.releaseCheckIncomplete = false;
+    this.operationProblems.clear(); this.problemsState = { query: '', severity: 'all', selected: null, scrollTop: 0 };
+    this.ignoredProblemAttempts.clear(); this.hiddenImportBatches.clear(); this.retainedProductionFeedback = []; this.productionFeedbackSignature = '';
+    this.problemCheckIssue = null; this.engineReadIssue = null; this.problemsChecking = false; this.publishRecheck = null; this.releaseCheckKnown = false; this.releaseCheckedSource = '';
+    this.issueReturn = null; this.outputFailure = undefined; this.pendingBuild = undefined; this.selectedBuildProblem = null;
     this.connectionOrigin = null; this.connectionUnapplied = false; this.missingPlugin = null; this.projectCenterOrigin = null;
     this.resourceProcessorRoot?.unmount(); this.resourceProcessorRoot=null; this.resourceProcessorInspector.replaceChildren();
     this.production?.stop(); this.production = null; this.designer?.dispose(); this.designer = null; this.designerResume = null; this.miniStage?.dispose(); this.miniStage = null;
@@ -1262,17 +1418,17 @@ export class AuthoringWorkspace {
     for(const form of this.formDocuments.values())form.dispose?.(); this.formDocuments.clear(); this.productionUnapplied=false; this.insertions.clear(); this.recentObjects=[];this.cardRangeAnchor=null;this.treeCreateEditor=null; this.debugRouteIntent.clear(); this.characterSelected=undefined;this.characterAsset=null;this.characterSearch='';this.characterSectionRequest=null;
     this.documents = []; this.activeDocument = ''; this.sceneContexts.clear(); this.sceneViewContexts.clear(); this.scriptDraftOrigins.clear(); this.scriptReveal = null; this.writingDraftOrigin = null; this.composingSceneInputs.clear(); this.treeSelected = [];
     this.restoreSceneLayout();
-    this.playerNameEditor?.dispose();this.playerNameEditor = null; this.languageRoot?.unmount(); this.languageRoot=null; this.projectNode.replaceChildren(); this.characterRoot?.unmount(); this.characterRoot = null; this.characterDraft = false; this.graphRoot?.unmount(); this.graphRoot = null;
+    this.playerNameEditor?.dispose();this.playerNameEditor = null; this.languageRoot?.unmount(); this.languageRoot=null; this.projectNode.replaceChildren(); this.characterDraft = false; this.graphRoot?.unmount(); this.graphRoot = null;
     this.startupRoot?.unmount(); this.startupRoot = null; this.stopStartup?.(); this.stopStartup = null; this.startupDraft = false; this.startupGeneration++;
     this.effectEditor?.dispose(); this.effectEditor = null;
     await this.services.stopAssetPreview?.();
-    this.assetCache.clear(); this.selectedAssets.clear(); this.assetPage = null; this.assetRequestedRevision = undefined;
+    this.assetCache.clear(); this.selectedAssets.clear(); this.assetSelectionEpoch++; this.assetPage = null; this.assetRequestedRevision = undefined;
     this.assetQueryPending = false; this.assetQueryError = null;
     this.selectedDetails = null; this.missingSelected = []; this.focusedAssetId = null; this.assetVariants.clear();
     this.assetPreviewVersions.clear(); this.disposeAssetPreview(); this.assetInspectorPin = null;
     this.assetLibraryScroll = 0;
     this.assetRangeAnchor = null; this.assetReferenceOrigin = null; this.assetReferenceReturnFocus = null; this.assetRows.clear(); this.closeAssetBindDialog?.();
-    this.assetImportResults = [];
+    this.assetImportResults = []; this.assetBatchScope = null; this.assetImportHistoryOpen = false;
     this.selectedAtIndexRevision = null; this.queryAtSelection = null;
     this.assetQuery = { kind: null, text: '', offset: 0, limit: 40 };
     await this.studioPlugins?.dispose(); this.studioPlugins = null; this.services.assetUi = undefined; this.assetTypes = [];
@@ -1283,6 +1439,7 @@ export class AuthoringWorkspace {
     this.restoreAssetWorkspace();
     await this.restoreInputDraft();
     await this.resumeWorkbench(active);
+    } finally { this.switchingProject = previousSwitchingProject; this.startProblemMonitor(); }
   }
   private rememberScene(): void {
     if (this.controller.scene) this.sceneContexts.set(this.controller.scene.sceneId, { view: this.controller.view, selection: structuredClone(this.controller.selection), caret: { ...this.controller.caret }, scroll: { ...this.controller.scroll } });
@@ -1300,6 +1457,7 @@ export class AuthoringWorkspace {
     this.documentRegions.clear();
     this.retainedCompanions.clear();
     this.disposeCharacterRegions();
+    this.recoveringCharacterDrafts.clear();
     this.outlineQuery = workbench?.outline?.query ?? '';
     this.outlineScrollTop = workbench?.outline?.scrollTop ?? 0;
     const source = this.controller.source;
@@ -1322,6 +1480,31 @@ export class AuthoringWorkspace {
   }
   private restoreWorkbenchDocuments(): AuthorDocument | undefined {
     const workbench = this.controller.workbench;
+    const problems = workbench?.problems;
+    if (problems) {
+      const { query, severity, selected, scrollTop, showIgnored, expanded } = problems;
+      this.problemsState = { query, severity, selected, scrollTop, showIgnored, expanded };
+      problems.ignoredAttempts.forEach(key => this.ignoredProblemAttempts.add(key));
+      problems.hiddenImportBatches?.forEach(key => this.hiddenImportBatches.add(key));
+      problems.operations?.forEach(record => this.operationProblems.set(record.id, structuredClone(record)));
+      for (const { key, source, ...saved } of problems.saveFailures ?? []) {
+        if (this.controller.saveFailures.has(key)) continue;
+        const failure = structuredClone(saved);
+        this.controller.saveFailures.set(key, failure);
+        if (source) this.saveProblemSources.set(failure, source);
+      }
+      if (this.controller.saveFailures.size) this.controller.status.save = 'failed';
+      this.retainedProductionFeedback = (problems.productionFeedback ?? []).map(normalizeProductionFeedback);
+      this.productionFeedbackSignature = JSON.stringify(this.retainedProductionFeedback);
+      this.outputFailure = problems.outputFailure;
+      if (problems.release) {
+        this.releaseCheckKnown = true;
+        this.releaseIssues = problems.release.issues;
+        this.releaseCheckFailures = problems.release.failures;
+        this.releaseCheckStale = true;
+        this.releaseCheckIncomplete = problems.release.state === 'failed' || problems.release.state === 'checking';
+      }
+    }
     this.output = workbench?.output ?? { scrollTop: 0 };
     this.outputNode.scrollTop = 0;
     this.projectCenterOrigin = workbench?.projectCenterOrigin ?? null;
@@ -1331,11 +1514,36 @@ export class AuthoringWorkspace {
     return this.documents.find(document => document.id === active)
       ?? (active.startsWith('plugin-document:') ? { id: active, kind: 'route', objectId: 'plugins', title: active } : undefined);
   }
+  private adoptLegacyCharacterDocuments(): void {
+    const source = this.controller.source, session = this.characterGuiDraft;
+    if (!source) return;
+    const legacy = this.documents.some(document => document.kind === 'characters');
+    if (!session && !legacy) return;
+    const selected = session?.selected;
+    const byId = new Map(this.documents.filter(document => document.kind !== 'characters').map(document => [document.id, document]));
+    for (const id of new Set([...(legacy ? [selected] : []), ...Object.keys(session?.drafts ?? {})].filter((id): id is Id => Boolean(id)))) {
+      const character = source.characters.find(character => character.id === id), draft = session?.drafts[id];
+      const documentId = `character:${id}`;
+      if (!byId.has(documentId)) byId.set(documentId, { id: documentId, kind: 'character', objectId: id, title: character?.name ?? draft?.name ?? id });
+    }
+    this.documents = [...byId.values()];
+    if (this.activeDocument === 'characters' && selected && byId.has(`character:${selected}`)) this.activeDocument = `character:${selected}`;
+    if (validLayout(this.dockLayout)) {
+      const replacement = selected ? `character:${selected}` : authoringDockTools.empty;
+      for (const group of allGroups(this.dockLayout)) {
+        group.tabs = group.tabs.map(id => id === 'characters' ? replacement : id);
+        if (group.active === 'characters') group.active = replacement;
+      }
+      this.dockLayout.kept = this.dockLayout.kept.map(id => id === 'characters' ? replacement : id);
+    }
+    this.characterDraft = Object.keys(session?.drafts ?? {}).length > 0;
+  }
   private missingDocument(document: Pick<AuthorDocument, 'kind' | 'objectId'> | undefined): boolean {
     const source = this.controller.source;
     if (!source || !document) return false;
     return document.kind === 'scene' && !source.scenes.some(scene => scene.sceneId === document.objectId)
       || document.kind === 'character' && !source.characters.some(character => character.id === document.objectId)
+        && !(document.objectId && this.recoveringCharacterDrafts.has(document.objectId) && this.characterGuiDraft?.drafts[document.objectId] && !this.characterGuiDraft.bases?.[document.objectId])
       || document.kind === 'page' && Boolean(document.objectId && this.designer?.hasWorkbenchPage(document.objectId) === false);
   }
   private async openCharacterDifference(id: Id): Promise<void> {
@@ -1353,6 +1561,13 @@ export class AuthoringWorkspace {
     this.dock.current?.focusView(`scene:${id}`);
   }
   private async resumeWorkbench(active: AuthorDocument | undefined): Promise<void> {
+    if (this.activeDocument === 'characters') {
+      this.activeDocument = '';
+      this.page = 'editor';
+      this.render();
+      this.dock.current?.open(authoringDockTools.characters);
+      return;
+    }
     const pluginId = this.activeDocument.startsWith('plugin-document:') ? this.activeDocument : active?.id.startsWith('plugin-document:') ? active.id : null;
     if (pluginId && !this.formDocuments.has(this.activeDocument)) {
       const plugin = this.documents.find(document => document.id === pluginId)
@@ -1390,17 +1605,169 @@ export class AuthoringWorkspace {
       ...(this.dockLayout ? { dockLayout: this.dockLayout } : {}),
       assets: this.captureAssetWorkspace(),
       output: this.output,
+      problems: this.captureProblems(),
       ...(this.projectCenterOrigin ? { projectCenterOrigin: this.projectCenterOrigin } : {}),
       ...(this.connectionOrigin ? { connectionOrigin: this.connectionOrigin } : {}),
     });
   }
+  private captureProblems(): ProblemResume {
+    return {
+      ...this.problemsState, ignoredAttempts: [...this.ignoredProblemAttempts], hiddenImportBatches: [...this.hiddenImportBatches],
+      operations: [...this.operationProblems.values()].map(({ action: _action, ...record }) => record),
+      saveFailures: [...this.controller.saveFailures].map(([key, failure]) => ({ key, ...failure,
+        ...(this.saveProblemSources.has(failure) ? { source: problemDocument(this.saveProblemSources.get(failure)!) } : {}),
+      })),
+      productionFeedback: this.retainedProductionFeedback,
+      ...(this.outputFailure?.issue ? { outputFailure: { ...this.outputFailure, issue: this.outputFailure.issue, cancelled: this.outputFailure.cancelled ?? false } } : {}),
+      ...(this.releaseCheckKnown ? { release: { issues: this.releaseIssues, failures: this.releaseCheckFailures,
+        state: this.releaseCheckIncomplete ? 'failed' as const : this.releaseCheckStale ? 'stale' as const : 'complete' as const } } : {}),
+    };
+  }
+  private releaseSourceIdentity(): string {
+    const source = this.controller.source;
+    return source ? JSON.stringify([source.projectRevision, source.projectSavedRevision, source.documentVersions, source.assetIndexRevision,
+      source.scenes.map(scene => [scene.documentId, scene.revision, scene.savedRevision])]) : '';
+  }
+  private problemReadFailure(error: unknown): Issue {
+    return { code: 'PROBLEMS_READ_FAILED', message: String(error), severity: 'error', owner: 'M01', related: [], actions: ['retry'] };
+  }
+  private stopProblemMonitor(): void {
+    this.problemMonitor?.stop(); this.problemMonitor = null;
+    for (const id of this.sourceToastIds) studioToasts.close(id);
+    this.sourceToastIds.clear(); this.sourceNoticeAttempts.clear();
+  }
+  private startProblemMonitor(): void {
+    if (this.disposed || this.problemMonitor || !this.controller.source) return;
+    const projectId = this.controller.source.project.projectId;
+    const bridge = this.services.bridge, production = workbenchBridge(bridge).production;
+    const monitor = new ProblemMonitor(projectId, {
+      imports: bridge.assets?.listImportBatches ? () => bridge.assets!.listImportBatches(projectId) : undefined,
+      production: production?.problemSnapshot ? () => production.problemSnapshot() : undefined,
+    }, () => {
+      if (this.problemMonitor !== monitor || this.disposed || this.controller.source?.project.projectId !== projectId) return;
+      for (const batch of monitor.imports) {
+        const existing = this.assetImportResults.find(report => report.id === batch.id);
+        if (existing) existing.result = assetImportBatchResult(batch);
+        else this.assetImportResults.push({ id: batch.id, result: assetImportBatchResult(batch) });
+        if (this.syncImportBatchScope(assetImportBatchResult(batch))) void this.showAssets();
+      }
+      this.notifySourceProblems();
+      this.render();
+    });
+    this.problemMonitor = monitor;
+    monitor.start();
+  }
+  private notifySourceProblems(): void {
+    const entries = this.problemEntries().filter(problem => problem.id.startsWith('import:') || problem.id.startsWith('production:') || problem.id.startsWith('production-feedback:') || problem.id.startsWith('problem-read:'));
+    const keys = (problem: WorkbenchProblem) => problem.attemptKeys ?? [`${problem.id}:${JSON.stringify(problem.issue)}`];
+    const liveReadKeys = new Set(entries.filter(problem => !problem.attemptKeys?.length).flatMap(keys));
+    for (const key of this.sourceNoticeAttempts) if ((key.startsWith('problem-read:') || key.startsWith('production-feedback:')) && !liveReadKeys.has(key)) this.sourceNoticeAttempts.delete(key);
+    const fresh = entries.filter(problem => !problem.ignored && keys(problem).some(key => !this.sourceNoticeAttempts.has(key)));
+    for (const problem of entries) keys(problem).forEach(key => this.sourceNoticeAttempts.add(key));
+    if (!fresh.length) return;
+    const locale = this.controller.preferences.locale, id = `${this.messageToastId}:sources:${crypto.randomUUID()}`;
+    this.sourceToastIds.add(id);
+    studioToasts.add({ id, title: fresh.length === 1 ? fresh[0]!.summary ?? issueText(fresh[0]!.issue, locale)
+      : tr(locale, `${fresh.length} 个任务或批次需要处理`, `${fresh.length} tasks or batches need attention`, `${fresh.length} 件のタスクに対応が必要です`),
+      type: fresh.some(problem => problem.issue.severity === 'error') ? 'error' : 'warning',
+      actionProps: { children: tr(locale, '查看问题', 'View problems', '問題を表示'), onClick: () => this.showProblems() },
+    });
+  }
+  private async openImportProblem(batchId: string): Promise<void> {
+    const projectId = this.controller.source?.project.projectId;
+    const batch = this.problemMonitor?.imports.find(batch => batch.id === batchId);
+    if (!batch) return;
+    this.hiddenImportBatches.delete(batchId);
+    if (!this.assetImportResults.some(report => report.id === batchId)) this.assetImportResults.push({ id: batchId, result: assetImportBatchResult(batch) });
+    await this.viewImportBatch(batchId);
+    if (this.disposed || projectId !== this.controller.source?.project.projectId) return;
+    this.issueReturn = 'problems'; this.render(); this.rememberWorkbench();
+    requestAnimationFrame(() => {
+      const report = this.root.querySelector<HTMLElement>(`[data-import-batch="${CSS.escape(batchId)}"]`);
+      report?.scrollIntoView({ block: 'nearest' }); report?.focus({ preventScroll: true });
+    });
+  }
+  private async openProductionProblem(target: ProductionFeedback['target'], feedbackKey?: string): Promise<void> {
+    const projectId = this.controller.source?.project.projectId;
+    const session = this.ensureProductionSession();
+    if (!session) return;
+    const feedback = feedbackKey ? session.feedback.find(record => record.key === feedbackKey) : undefined;
+    if (feedback?.surface === 'connections') {
+      if (this.page !== 'connections') await this.navigate('connections');
+      if (projectId !== this.controller.source?.project.projectId || session !== this.production || this.disposed || this.page !== 'connections') return;
+      session.revealFeedback(feedback.key);
+      this.issueReturn = 'problems'; this.render();
+      return;
+    }
+    if (!await this.openProductionWorkbench()) return;
+    const opened = await session.revealProblemRecord(target);
+    if (projectId !== this.controller.source?.project.projectId || session !== this.production || this.disposed) return;
+    if (feedbackKey) session.revealFeedback(feedbackKey);
+    if (!opened) { this.messageTone = 'info'; this.message = tr(this.controller.preferences.locale,
+      '原任务或草稿当前无法打开，已有输入和回执继续保留。', 'The original task or draft cannot be opened now. Your input and receipt are kept.', '元のタスクや下書きを現在開けません。入力と結果を保持しています。'); }
+    this.issueReturn = 'problems'; this.render();
+  }
+  private async recheckProblems(): Promise<void> {
+    if (this.problemsChecking || !this.controller.source) return;
+    const projectId = this.controller.source.project.projectId, monitor = this.problemMonitor;
+    this.problemsChecking = true; this.problemCheckIssue = null; this.sceneProblems();
+    try {
+      await Promise.all([this.controller.refresh(), this.refreshEngineHealth(), monitor?.refresh(), this.production?.refresh(true),
+        this.releaseCheckKnown ? this.publishRecheck?.() : undefined]);
+    } catch (error) {
+      if (projectId === this.controller.source?.project.projectId && !this.disposed) this.problemCheckIssue = this.problemReadFailure(error);
+    } finally {
+      if (projectId === this.controller.source?.project.projectId && !this.disposed && monitor === this.problemMonitor) {
+        this.problemsChecking = false; this.render(); this.rememberWorkbench();
+        if (this.problemEntries().some(problem => !problem.ignored && problem.issue.severity === 'error')) this.showProblems(true);
+      }
+    }
+  }
   private captureAssetWorkspace(): NonNullable<NonNullable<import('@galcraft/contracts').WorkspaceResume['workbench']>['assets']> {
+    if (this.assetBatchScope) return structuredClone(this.assetBatchScope.origin);
+    return this.captureCurrentAssetWorkspace();
+  }
+  private captureCurrentAssetWorkspace(): NonNullable<NonNullable<import('@galcraft/contracts').WorkspaceResume['workbench']>['assets']> {
     const previewIds = new Set(this.documents.filter(doc => doc.kind === 'asset' && !doc.preview).map(doc => doc.objectId));
     return { query: structuredClone(this.assetQuery), selectionQuery: structuredClone(this.queryAtSelection),
       selectedIds: [...this.selectedAssets], selectionRevision: this.selectedAtIndexRevision, primaryId: this.focusedAssetId,
       primaryVersions: [...this.assetVariants].map(([assetId, variantId]) => ({ assetId, variantId })),
       previewVersions: [...this.assetPreviewVersions].filter(([id]) => previewIds.has(id)).map(([assetId, variantId]) => ({ assetId, variantId })),
       inspectorPin: this.assetInspectorPin, scroll: this.assetLibraryScroll };
+  }
+  private async viewImportBatch(batchId: string): Promise<void> {
+    const batch = this.problemMonitor?.imports.find(batch => batch.id === batchId);
+    const result = batch ? assetImportBatchResult(batch) : this.assetImportResults.find(report => report.id === batchId)?.result;
+    if (!result?.batch || result.batch.id !== batchId || !result.succeededIds) return;
+    this.assetSelectionEpoch++;
+    const previous = this.assetBatchScope;
+    this.assetBatchScope = { id: batchId, origin: previous?.origin ?? this.captureCurrentAssetWorkspace(),
+      anchor: previous ? previous.anchor : this.assetRangeAnchor, focus: previous ? previous.focus : captureAuthoringFocus(this.root) };
+    this.hiddenImportBatches.delete(batchId);
+    this.assetQuery = { kind: null, text: '', offset: 0, limit: this.assetQuery.limit, assetIds: [...result.succeededIds] };
+    this.assetLibraryScroll = 0; this.assetPage = null; this.assetRows.clear();
+    this.dock.current?.openCombination([authoringDockTools.assetDirectory, authoringDockTools.assets, authoringDockTools.assetInspector], { focusOrder: [authoringDockTools.assets] });
+    await this.showAssets(); this.rememberWorkbench();
+  }
+  private async returnFromImportBatch(): Promise<void> {
+    const scope = this.assetBatchScope; if (!scope) return;
+    this.assetSelectionEpoch++;
+    const original = scope.origin;
+    this.assetBatchScope = null; this.assetQuery = structuredClone(original.query); this.queryAtSelection = structuredClone(original.selectionQuery);
+    this.selectedAssets = new Set(original.selectedIds); this.selectedAtIndexRevision = original.selectionRevision;
+    this.focusedAssetId = original.primaryId; this.assetInspectorPin = original.inspectorPin;
+    this.assetLibraryScroll = original.scroll; this.assetRangeAnchor = scope.anchor;
+    this.assetVariants.clear(); for (const { assetId, variantId } of original.primaryVersions) this.assetVariants.set(assetId, variantId);
+    for (const { assetId, variantId } of original.previewVersions) this.assetPreviewVersions.set(assetId, variantId);
+    this.assetPage = null; this.assetRows.clear(); this.selectedDetails = null;
+    await this.showAssets(); this.rememberWorkbench();
+    requestAnimationFrame(() => restoreAuthoringFocus(this.root, scope.focus));
+  }
+  private syncImportBatchScope(result: AssetImportResult): boolean {
+    if (!this.assetBatchScope || result.batch?.id !== this.assetBatchScope.id || !result.succeededIds) return false;
+    if (JSON.stringify(this.assetQuery.assetIds) === JSON.stringify(result.succeededIds)) return false;
+    this.assetQuery = { ...this.assetQuery, assetIds: [...result.succeededIds], indexRevision: null };
+    return true;
   }
   private restoreAssetWorkspace(): void {
     const assets = this.controller.workbench?.assets;
@@ -1753,12 +2120,11 @@ export class AuthoringWorkspace {
       return;
     }
     if (document.kind === 'characters') {
-      const characters = this.controller.source?.characters;
       const selected = this.characterSelected ?? this.characterGuiDraft?.selected;
-      const character = characters?.find(item => item.id === selected) ?? characters?.[0];
-      if (character && (!selected || character.id === selected || !this.characterGuiDraft?.drafts[selected])) {
-        document = { kind: 'character', objectId: character.id, title: character.name };
-      }
+      this.adoptLegacyCharacterDocuments();
+      if (!selected) { this.documents = this.documents.filter(document => document.kind !== 'characters'); this.dock.current?.open(authoringDockTools.characters); this.render(); return; }
+      const character = this.controller.source?.characters.find(item => item.id === selected);
+      document = { kind: 'character', objectId: selected, title: character?.name ?? this.characterGuiDraft?.drafts[selected]?.name ?? selected };
     }
     const id = document.id ?? (document.kind === 'scene' || document.kind === 'page' || document.kind === 'asset' || document.kind === 'character' ? `${document.kind}:${document.objectId}` : document.kind);
     if (id !== this.activeDocument && this.activeDocument.startsWith('page:')) this.designer?.stopBehaviorPreview();
@@ -1812,6 +2178,7 @@ export class AuthoringWorkspace {
       const characterId = document.objectId ?? this.characterSelected ?? source.characters[0]?.id;
       const owner = listed.value.find(item => `characters/${characterId}.json` in item.files);
       const documentId = owner?.documentId ?? (characterId ? this.characterDocumentIds.get(characterId) : undefined);
+      if (characterId && owner) this.characterDocumentIds.set(characterId, owner.documentId);
       return documentId ? { documentId } : null;
     }
     if (document.kind === 'page') { const documentId = this.designer?.workbenchDocumentId(document.objectId); return documentId && listed.value.some(item => item.documentId === documentId) ? { documentId } : null; }
@@ -1830,7 +2197,10 @@ export class AuthoringWorkspace {
       content: createElement(SaveChangeList, { files, documents: plan.preview, locale, context: 'discard' }),
       confirmLabel: tr(locale, '放弃修改并关闭', 'Discard and close', '変更を破棄して閉じる'),
       confirm: async () => { const applied = await bridge.applyDiscard!(plan.planId); if (!applied.ok) throw new Error(applied.error.message); await this.controller.acceptExternalEdit(applied.value, scope.documentId);
-        if (document.kind === 'startup') { this.stopStartup?.(); this.startupRoot?.unmount(); this.startupRoot = null; this.startupDraft = false; }
+        if (document.kind === 'startup') {
+          this.stopStartup?.(); this.startupRoot?.unmount(); this.startupRoot = null;
+          this.startupDraft = false; this.startupGuiDraft = null; this.persistInputDraft();
+        }
         if (document.kind === 'character' || document.kind === 'characters') {
           const characterId = document.objectId ?? this.characterSelected ?? this.controller.source?.characters[0]?.id;
           if (characterId && this.characterGuiDraft) { delete this.characterGuiDraft.drafts[characterId]; delete this.characterGuiDraft.bases?.[characterId]; }
@@ -1879,10 +2249,18 @@ export class AuthoringWorkspace {
         this.render();
       } else if (document.dirty || pageDraft) {
         const saveAndClose = async () => {
+          if (document.kind === 'character' && document.objectId && this.recoveringCharacterDrafts.has(document.objectId)
+            && !this.controller.source?.characters.some(character => character.id === document.objectId)) {
+            flushSync(() => { this.characterDocument(document.objectId!); });
+            const input = this.characterInputs.get(document.objectId);
+            if (!input || input.isComposing?.() || !await input.applyCurrent()) { resolve(false); return; }
+          }
           const scope = await this.discardScope(document);
           if (!scope) throw new Error('当前文档的保存范围不可用');
           this.documentConfirm = null; this.render();
-          await this.save(false, scope.documentId, scope.objectId);
+          await this.save(false, scope.documentId, scope.objectId, document.id);
+          if (document.kind === 'character' && this.characterGuiDraft?.drafts[document.objectId!]) { resolve(false); return; }
+          if (this.currentUnappliedInput(scope.documentId, document, false)) { resolve(false); return; }
           const bridge = this.services.bridge.documents;
           if (scope.objectId) {
             const listed = await bridge.list();
@@ -1895,7 +2273,7 @@ export class AuthoringWorkspace {
           }
           await finish();
         };
-        this.documentConfirm = { title: '关闭未保存的文档？', description: pageDraft ? '当前输入尚未应用。保留修改后可返回继续编辑；放弃会先展示当前对象及关联内容的实际范围。' : '修改保留在作品工作区；保存和放弃会先展示各自的完整净差异。', close: () => { this.documentConfirm = null; this.render(); resolve(false); }, actions: [{ label: '保留修改并关闭', run: () => finish(true) }, { label: '放弃修改并关闭', tone: 'danger', run: async () => { if (await this.discardDocument(document)) await finish(); } }, ...(!pageDraft ? [{ label: '保存并关闭', tone: 'primary' as const, run: saveAndClose }] : [])] }; this.render();
+        this.documentConfirm = { title: '关闭未保存的文档？', description: pageDraft ? '当前输入尚未应用。保留修改后可返回继续编辑；放弃会先展示当前对象及关联内容的实际范围。' : '修改保留在作品工作区；保存和放弃会先展示各自的完整净差异。', close: () => { this.documentConfirm = null; this.render(); resolve(false); }, actions: [{ label: '保留修改并关闭', run: () => finish(true) }, { label: '放弃修改并关闭', tone: 'danger', run: async () => { if (await this.discardDocument(document)) await finish(); } }, ...(!pageDraft || document.kind === 'character' || document.kind === 'startup' || document.id === 'project' ? [{ label: '保存并关闭', tone: 'primary' as const, run: saveAndClose }] : [])] }; this.render();
       } else void finish();
     });
   }  private async applyWorkbenchObject(edit: EditInput | string | null): Promise<string | void> {
@@ -2085,6 +2463,7 @@ export class AuthoringWorkspace {
   }
   private startupDocument(active: boolean): HTMLElement {
     const source = this.controller.source; if (!source) return this.startupNode;
+    const inputNode = this.startupNode;
     this.startupRoot ??= createRoot(this.startupNode);
     flushSync(() => this.startupRoot!.render(createElement(StartupEditor, { project: source.project, guiDraft:this.startupGuiDraft,onGuiDraftChange:this.captureStartupGui, locale: this.controller.preferences.locale, assets: [...this.assetCache.values()], active, inspectorContainer: this.startupInspector, runtimeAssets: this.services.runtimeAssets,
       chooseAsset: async (field: StartupAssetField) => { const allowedKinds: AssetKind[] = field === 'splash' ? ['image', 'video'] : field === 'titleBackground' ? ['image'] : field === 'titleMusic' ? ['audio'] : ['video'];
@@ -2093,7 +2472,8 @@ export class AuthoringWorkspace {
       onChange: async display => { const current = this.controller.source; if (!current || current.project.projectId!==source.project.projectId) throw new Error('请返回此草稿所属作品后继续编辑。');
         const picked = (['splash', 'titleBackground', 'titleMusic', 'titleVideo'] as const).flatMap(key => display[key] && display[key] !== current.project.display[key] ? [display[key]!] : []);
         const error = await this.applyWorkbenchObject({ label: '修改启动与主页', origin: 'field', expected: [{ ref: { kind: 'document', id: current.projectDocumentId }, revision: current.projectRevision }], patches: [{ kind: 'json', documentId: current.projectDocumentId, changes: [{ path: '/data/display', before: current.project.display, after: display, op: 'set' }] }], preparedAssets: [], requiredRefs: picked.map(id => ({ kind: 'asset', id })) }); if (error) throw new Error(error); if (picked.length) await recordAssetsPicked(this.services, current.project.projectId, picked);
-      }, history: async action => { await this.shellAction(action); }, preview: (kind, host, display) => this.previewStartup(kind, host, display), onDraftChange: dirty => { this.startupDraft = dirty; this.documents = this.documents.map(document => document.kind === 'startup' ? { ...document, dirty: dirty || this.controller.source?.projectDirty } : document); this.refreshDocumentTabs(); },
+      }, registerInput: input => { if (input) this.startupInputs.set(inputNode, input); else this.startupInputs.delete(inputNode); },
+      preview: (kind, host, display) => this.previewStartup(kind, host, display), onDraftChange: dirty => { this.startupDraft = dirty; this.documents = this.documents.map(document => document.kind === 'startup' ? { ...document, dirty: dirty || this.controller.source?.projectDirty } : document); this.refreshDocumentTabs(); },
     }))); return this.startupNode;
   }
   private async refreshStudioPlugins(): Promise<void> {
@@ -2110,7 +2490,7 @@ export class AuthoringWorkspace {
     this.assetInspectorView && disposeAssetInspector(this.assetInspectorView.node); this.assetInspectorView = null;
     this.assetRows.clear();
     const catalog = await this.services.assetTypeCatalog?.(); if (catalog?.ok) this.assetTypes = catalog.value;
-    if (!result.ok) this.message = result.error.message;
+    if (!result.ok) { this.messageTone = result.error.severity; this.message = result.error.message; }
   }
   private pluginScope(): StudioScope {
     const selection = this.controller.selection, scene = this.controller.scene;
@@ -2162,7 +2542,7 @@ export class AuthoringWorkspace {
     const pending = this.unappliedInput(!creating);
     if (pending) { const abandon = await new Promise<boolean>(resolve => { this.documentConfirm = { title: t('先处理未应用输入', 'Resolve unapplied input', '未適用の入力を確認'), description: t(`${pending}的输入尚未应用。返回可继续编辑；放弃后仍会审阅作品的未保存修改。`, `${pending} has unapplied input. Cancel to keep editing, or discard it and review unsaved project changes.`, `${pending}に未適用の入力があります。キャンセルして編集を続けるか、入力を破棄して作品の未保存の変更を確認してください。`), close: () => { this.documentConfirm = null; this.render(); resolve(false); }, actions: [{ label: t('放弃未应用输入并继续', 'Discard input and continue', '入力を破棄して続行'), tone: 'danger', run: () => { this.documentConfirm = null; resolve(true); } }] }; this.render(); }); if (!abandon) return 'cancel';
       if (this.startupDraft) { this.startupRoot?.unmount(); this.startupRoot = null; this.startupDraft = false; this.stopStartup?.(); }
-      if (this.characterDraft) { this.characterRoot?.unmount(); this.characterRoot = null; this.characterDraft = false; }
+      if (this.characterDraft) { this.disposeCharacterRegions(); this.characterGuiDraft = null; this.characterDraft = false; }
       if(this.designer?.hasAnimationDraft())this.designer.discardAnimationDraft();
       this.designer?.discardStyleDrafts(); this.playerNameEditor?.discard(); this.languageEditor.current?.discard();
       this.insertions.clear();
@@ -2289,26 +2669,78 @@ export class AuthoringWorkspace {
     if (!this.notice(result)) return false;
     this.scriptDrafts.delete(sceneId); this.scriptDraftOrigins.delete(sceneId); return true;
   }
-  private async save(all: boolean, documentId: Id | null = null, objectId?: Id): Promise<void> {
+  private async save(all: boolean, documentId: Id | null = null, objectId?: Id, targetViewId?: string): Promise<void> {
+    const savingProject = this.controller.source?.project.projectId;
     const inspectorScene = !all && !documentId ? this.fixedInspectorEditScene() : null;
     const asset = all || inspectorScene ? null : documentId ? (objectId ? { documentId, objectId, pendingInput: false } : null) : this.assetEditTarget();
-    const active = this.documents.find(document => document.id === this.activeDocument);
+    const active = this.documents.find(document => document.id === (targetViewId ?? this.activeDocument));
     const activeScene = this.followedScene();
     const locale = this.controller.preferences.locale;
-    if (inspectorScene) {
-      documentId = inspectorScene.documentId;
-      if (!await (this.controller.scene?.documentId === documentId ? this.flushScript() : this.flushSceneScriptDraft(inspectorScene.sceneId))) return;
-    } else if (asset && !asset.pendingInput) documentId = asset.documentId;
-    else {
+    if (!all && !documentId && active?.kind === 'character' && active.objectId && this.recoveringCharacterDrafts.has(active.objectId)
+      && !this.controller.source?.characters.some(character => character.id === active.objectId)) {
+      flushSync(() => { this.characterDocument(active.objectId!); });
+      const input = this.characterInputs.get(active.objectId);
+      if (!input || input.isComposing?.() || !await input.applyCurrent()) return;
+    }
+    // Freeze the intent before consulting input adapters. M02 still owns the
+    // necessary associations and the final disk scope.
+    if (!all) {
+      documentId ??= inspectorScene?.documentId ?? asset?.documentId
+        ?? (active ? (await this.discardScope(active))?.documentId ?? null : activeScene?.documentId ?? null);
+      if (savingProject !== this.controller.source?.project.projectId) return;
+      if (!documentId) {
+        if (asset) { this.messageTone = 'warning'; this.message = tr(locale, '素材索引不可用，当前素材尚未保存。', 'The asset index is unavailable. The current asset is still unsaved.', '素材インデックスを利用できません。現在の素材は未保存です。'); this.render(); }
+        return;
+      }
+    }
+    const characterId = !all && !asset && documentId ? Object.entries(this.controller.source?.characterDocuments ?? {})
+      .find(([, owner]) => owner.documentId === documentId)?.[0] ?? [...this.characterDocumentIds].find(([, owner]) => owner === documentId)?.[0] : undefined;
+    const targetDocument = targetViewId ? active : !all && documentId ? this.documents.find(document =>
+      document.kind === 'character' && document.objectId === characterId
+      || document.kind === 'scene' && this.controller.source?.scenes.find(scene => scene.sceneId === document.objectId)?.documentId === documentId)
+      ?? (documentId === this.controller.source?.projectDocumentId ? active : undefined) : active;
+    if (all) {
       await this.playerNameEditor?.waitForApply();
       if(this.publishUnapplied){await this.navigate('publish');this.revealInspector();this.messageTone='info';this.message=tr(this.controller.preferences.locale,'发行配置尚未应用。先点击“应用发行配置”，再保存全部。','Release settings are unapplied. Choose Apply release settings, then Save all.','配布設定が未適用です。「配布設定を適用」を選択してからすべて保存してください。');this.render();return;}
       const pending = this.unappliedInput();
       if (pending) { this.messageTone = 'error'; this.message = `${pending}仍有未应用输入。请返回该文档应用有效内容后保存。`; for(const form of this.formDocuments.values()){if(form.dirty()){const status=form.node.querySelector<HTMLElement>(':scope > [role="status"]');if(status)status.textContent=this.message;}} this.render(); return; }
       if (!await this.flushScript()) return;
+    } else if (characterId) {
+      // Explicit close-save may target a different visible split document.
+      // Mount its existing single-object editor, retaining every other draft.
+      flushSync(() => { this.characterDocument(characterId); });
+      const input = this.characterInputs.get(characterId);
+      if (input?.isComposing?.()) return;
+      if (input && !await input.applyCurrent()) {
+        if (this.activeDocument !== `character:${characterId}`) await this.openDocument({ kind: 'character', objectId: characterId });
+        requestAnimationFrame(() => {
+          const node = this.characterRegions.get(characterId)?.node;
+          const field = node?.querySelector<HTMLElement>('.character-profile-name .character-error') ? node.querySelector<HTMLElement>('.character-profile-name input') : node?.querySelector<HTMLElement>('[role="alert"]');
+          field?.focus();
+        });
+        return;
+      }
+      if (!input && this.characterGuiDraft?.drafts[characterId]) return;
+    } else {
+      if (targetDocument?.id === 'project') {
+        flushSync(() => { this.projectDocument(); });
+        if (this.languageEditor.current?.isComposing() || this.playerNameEditor?.isComposing()) return;
+        if (this.languageEditor.current && !await this.languageEditor.current.applyCurrent()) return;
+        if (this.playerNameEditor && !await this.playerNameEditor.applyCurrent()) return;
+      } else if (targetDocument?.kind === 'startup') {
+        flushSync(() => { this.startupDocument(this.activeDocument === targetDocument.id); });
+        const input = this.startupInputs.get(this.startupNode);
+        if (!input || input.isComposing() || !await input.applyCurrent()) return;
+      }
+      const pending = this.currentUnappliedInput(documentId!, targetDocument, Boolean(asset?.pendingInput));
+      if (pending) {
+        this.messageTone = 'error'; this.message = tr(locale, `${pending}仍有未应用输入。请先在该文档应用有效内容。`, `${pending} has unapplied input. Apply valid input in that document first.`, `${pending}に未適用の入力があります。その文書で有効な入力を適用してください。`);
+        this.render(); return;
+      }
+      const scene = this.controller.source?.scenes.find(scene => scene.documentId === documentId);
+      if (scene && !await (this.controller.scene?.documentId === documentId ? this.flushScript() : this.flushSceneScriptDraft(scene.sceneId))) return;
     }
-    if (!all && !asset && !documentId) {
-      documentId = active ? (await this.discardScope(active))?.documentId ?? null : activeScene?.documentId ?? null;
-    }
+    if (savingProject !== this.controller.source?.project.projectId) return;
     if (asset && !asset.documentId) {
       this.messageTone = 'warning'; this.message = tr(locale, '素材索引不可用，当前素材尚未保存。', 'The asset index is unavailable. The current asset is still unsaved.', '素材インデックスを利用できません。現在の素材は未保存です。');
       this.render(); return;
@@ -2316,12 +2748,24 @@ export class AuthoringWorkspace {
     if (!all && !documentId) return;
     const scope: SaveReviewScope = asset ? { kind: 'objects', objects: [{ kind: 'asset', documentId: asset.documentId!, objectId: asset.objectId }] }
       : all ? { kind: 'all' } : { kind: 'current', documentId: documentId! };
-    const sourceView = asset ? `asset:${asset.objectId}` : inspectorScene ? `scene:${inspectorScene.sceneId}` : this.activeDocument;
-    const savingProject = this.controller.source?.project.projectId;
+    const sourceView = asset ? `asset:${asset.objectId}` : inspectorScene ? `scene:${inspectorScene.sceneId}` : targetDocument?.id ?? this.activeDocument;
+    const sourceDocument: AuthorDocument | undefined = this.documents.find(document => document.id === sourceView)
+      ?? (asset ? { id: sourceView, kind: 'asset', objectId: asset.objectId, title: this.assetCache.get(asset.objectId)?.name ?? this.t('assets') }
+        : inspectorScene ? { id: sourceView, kind: 'scene', objectId: inspectorScene.sceneId, title: this.controller.source?.scenes.find(scene => scene.sceneId === inspectorScene.sceneId)?.name ?? this.t('editor') } : undefined);
+    const retainSaveSource = (result: Extract<Result<unknown>, { ok: false }>) => {
+      if (sourceDocument) for (const failure of this.controller.saveFailures.values())
+        if (failure.issues.some(issue => issue === result.error || result.issues.includes(issue))) this.saveProblemSources.set(failure, sourceDocument);
+    };
     const listed = await this.services.bridge.documents.list();
-    if (!this.notice(listed)) return;
-    const plan = await this.services.bridge.documents.planSave(revisionedSaveReviewScope(scope, listed.value));
-    if (!this.notice(plan)) return;
+    if (!listed.ok) {
+      this.controller.recordSaveFailure(listed, scope.kind === 'objects' ? { ...scope, expected: [] } : scope);
+      retainSaveSource(listed);
+    }
+    if (!this.notice(listed, undefined, 'save:prepare')) return;
+    const saveScope = revisionedSaveReviewScope(scope, listed.value);
+    const plan = await this.services.bridge.documents.planSave(saveScope);
+    if (!plan.ok) { this.controller.recordSaveFailure(plan, saveScope); retainSaveSource(plan); }
+    if (!this.notice(plan, undefined, 'save:prepare')) return;
     const name = (id: Id) => {
       const scene = this.controller.source?.scenes.find(item => item.documentId === id);
       if (scene) return scene.name;
@@ -2333,9 +2777,11 @@ export class AuthoringWorkspace {
       return readableDocument(listed.value.find(item => item.documentId === id)?.files ?? {}, this.controller.preferences.locale);
     };
     if (!plan.value.files.length) {
+      this.controller.reconcileCleanSave(scope.kind === 'objects' ? { ...scope, expected: listed.value.filter(document => scope.objects.some(object => object.documentId === document.documentId))
+        .map(document => ({ ref: { kind: 'document' as const, id: document.documentId }, revision: document.revision })) } : scope, listed.value, plan.value);
       await this.controller.refresh({ documents: listed.value }); await this.designer?.refresh(); this.render();
       studioToasts.add({ title: asset ? tr(locale, '当前素材没有待保存的修改', 'No changes to save for this asset', '現在の素材に保存する変更はありません')
-        : tr(locale, all ? '当前没有待保存的修改' : '当前文档没有待保存的修改', all ? 'No changes to save' : 'No changes to save in this document', all ? '保存する変更はありません' : '現在の文書に保存する変更はありません') }); return;
+        : tr(locale, all ? '当前没有待保存的修改' : '当前文档没有待保存的修改', all ? 'No changes to save' : 'No changes to save in this document', all ? '保存する変更はありません' : '現在の文書に保存する変更はありません'), type: 'info' }); return;
     }
     const names = Object.fromEntries(listed.value.map(document => [document.documentId, name(document.documentId)]));
     const commit = async (savePlan: SavePlan) => {
@@ -2346,9 +2792,11 @@ export class AuthoringWorkspace {
           if (this.outputFailure?.kind === 'save') this.outputFailure = undefined;
         } else {
           this.outputFailure = { kind: 'save', id: savePlan.planId, issue: result.error, cancelled: false };
+          retainSaveSource(result);
         }
         this.renderOutput();
         this.rememberWorkbench();
+        this.render();
       }
       if (!result.ok && result.error.code === 'EXTERNAL_CONFLICT') {
         const api = this.services.bridge.documents, rows = await api.getConflict(savePlan.planId); if (!rows.ok) throw new Error(rows.error.message);
@@ -2374,6 +2822,16 @@ export class AuthoringWorkspace {
       }); },
     });
   }
+  private currentUnappliedInput(documentId: Id, target: AuthorDocument | undefined, assetPending: boolean): string | null {
+    if (assetPending) return target?.title ?? this.t('assets');
+    for (const [id, form] of this.formDocuments)
+      if (form.dirty() && (form.scope?.documentId === documentId || id === target?.id)) return this.documents.find(item => item.id === id)?.title ?? id;
+    if (target?.kind === 'page' && this.designer?.workbenchHasDraft(target.objectId ?? '')) return target.title;
+    if (target?.kind === 'startup' && this.startupDraft) return target.title;
+    if (target?.id === 'route:publish' && this.publishUnapplied) return target.title;
+    if (target?.id === 'project' && (this.languageEditor.current?.dirty || this.playerNameEditor?.dirty)) return target.title;
+    return null;
+  }
   private unappliedInput(includeProjectDraft = true, includePublish = true): string | null { if(includePublish&&this.publishUnapplied)return tr(this.controller.preferences.locale,"作品发行配置","Work release configuration","作品の配布設定"); if(this.resourceProcessorUnapplied)return tr(this.controller.preferences.locale,"资源处理参数","Resource processing input","素材処理の入力"); if(includeProjectDraft && this.projectCreateUnapplied)return tr(this.controller.preferences.locale,"新建作品","New project","新規作品"); if(this.productionUnapplied) return tr(this.controller.preferences.locale,'制作文档','Production document','制作文書'); for (const insertion of this.insertions.values()) if(insertion.dirty()) return tr(this.controller.preferences.locale,'待插入内容','Pending insertion','挿入待ちの内容'); for (const [id,form] of this.formDocuments) if(form.dirty())return this.documents.find(item=>item.id===id)?.title??'未应用文档'; return this.languageEditor.current?.dirty ? tr(this.controller.preferences.locale,'作品语言','Project languages','作品の言語') : this.playerNameEditor?.dirty ? '主角姓名' : this.startupDraft ? '启动与主页' : this.characterDraft ? '角色与路线' : this.designer?.hasAnimationDraft() ? tr(this.controller.preferences.locale,'界面动画','Interface animation','UIアニメーション') : Object.keys(this.designer?.capture().styleDrafts ?? {}).length ? 'CSS / SCSS' : null; }
   private async inspectSelected(show = false): Promise<boolean> {
     if (!this.services.describeAssets || !this.selectedAssets.size || !this.assetPage) return false;
@@ -2384,7 +2842,7 @@ export class AuthoringWorkspace {
     if (show || this.missingSelected.length) mountSelectedAssetsSheet({ items: this.selectedDetails,
       missing: this.missingSelected.map(id => ({ id, name: this.assetCache.get(id)?.name })),
       visibleIds: this.assetPage.items.map(item => item.id), locale: this.controller.preferences.locale,
-      removeMissing: ids => { ids.forEach(id => this.selectedAssets.delete(id)); this.missingSelected = [];
+      removeMissing: ids => { this.assetSelectionEpoch++; ids.forEach(id => this.selectedAssets.delete(id)); this.missingSelected = [];
         this.selectedAtIndexRevision = this.assetPage?.indexRevision ?? null;
         if (!this.selectedAssets.size) { this.selectedAtIndexRevision = null; this.queryAtSelection = null; }
         this.refreshAssetSelection(); },
@@ -2401,22 +2859,26 @@ export class AuthoringWorkspace {
       `${this.selectedAssets.size} selected · ${visibleSelected} on page · ${this.selectedAssets.size - visibleSelected} elsewhere`,
       `${this.selectedAssets.size} 件選択 · このページ ${visibleSelected} · その他 ${this.selectedAssets.size - visibleSelected}`)); summary.hidden = !this.selectedAssets.size; selected.append(summary);
     selected.hidden = !this.selectedAssets.size && !this.assetPage?.total;
-    selected.append(button(this.t('selectPage'), () => { this.assetPage?.items.forEach(asset => this.selectedAssets.add(asset.id));
+    selected.append(button(this.t('selectPage'), () => { this.assetSelectionEpoch++; this.assetPage?.items.forEach(asset => this.selectedAssets.add(asset.id));
       this.selectedAtIndexRevision = this.assetPage?.indexRevision ?? null; this.queryAtSelection = { ...this.assetQuery }; this.render(); }));
     selected.append(button(this.t('selectAll'), async () => { const { offset, limit, ...query } = this.assetQuery, projectId = this.controller.source?.project.projectId;
+      const epoch = ++this.assetSelectionEpoch;
       const ids = await this.services.allAssetIds?.(query);
-      if (projectId === this.controller.source?.project.projectId && ids && this.notice(ids)) {
+      if (epoch === this.assetSelectionEpoch && projectId === this.controller.source?.project.projectId && ids && this.notice(ids)) {
       ids.value.ids.forEach(id => this.selectedAssets.add(id)); this.selectedAtIndexRevision = ids.value.indexRevision;
       this.queryAtSelection = { ...query, offset, limit }; this.render(); } }));
     selected.append(button(tr(locale, '查看所选', 'Inspect selected', '選択項目を確認'), async () => { await this.inspectSelected(true); }, 'asset-inspect-selected'));
+    if (this.focusedAsset) selected.append(el('span', 'asset-primary-summary', tr(locale, `当前主对象：${this.focusedAsset.name}`, `Primary: ${this.focusedAsset.name}`, `主対象：${this.focusedAsset.name}`)));
     if (this.selectedAtIndexRevision !== null && this.assetPage && this.selectedAtIndexRevision !== this.assetPage.indexRevision)
       selected.append(button(tr(locale, '重新核对所选', 'Recheck selected', '選択項目を再確認'), async () => { this.selectedAtIndexRevision = this.assetPage!.indexRevision; await this.inspectSelected(true); }));
     selected.append(button(tr(locale, '批量命名', 'Batch rename', '一括名前変更'), () => this.renameSelected()));
     selected.append(button(tr(locale, '移除所选', 'Remove selected', '選択項目を削除'), () => this.removeSelected()));
-    selected.append(button(this.t('clear'), () => { this.selectedAssets.clear(); this.selectedDetails = null; this.missingSelected = [];
+    selected.append(button(this.t('clear'), () => { this.assetSelectionEpoch++; this.selectedAssets.clear(); this.selectedDetails = null; this.missingSelected = [];
       this.queryAtSelection = null; this.selectedAtIndexRevision = null; this.render(); }));
     if (!this.selectedAssets.size) for (const control of [...selected.querySelectorAll('button')].slice(2)) control.hidden = true;
     for (const control of [...selected.querySelectorAll('button')].slice(0, 2)) control.disabled = !this.assetPage?.total;
+    const actions = el('details', 'asset-bulk-actions'); actions.append(el('summary', '', tr(locale, '批量操作', 'Bulk actions', '一括操作')));
+    actions.append(...selected.querySelectorAll('button')); selected.append(actions);
     const missing = this.missingSelected.filter(id => this.selectedAssets.has(id)).length;
     if (missing) {
       const status = el('span', 'field-help', tr(locale, `已勾选素材中 ${missing} 项缺失，请重新核对所选。`, `${missing} checked assets are missing. Recheck the selection.`, `チェックした素材のうち ${missing} 件が見つかりません。選択を再確認してください。`));
@@ -2609,7 +3071,7 @@ export class AuthoringWorkspace {
         choosePreviewTarget: () => chooseAnimationPreviewTarget(this.services, locale),
         onGenerate: request => this.createAnimationWithAi(request.mode === 'new' ? request : { ...request, assetId: asset.id, assetRevision: revision }),
         onDraftChange: next => { dirty = next; this.documents = this.documents.map(document => document.id === id ? { ...document, dirty: next || this.controller.source?.anyDirty } : document); this.refreshDocumentTabs(); }, onChange: async next => { await save(asset.name, next); value = next; }, onSave: save })); };
-      const reload = async () => { checking = true; try { const current = await this.services.getAsset?.(asset.id); if (!current?.ok || !current.value || disposed) return; revision = current.value.revision; indexRevision = this.controller.source?.assetIndexRevision; if (variantId === current.value.activeVariantId) return; const lease = await this.services.runtimeAssets?.resolveRuntime(asset.id, current.value.activeVariantId); if (!lease?.ok) return; try { const next = NativeAnimationSchema.parse(await (await fetch(lease.value.uri)).json()); if (!disposed) { value = next; variantId = current.value.activeVariantId; this.assetCache.set(asset.id, current.value); draw(); } } finally { await this.services.runtimeAssets?.releaseRuntime(lease.value.leaseId); } } catch (reason) { if (!disposed) { this.message = String(reason); this.updateStatus(); } } finally { checking = false; } };
+      const reload = async () => { checking = true; try { const current = await this.services.getAsset?.(asset.id); if (!current?.ok || !current.value || disposed) return; revision = current.value.revision; indexRevision = this.controller.source?.assetIndexRevision; if (variantId === current.value.activeVariantId) return; const lease = await this.services.runtimeAssets?.resolveRuntime(asset.id, current.value.activeVariantId); if (!lease?.ok) return; try { const next = NativeAnimationSchema.parse(await (await fetch(lease.value.uri)).json()); if (!disposed) { value = next; variantId = current.value.activeVariantId; this.assetCache.set(asset.id, current.value); draw(); } } finally { await this.services.runtimeAssets?.releaseRuntime(lease.value.leaseId); } } catch (reason) { if (!disposed) { this.messageTone = 'error'; this.message = String(reason); this.updateStatus(); } } finally { checking = false; } };
       draw(); this.openFormDocument(id, asset.name, container, () => dirty, () => { disposed = true; root.unmount(); }, draw);
       const form = this.formDocuments.get(id)!;
       form.capture = () => asJson({ kind: 'animationAsset', assetId: asset.id, gui: this.professionalInputs.get(id) });
@@ -2662,6 +3124,7 @@ export class AuthoringWorkspace {
   }
   private selectAsset(id: Id, event?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): void {
     const visible = this.assetPage?.items.map(asset => asset.id) ?? [];
+    if (event?.shiftKey || event?.ctrlKey || event?.metaKey) this.assetSelectionEpoch++;
     if (event?.shiftKey && this.assetRangeAnchor && visible.includes(this.assetRangeAnchor)) { const from = visible.indexOf(this.assetRangeAnchor), to = visible.indexOf(id); for(const key of visible.slice(Math.min(from,to),Math.max(from,to)+1))this.selectedAssets.add(key); }
     else if (event?.ctrlKey || event?.metaKey) { this.selectedAssets.has(id) ? this.selectedAssets.delete(id) : this.selectedAssets.add(id); this.assetRangeAnchor=id; }
     else { this.assetRangeAnchor = id; void this.focusAsset(id); return; }
@@ -2688,6 +3151,7 @@ export class AuthoringWorkspace {
     return this.assetDirectory.node;
   }
   private changeAssetQuery(changes: Partial<AssetQuery>): void {
+    if (Object.keys(changes).some(key => !['offset', 'limit', 'sort', 'direction'].includes(key))) this.assetSelectionEpoch++;
     this.assetQuery = { ...this.assetQuery, offset: 0, ...changes };
     this.assetLibraryScroll = 0;
     this.rememberWorkbench();
@@ -2837,11 +3301,11 @@ export class AuthoringWorkspace {
   private async removeAssetBackground(asset: Asset): Promise<void> {
     if (!this.services.removeBackground || asset.kind !== 'image') return;
     if (this.mattingBusy) return;
-    if (this.mattingCandidate) { this.message = '请先采用或取消当前透明版本候选'; this.render(); return; }
+    if (this.mattingCandidate) { this.messageTone = 'warning'; this.message = '请先采用或取消当前透明版本候选'; this.render(); return; }
     const epoch = this.assetProjectEpoch;
     const declared = await this.ask('透明化预期：removed / unchanged / unknown', 'unknown');
     if (declared === null || epoch !== this.assetProjectEpoch) return;
-    if (!['removed', 'unchanged', 'unknown'].includes(declared)) { this.message = '请选择有效预期'; this.render(); return; }
+    if (!['removed', 'unchanged', 'unknown'].includes(declared)) { this.messageTone = 'warning'; this.message = '请选择有效预期'; this.render(); return; }
     this.mattingBusy = true;
     let result: Awaited<ReturnType<NonNullable<AuthoringServices['removeBackground']>>>;
     try {
@@ -2857,7 +3321,7 @@ export class AuthoringWorkspace {
     if (result.value.preparationId && result.value.previewUri) this.mattingCandidate = { assetId: asset.id,
       preparationId: result.value.preparationId, previewUri: result.value.previewUri,
       references: result.value.references ?? [], selectedSourceKeys: new Set() };
-    else this.message = result.value.status === 'needsReview' ? '需要人工检查素材；未采用透明版本' : result.value.status;
+    else { this.messageTone = result.value.status === 'needsReview' ? 'warning' : 'info'; this.message = result.value.status === 'needsReview' ? '需要人工检查素材；未采用透明版本' : result.value.status; }
     this.render();
     if (this.mattingCandidate) this.dock.current?.open(authoringDockTools.assets);
   }
@@ -2968,11 +3432,11 @@ export class AuthoringWorkspace {
       await this.openDocument({ kind: 'character', objectId: characterId, title: character.name });
       if (this.activeDocument !== `character:${characterId}`) return false;
       if (source.field === '/data/avatar') requestAnimationFrame(() => {
-        const field = this.characterNode.querySelector<HTMLElement>('[data-character-default-avatar]');
+        const field = this.characterRegions.get(characterId)?.node.querySelector<HTMLElement>('[data-character-default-avatar]');
         field?.focus(); field?.scrollIntoView({ block: 'nearest' });
       });
       if (source.field?.startsWith('/data/groups/')) requestAnimationFrame(() => {
-        const groups = this.characterNode.querySelector<HTMLDetailsElement>('.character-asset-section');
+        const groups = this.characterRegions.get(characterId)?.node.querySelector<HTMLDetailsElement>('.character-asset-section');
         if (groups) { groups.open = true; groups.querySelector('summary')?.focus(); }
       });
     } else return unavailable();
@@ -3021,6 +3485,64 @@ export class AuthoringWorkspace {
   }
   private requestCharacterSection(characterId: Id, section: NonNullable<CharacterManagerProps['sectionRequest']>['section'], differenceId?: Id): void {
     this.characterSectionRequest = { characterId, section, differenceId, request: ++this.characterSectionSequence };
+  }
+  private characterReferenceButton(id: Id, sceneId: Id, statementId: Id | null, view: AuthoringController['view']): HTMLElement {
+    const name = this.controller.source?.characters.find(character => character.id === id)?.name ?? id;
+    const locale = this.controller.preferences.locale;
+    let focus: ReturnType<typeof captureAuthoringFocus> = null;
+    const trigger = button(tr(locale, `编辑${name}`, `Edit ${name}`, `${name}を編集`), () => {
+      const bookmark = focus ?? captureAuthoringFocus(this.root); focus = null;
+      return this.openCharacterReference(id, sceneId, statementId, view, bookmark);
+    }, 'authoring-character-reference');
+    trigger.dataset.characterReference = id;
+    trigger.addEventListener('pointerdown', () => { focus = captureAuthoringFocus(this.root); });
+    trigger.addEventListener('click', event => event.stopPropagation());
+    return trigger;
+  }
+  private async openCharacterReference(id: Id, sceneId: Id, statementId: Id | null, view: AuthoringController['view'], focus: ReturnType<typeof captureAuthoringFocus>): Promise<void> {
+    const source = this.controller.source;
+    const character = source?.characters.find(character => character.id === id);
+    const scene = source?.scenes.find(scene => scene.sceneId === sceneId);
+    if (!source || !character || !scene) return;
+    const context = structuredClone(this.scenePaneContext(sceneId, view));
+    if (statementId && !context.selection?.statementIds.includes(statementId)) {
+      context.selection = { documentId: scene.documentId, statementIds: [statementId], primaryId: statementId, textRange: null };
+      context.caret = { statementId, field: null, offset: 0, documentOffset: 0 };
+    }
+    const originDocument = this.documents.find(document => document.kind === 'scene' && document.objectId === sceneId)
+      ?? { id: `scene:${sceneId}`, kind: 'scene' as const, objectId: sceneId, title: scene.name };
+    await this.openDocument({ kind: 'character', objectId: id, title: character.name });
+    if (this.controller.source?.project.projectId !== source.project.projectId || this.activeDocument !== `character:${id}`) return;
+    const currentScene = this.controller.source.scenes.find(scene => scene.sceneId === sceneId);
+    if (!currentScene) return;
+    this.characterReferenceOrigins.set(id, { projectId: source.project.projectId, document: originDocument, sceneId, documentId: scene.documentId,
+      revision: currentScene.revision, statementId, view, context, focus });
+    this.render(); this.dock.current?.focusView(`character:${id}`);
+  }
+  private async returnToCharacterReference(id: Id): Promise<void> {
+    const origin = this.characterReferenceOrigins.get(id);
+    if (!origin) return;
+    const scene = this.controller.source?.scenes.find(scene => scene.sceneId === origin.sceneId && scene.documentId === origin.documentId);
+    if (origin.projectId !== this.controller.source?.project.projectId || !scene || scene.revision !== origin.revision
+      || origin.statementId && !parse({ documentId: scene.documentId, revision: scene.revision, text: scene.text }).cst.some(node => node.id === origin.statementId)) {
+      this.messageTone = 'warning'; this.message = tr(this.controller.preferences.locale, '原句来源已变化或失效。人物文档和输入继续保留，请从剧情目录查看当前内容。', 'The original line changed or is unavailable. This character document and input are kept. Open the current scene from Plot outline.', '元の文が変更されたか、利用できません。キャラクター文書と入力を保持しています。プロット一覧で現在の内容を確認してください。');
+      this.render(); return;
+    }
+    this.sceneContexts.set(origin.sceneId, { view: origin.view, ...structuredClone(origin.context) });
+    await this.openDocument(origin.document);
+    if (this.activeDocument !== origin.document.id) return;
+    this.controller.changeView(origin.view);
+    this.controller.selection = structuredClone(origin.context.selection);
+    this.controller.caret = { ...origin.context.caret }; this.controller.scroll = { ...origin.context.scroll };
+    this.characterReferenceOrigins.delete(id); this.render(); this.dock.current?.focusView(origin.document.id);
+    requestAnimationFrame(() => {
+      restoreAuthoringFocus(this.root, origin.focus);
+      if (!this.root.contains(document.activeElement)) {
+        const pane = this.root.querySelector<HTMLElement>(`[data-view="${CSS.escape(origin.document.id)}"] [data-scene-view="${origin.view}"]`);
+        const row = origin.statementId ? pane?.querySelector<HTMLElement>(`[data-statement-id="${CSS.escape(origin.statementId)}"]`) : pane;
+        row?.querySelector<HTMLElement>(`[data-character-reference="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+      }
+    });
   }
   private bindAssetDifference(asset: Asset, variantId: Id, suggestedCharacterId?: Id): void {
     const source = this.controller.source;
@@ -3125,14 +3647,69 @@ export class AuthoringWorkspace {
     else return;
     this.issueReturn = origin; this.render();
   }
-  private notice<T>(result: Result<T>, recovery?: { label: string; run(): void }): result is Extract<Result<T>, { ok: true }> {
+  private showProblems(automatic = false): void {
+    this.dock.current?.open(authoringDockTools.problems, { focus: !automatic });
+  }
+  private contextActions(): { label: string; run(): void }[] {
+    const locale = this.controller.preferences.locale, actions: { label: string; run(): void }[] = [];
+    const target = this.issueReturn;
+    if (target) actions.push({ label: target === 'publish' ? tr(locale, '返回发布检查', 'Return to release check', '配布チェックへ戻る') : tr(locale, '返回问题', 'Return to Problems', '問題に戻る'), run: () => {
+      this.issueReturn = null;
+      if (target === 'publish') void this.navigate('publish');
+      else { this.render(); this.showProblems(); }
+    } });
+    if (this.assetReferenceOrigin) actions.push({ label: tr(locale, '返回素材', 'Return to assets', '素材に戻る'), run: () => { void this.returnToAssetReferenceOrigin(); } });
+    const characterId = this.activeDocument.startsWith('character:') ? this.activeDocument.slice('character:'.length) : null;
+    if (characterId && this.characterReferenceOrigins.has(characterId)) actions.push({ label: tr(locale, '返回原句', 'Return to original line', '元の文に戻る'), run: () => { void this.returnToCharacterReference(characterId); } });
+    return actions;
+  }
+  private problemGroup(issue: Issue): string {
+    const source = this.controller.source;
+    return source?.scenes.find(scene => scene.documentId === issue.source?.documentId)?.name
+      ?? this.documents.find(document => document.id === this.activeDocument)?.title
+      ?? source?.project.name ?? this.t('problems');
+  }
+  private retainProblem(key: string, issue: Issue, recovery?: { label: string; run(): void }): void {
+    const document = this.documents.find(document => document.id === this.activeDocument);
+    const locale = this.controller.preferences.locale;
+    const action = recovery ?? (issue.source || issue.owner === 'M11' || issue.code.startsWith('ENGINE_') || issue.owner === 'M09' && issue.details ? {
+      label: tr(locale, '定位问题', 'Locate issue', '問題へ移動'), run: () => { void this.locateProblem(issue); },
+    } : document ? {
+      label: tr(locale, '打开来源', 'Open source', '参照元を開く'), run: () => { void this.openDocument(document).then(() => { this.issueReturn = 'problems'; this.render(); }); },
+    } : undefined);
+    if (!document) return;
+    this.operationProblems.set(key, { id: key, attemptId: crypto.randomUUID(), issue: structuredClone(issue), group: this.problemGroup(issue),
+      source: { kind: 'document', document: problemDocument(document) }, action });
+    this.rememberWorkbench();
+  }
+  private retainModelProblem(issue: Issue): void {
+    const locale = this.controller.preferences.locale;
+    this.operationProblems.set('model:background-removal', {
+      id: 'model:background-removal', issue: structuredClone(issue), group: tr(locale, '本机去背', 'Local background removal', 'ローカル背景除去'),
+      attemptId: crypto.randomUUID(), source: { kind: 'model' },
+      action: { label: tr(locale, '打开本机去背', 'Open local background removal', 'ローカル背景除去を開く'), run: () => {
+        this.assetToolsOpen = true;
+        void this.openAssetWorkspace().then(() => { this.issueReturn = 'problems'; this.render(); });
+      } },
+    });
+    this.rememberWorkbench();
+  }
+  private notice<T>(result: Result<T>, recovery?: { label: string; run(): void }, scope?: string): result is Extract<Result<T>, { ok: true }> {
     if (!result.ok) {
-      this.messageTone = result.error.severity; this.noticeText = '';
+      this.messageTone = result.error.severity;
       this.message = issueText(result.error, this.controller.preferences.locale);
       this.noticeIssue = structuredClone(result.error); this.noticeRecovery = recovery;
       this.noticeAsset = result.error.code === 'ASSET_REFERENCED' ? [...this.assetCache.values()].find(asset => result.error.message.includes(asset.id))?.id ?? null : null;
+      if (this.controller.source && scope && !scope.startsWith('save:')) {
+        const assetId = this.noticeAsset;
+        this.retainProblem(scope, result.error,
+          recovery ?? (assetId ? { label: tr(this.controller.preferences.locale, '查看引用', 'View references', '参照を表示'), run: () => { void this.findAssetReferences(assetId); } } : undefined));
+      }
+      this.noticeHasProblem = Boolean(this.controller.source && scope);
+      if (scope) this.rememberWorkbench();
       this.render(); return false;
     }
+    if (scope && this.operationProblems.delete(scope)) this.rememberWorkbench();
     this.message = ''; this.noticeAsset = null; this.messageTone = 'info'; return true;
   }
   async showAssets(): Promise<void> {
@@ -3200,6 +3777,7 @@ export class AuthoringWorkspace {
   }
   render(): void {
     if(this.disposed)return;
+    if (this.releaseCheckKnown && this.releaseCheckedSource && this.releaseCheckedSource !== this.releaseSourceIdentity()) this.releaseCheckStale = true;
     if (this.composingSceneInputs.size) { this.deferredSceneRender = true; return; }
     if (this.controller.source && (this.controller.source.assetIndexRevision ?? null) !== this.assetRequestedRevision) void this.showAssets();
     void this.reportAuthoringDrafts();
@@ -3241,7 +3819,7 @@ export class AuthoringWorkspace {
     let portals = document.getElementById('studio-portals');
     if (!portals) { portals = el('div'); portals.id = 'studio-portals'; document.body.append(portals); installTransientScrollbars(portals); observeFormHints(portals); }
     portals.dataset.theme = this.controller.preferences.theme; portals.lang = locale;
-    const routes = [['projects',tr(locale,'项目中心','Project center','作品センター'),'folder'],['editor',this.t('editor'),'edit'],['assets',this.t('assets'),'image'],['production',tr(locale,'制作','Produce','制作'),'spark'],['collaboration',tr(locale,'协作活动','Collaboration activity','連携アクティビティ'),'collaboration'],['pages',designerText('页面',locale),'layout'],['plugins',tr(locale,'插件','Plugins','拡張'),'package'],['connections',tr(locale,'连接','Connections','接続'),'collaboration'],['maintenance',tr(locale,'作品维护','Project maintenance','作品メンテナンス'),'folder'],['publish',tr(locale,'发布','Publish','公開'),'publish']] as const;
+    const routes = [['projects',tr(locale,'作品中心','Project center','作品センター'),'folder'],['editor',this.t('editor'),'edit'],['assets',this.t('assets'),'image'],['production',tr(locale,'制作','Produce','制作'),'spark'],['pages',tr(locale,'页面搭建','Page building','ページ制作'),'layout'],['collaboration',tr(locale,'协作活动','Collaboration activity','連携アクティビティ'),'collaboration'],['plugins',tr(locale,'插件','Plugins','拡張'),'package'],['connections',tr(locale,'连接','Connections','接続'),'collaboration'],['maintenance',tr(locale,'作品维护','Project maintenance','作品メンテナンス'),'folder'],['publish',tr(locale,'发布','Publish','公開'),'publish']] as const;
     const railItems: RailItem[] = routes.map(([page,label,icon]) => ({key:page,label,icon,current:this.page===page,disabled:page!=='projects'&&!this.controller.source}));
     const extensions = this.studioPlugins?.workbenches() ?? [];
     if (this.controller.source && extensions.length) {
@@ -3253,19 +3831,6 @@ export class AuthoringWorkspace {
     const content = this.page === 'production' ? this.productionDocument
       : el('div', 'studio-content' + (isSupportPage(this.page) ? ' workbench-route-host' : '') + (routeChanged ? ' route-enter' : ''));
     if (this.studioPlugins?.loadError) { const error = el('p', 'workbench-error', this.studioPlugins.loadError); error.setAttribute('role', 'alert'); content.append(error); }
-    if (this.message && !this.noticeIssue) { const notice = el('div', 'authoring-notice'); notice.dataset.tone = this.messageTone; notice.setAttribute('role', this.messageTone === 'error' ? 'alert' : 'status');
-      const dismiss = button('', () => { this.message = ''; this.noticeText=''; this.render(); }); dismiss.ariaLabel = tr(locale, '关闭提示', 'Dismiss notification', '通知を閉じる'); dismiss.append(actionIcon('close'));
-      if (this.noticeText !== this.message) { this.noticeText = this.message; this.noticeExpires = Date.now() + 5000; }
-      if (this.noticeTimer) clearTimeout(this.noticeTimer);
-      const dismissLater = (delay: number) => { this.noticeTimer = setTimeout(() => { this.message = ''; this.noticeText = ''; notice.animate([{opacity:1},{opacity:0}],{duration:140}).finished.then(() => notice.remove()); }, delay); };
-      if (!this.preparingModel && this.messageTone !== 'error') dismissLater(Math.max(0, this.noticeExpires - Date.now()));
-      const pause = () => { if (this.noticeTimer) clearTimeout(this.noticeTimer); };
-      notice.onpointerenter = pause; notice.addEventListener('focusin', pause);
-      const resume = () => { if (this.messageTone !== 'error') dismissLater(5000); }; notice.onpointerleave = resume; notice.addEventListener('focusout', resume);
-      const assetId = this.noticeAsset;
-      if (assetId) notice.append(button(tr(locale, '查看引用', 'View references', '参照を表示'),
-        () => this.findAssetReferences(assetId)));
-      notice.append(actionIcon(this.messageTone === 'success' ? 'check' : 'info'), el('span', '', this.message), dismiss); content.append(notice); }
     if (this.page === 'projects') content.append(this.projects());
     const unavailableDocument = this.documents.find(item => item.id === this.activeDocument && this.missingDocument(item));
     if (this.page === 'editor' && !unavailableDocument) content.append(this.editor());
@@ -3285,6 +3850,7 @@ export class AuthoringWorkspace {
     if (this.page === 'pages' || this.pageDirectoryRequested && this.controller.source) { if (!this.designer) { this.designer = new PageDesigner(this.services, async (receipt, refresh) => { if (receipt) await this.controller.acceptExternalEdit(receipt, undefined, refresh); else await this.controller.refresh(); this.refreshDesignerWorkbench(); }, locale, this.designerResume,
       scope => { this.designerResume=this.designer!.capture();void this.openPageUiAssets(scope); }, this.studioPlugins?.componentDefinitions() ?? [], (key, title) => { if (this.activeDocument === 'startup' || this.formDocuments.has(this.activeDocument)) return; const document: AuthorDocument = { id: `page:${key}`, kind: 'page', objectId: key, title }; this.documents = openAuthorDocument(this.documents, document); this.activeDocument = document.id; this.render(); }, () => this.save(false), source => { void this.navigate('editor').then(()=>this.locateIssue(source)); }, () => this.controller.scene&&this.controller.selection?.primaryId?{documentId:this.controller.scene.documentId,revision:this.controller.scene.revision,statementId:this.controller.selection.primaryId}:null,()=>this.refreshDesignerWorkbench(),()=>{void this.reportAuthoringDrafts();});
       this.designer.configureWorkbench({ showDirectory: () => this.dock.current?.open(authoringDockTools.pageDirectory),
+        openStyle: style => { void this.openDocument({ kind: 'page', objectId: `@style:${style.id}`, title: style.name }); },
         showOutline: () => this.dock.current?.open(authoringDockTools.pageOutline), changed: () => this.render(), remember: () => this.rememberWorkbench() });
       this.designer.restoreWorkbenchViews(this.controller.workbench?.pageViews ?? []);
       startDesigner = true;
@@ -3344,23 +3910,45 @@ export class AuthoringWorkspace {
           },
           onProjectChanged: () => this.refreshCollaborationProject() }), this.supportNodes.get('maintenance')!, 'maintenance'),
         visit('publish') && createPortal(createElement(Publish, {
+          onRecheckReady: check => { this.publishRecheck = check; },
           onHistoryReady: this.setPublishHistory, key: this.publishDraftRevision, guiDraft: this.publishGuiDraft, onGuiDraftChange: this.capturePublishGui,
           services: this.services, source, locale, changed, onUnappliedChange: this.setPublishUnapplied, saveAll: () => this.save(true), documentActive: this.page === 'publish',
           openProjectMaintenance: () => { void this.navigate('maintenance'); },
           locateSource: target => { void this.locateIssue(target, 'publish'); },
           locateDependency: issue => { void this.locateProblem(issue, 'publish'); },
-          onCheckIssues: issues => { if (this.controller.source?.project.projectId === projectId) { this.releaseIssues = issues; this.render(); } },
+          onCheckIssues: (issues, state = 'complete') => {
+            if (this.controller.source?.project.projectId !== projectId) return;
+            this.releaseCheckKnown = true;
+            if (state === 'complete') this.releaseCheckedSource = this.releaseSourceIdentity();
+            if (state === 'complete') { this.releaseIssues = issues; this.releaseCheckFailures = []; this.releaseCheckStale = false; this.releaseCheckIncomplete = false; }
+            else if (state === 'checking') this.releaseCheckIncomplete = true;
+            else if (state === 'stale') this.releaseCheckStale = true;
+            else { this.releaseCheckIncomplete = true; this.releaseCheckFailures = issues; }
+            this.render();
+            this.rememberWorkbench();
+            if ((state === 'complete' || state === 'failed') && issues.some(issue => issue.severity === 'error')) this.showProblems(true);
+          },
           onBuildStarted: planId => {
             if (this.controller.source?.project.projectId !== projectId) return;
             this.pendingBuild = planId;
+            this.buildAttemptId = crypto.randomUUID();
             if (this.outputFailure?.kind === 'build') this.outputFailure = undefined;
             this.renderOutput();
           },
           onBuildReceipt: (planId, receipt) => this.recordBuild(planId, receipt),
-          onBuildFailure: (planId, issue, cancelled) => {
+          onBuildFailure: (planId, issue, cancelled, target) => {
             if (this.controller.source?.project.projectId !== projectId) return;
             this.pendingBuild = undefined;
-            this.outputFailure = { kind: 'build', id: planId, issue, cancelled }; this.renderOutput();
+            this.outputFailure = { kind: 'build', id: planId, issue, cancelled };
+            if (!cancelled) {
+              this.operationProblems.set(`build:${target ?? 'current'}`, { id: `build:${target ?? 'current'}`, issue: structuredClone(issue),
+                attemptId: this.buildAttemptId || crypto.randomUUID(), source: { kind: 'build', planId, ...(target ? { target } : {}) },
+                group: tr(locale, '构建', 'Build', 'ビルド') + (target ? ` · ${target}` : ''),
+              });
+            }
+            this.render();
+            this.rememberWorkbench();
+            if (!cancelled) this.showProblems(true);
           },
           lastBuild: this.output.built,
         }), this.supportNodes.get('publish')!, 'publish'),
@@ -3419,7 +4007,7 @@ export class AuthoringWorkspace {
         documentContent = active.objectId === 'preferences' ? this.workbenchPreferences() : this.projectDocument();
         documentToolbar = null; inspector = el('section', 'authoring-inspector'); inspector.append(el('h2','',active.title),el('p','',active.objectId === 'preferences' ? '偏好保存在本机工作台。' : `${source?.project.name} · ${source?.project.engineVersion}`));
       }
-      if (active?.kind === 'character' || active?.kind === 'characters') { documentContent = this.characterDocument(active.objectId); documentToolbar = null; inspector = this.characterAsset ? createAssetInspector(this.characterAsset, { locale, rename: name => this.renameAsset(this.characterAsset!.id,name), preview: id => { void this.previewAsset(this.characterAsset!.id,id); }, reveal:()=>{void this.services.revealEntity({kind:'asset',id:this.characterAsset!.id});},transparent:()=>{void this.removeAssetBackground(this.characterAsset!);} }) : el('section','authoring-inspector',tr(locale,'选择差分、头像或声音素材查看属性。','Select a figure, portrait or voice asset to inspect.','差分、ポートレート、音声素材を選択してプロパティを表示します。')); }
+      if (active?.kind === 'character' && active.objectId) { documentContent = this.characterDocument(active.objectId); documentToolbar = null; inspector = this.characterAsset ? createAssetInspector(this.characterAsset, { locale, rename: name => this.renameAsset(this.characterAsset!.id,name), preview: id => { void this.previewAsset(this.characterAsset!.id,id); }, reveal:()=>{void this.services.revealEntity({kind:'asset',id:this.characterAsset!.id});},transparent:()=>{void this.removeAssetBackground(this.characterAsset!);} }) : el('section','authoring-inspector',tr(locale,'选择差分、头像或声音素材查看属性。','Select a figure, portrait or voice asset to inspect.','差分、ポートレート、音声素材を選択してプロパティを表示します。')); }
       if (active?.kind === 'scene-graph' && source) { this.graphRoot ??= createRoot(this.graphNode); this.graphRoot.render(createElement(SceneGraph, { source, activeSceneId: this.controller.scene?.sceneId ?? null, locale, expanded: true, onNavigate: (sceneId, statementId) => { void this.openDocument({ kind: 'scene', objectId: sceneId }).then(() => { if (statementId) this.controller.select([statementId]); this.render(); }); } })); documentContent = this.graphNode; documentToolbar = null;
         inspector = el('section', 'authoring-inspector'); inspector.append(el('h2', '', tr(locale, '场景关系', 'Scene relationships', 'シーン関係')), el('p', '', tr(locale, '选择节点进入场景，选择连线定位对应指令。虚线表示调用。', 'Select a node to edit its scene, or a connection to locate its command. Dashed lines are calls.', 'ノードでシーンを編集し、接続で命令へ移動します。破線は呼び出しです。')));
       }
@@ -3430,6 +4018,20 @@ export class AuthoringWorkspace {
     } else if (unavailableDocument) {
       documentContent = el('section', 'gc-dock-missing-view');
       documentContent.append(el('h2', '', unavailableDocument.title), el('p', '', tr(locale, '此对象暂不可用。恢复原对象，或从目录选择其他对象。', 'This item is unavailable. Restore it or choose another item from the directory.', 'この項目は利用できません。項目を復元するか、一覧から別の項目を選択してください。')));
+      const id = unavailableDocument.kind === 'character' ? unavailableDocument.objectId : undefined;
+      const draft = id && this.characterGuiDraft?.drafts[id];
+      if (id && draft) {
+        documentContent.append(el('h3', '', tr(locale, '保留的人物输入', 'Retained character input', '保持したキャラクター入力')), el('p', '', draft.name), el('p', '', draft.description));
+        const base = this.characterGuiDraft?.bases?.[id];
+        documentContent.append(el('p', '', base
+          ? tr(locale, '原人物已移除，输入仍在。恢复原人物后可继续编辑，也可展开完整输入进行复制。', 'The original character was removed. Your input is kept. Restore the original character to continue editing, or expand the retained input to copy it.', '元のキャラクターは削除されました。入力を保持しています。元の人物を復元すると編集を続行できます。詳細から入力をコピーできます。')
+          : tr(locale, '当前作品中没有此人物。继续恢复会使用原人物标识打开保留输入；应用时创建人物，保存后才写入磁盘。', 'This character is absent from the project. Continue with the retained input and original identity; Apply creates the character, and Save writes it to disk.', 'このキャラクターは作品にありません。元のIDで入力の復元を続行し、適用で作成、保存でディスクに書き込みます。')));
+        if (!base) documentContent.append(button(tr(locale, '继续恢复此人物草稿', 'Continue recovering this character draft', 'このキャラクター下書きの復元を続ける'), async () => {
+          this.recoveringCharacterDrafts.add(id); await this.openDocument(unavailableDocument);
+        }));
+        const details = el('details'); details.append(el('summary', '', tr(locale, '查看完整保留输入', 'View complete retained input', '保持した入力の詳細')), codeBlock(JSON.stringify(draft, null, 2), 'json', locale));
+        documentContent.append(details);
+      }
     } else if (this.page === 'pages' && this.designer) { const regions = this.designer.workbenchRegions(); if (!this.designer.workbenchIsPage(this.activeDocument.slice(5)) && this.designer.hasWorkbenchPage(this.activeDocument.slice(5)) === true) { explorer = regions.tree; inspector = regions.inspector; } if (this.activeDocument === 'startup') { documentContent = this.startupDocument(true); inspector = this.startupInspector; } }
     else if (this.page === 'production') {
       const title = tr(locale, '制作', 'Production', '制作');
@@ -3444,43 +4046,6 @@ export class AuthoringWorkspace {
     for (const slot of content.querySelectorAll<HTMLElement>(':scope > .studio-plugin-slot')) {
       inspector ??= el('aside', 'authoring-inspector'); inspector.append(slot);
     }
-    const noticeRegion = el('div');
-    if (this.controller.engineIssue && this.page !== 'maintenance') {
-      const notice = el('div', 'asset-reference-return');
-      notice.setAttribute('role', 'status');
-      notice.append(el('span', '', tr(locale, '作品只读 · 精确引擎不可用', 'Project read-only · Exact engine unavailable', '作品は読み取り専用 · エンジンを利用できません')),
-        button(tr(locale, '打开作品维护', 'Open project maintenance', '作品メンテナンスを開く'), () => this.navigate('maintenance')));
-      noticeRegion.append(notice);
-    }
-    if (this.issueReturn) {
-      const target = this.issueReturn;
-      const back = el('div', 'asset-reference-return');
-      back.append(button(target === 'publish' ? tr(locale, '返回发布检查', 'Return to release check', '配布チェックへ戻る') : tr(locale, '返回问题', 'Return to Problems', '問題に戻る'), async () => {
-        this.issueReturn = null;
-        if (target === 'publish') await this.navigate('publish');
-        else { this.render(); this.dock.current?.open(authoringDockTools.problems); }
-      }));
-      noticeRegion.append(back);
-    }
-    if (this.assetReferenceOrigin) {
-      const returnBar = el('div', 'asset-reference-return');
-      returnBar.append(button(tr(locale, '返回素材', 'Return to assets', '素材に戻る'), () => this.returnToAssetReferenceOrigin()));
-      noticeRegion.append(returnBar);
-    }
-    for (const notice of content.querySelectorAll<HTMLElement>(':scope > .authoring-notice,:scope > .workbench-error')) noticeRegion.append(notice);
-    const noticeAsset = this.noticeAsset;
-    const issueNotice = this.noticeIssue ? createElement(IssueNotice, {
-      issue: this.noticeIssue, locale, dismiss: () => { this.message = ''; this.render(); },
-      recovery: this.noticeRecovery ?? (noticeAsset ? {
-        label: tr(locale, '查看引用', 'View references', '参照を表示'),
-        run: () => { void this.findAssetReferences(noticeAsset); },
-      } : this.noticeIssue.source ? {
-        label: tr(locale, '定位问题', 'Locate issue', '問題へ移動'),
-        run: () => { void this.locateIssue(this.noticeIssue!.source!); },
-      } : undefined),
-    }) : undefined;
-    const notice = issueNotice && noticeRegion.childElementCount ? createElement('div', null, issueNotice, createElement(DomRegion, { node: noticeRegion }))
-      : issueNotice ?? (noticeRegion.childElementCount ? createElement(DomRegion, { node: noticeRegion }) : undefined);
     if (this.activeDocument !== 'startup' || this.page !== 'pages') { if (this.startupRoot) this.startupDocument(false); if (this.stopStartup) { this.startupGeneration++; this.stopStartup(); } }
     if (this.page === 'pages' && !this.documents.some(item => item.id === this.activeDocument && ['page', 'startup'].includes(item.kind))) { const capture = this.designer?.capture(); const key = capture?.page ?? 'title'; const document: AuthorDocument = { id: `page:${key}`, title: capture?.page ?? '页面', kind: 'page', objectId: key }; this.documents = openAuthorDocument(this.documents, document); this.activeDocument = document.id; }
     this.documents = this.documents.map(document => {
@@ -3511,6 +4076,7 @@ export class AuthoringWorkspace {
     this.root.dataset.authoringPilot = String(pilot); portals.dataset.authoringPilot = String(pilot);
     const actionFailed = (error: unknown) => { this.message = String(error); this.messageTone = 'error'; this.render(); };
     this.renderCharacterDirectory();
+    this.renderAuthoringToolbar();
     this.retainDocumentRegions(documentContent, documentToolbar);
     if (source) this.mountDockStage(source);
     const mainInspector = this.sceneInspector();
@@ -3543,13 +4109,14 @@ export class AuthoringWorkspace {
       characterTarget: source?.characters.some(character => character.id === this.characterSelected) ? this.characterSelected : undefined,
       onViewFocus: id => { if (id) { this.focusedWorkbenchTool = id; this.refreshCommandTarget(); } },
       chrome: { locale, theme: this.controller.preferences.theme, project: source?.project.name, dirty: this.workbenchDirty(), editTarget: this.workbenchEditTargetLabel(), historyUnavailable: this.workbenchHistoryUnavailable(),
-        items: railItems.filter(item => item.key !== 'assets' && item.key !== 'editor'), navigate: key => { void this.navigate(key as Page).catch(actionFailed); },
+        items: railItems.filter(item => item.key !== 'assets' && item.key !== 'editor').map(item => item.key === 'pages' ? { ...item, current: this.activeDocument.startsWith('page:') } : item),
+        navigate: key => { void (key === 'pages' ? this.openPageBuilding() : this.navigate(key as Page)).catch(actionFailed); },
         action: value => { void this.shellAction(value).catch(actionFailed); },
         preferences: value => { void this.preference(p => ({ ...p, ...value })); },
         preview: source ? () => { void this.runPlaytest('stage').catch(actionFailed); } : undefined },
-      documents: this.documents, active: this.activeDocument, content: documentContent, activateScenePane, beside, retainedCompanions: companions, toolbar: documentToolbar, explorer, search: this.sceneSearch(), stage: this.stageRegion, inspector: mainInspector, problems: this.sceneProblems(), output: this.renderOutput(), status, notice,
+      documents: this.documents, active: this.activeDocument, content: documentContent, activateScenePane, beside, retainedCompanions: companions, toolbar: documentToolbar, explorer, search: this.sceneSearch(), stage: this.stageRegion, inspector: mainInspector, problems: this.sceneProblems(), problemCount: this.problemEntries().filter(problem => !problem.ignored).length, output: this.renderOutput(), status,
       contextInspector: activeKind === 'character' && !this.characterAsset && !formDocument ? null : inspector,
-      dock: this.dock, dockLayout: this.dockLayout, dockNotice: message => { studioToasts.add({ title: message }); },
+      dock: this.dock, dockLayout: this.dockLayout, dockNotice: (message, type = 'info') => { studioToasts.add({ title: message, type }); },
       dockLayoutChange: layout => {
         this.dockLayout = asJson(JSON.parse(JSON.stringify(layout))); this.rememberWorkbench();
         requestAnimationFrame(() => {
@@ -3568,7 +4135,7 @@ export class AuthoringWorkspace {
       },
       layout: this.controller.preferences.layout, inspectorShown: this.inspectorShown, selected: this.treeSelected, contextSelected: this.activeDocument === 'startup' ? ['startup'] : this.page === 'pages' && this.designer ? [this.designer.workbenchPage(), ...this.designer.capture().selected] : [], select: ids => { this.treeSelected = ids; this.render(); }, open: document => this.openDocument(document), pin: id => { this.documents = this.documents.map(document => document.id === id ? { ...document, preview: false } : document); this.refreshDocumentTabs(); }, close: id => this.closeDocument(id),
       rename: async (id, name) => { if (!await this.flushScript() || !this.controller.source) return '当前输入尚未应用'; return this.applyWorkbenchObject(renameWorkbenchObject(this.controller.source, id, name)); },
-      move: async (ids, parent, index) => { if (!await this.flushScript() || !this.controller.source) return; const error = await this.applyWorkbenchObject(moveWorkbenchObjects(this.controller.source, ids, parent, index)); if (error) { this.message = error; this.render(); } }, create: (kind, parent) => this.createWorkbenchObject(kind, parent),
+      move: async (ids, parent, index) => { if (!await this.flushScript() || !this.controller.source) return; const error = await this.applyWorkbenchObject(moveWorkbenchObjects(this.controller.source, ids, parent, index)); if (error) { this.messageTone = 'error'; this.message = error; this.render(); } }, create: (kind, parent) => this.createWorkbenchObject(kind, parent),
       entryPresentation: (kind, id) => { void this.openEntryPresentation(kind, id); },
       sceneDecor: id => { void this.openEntryPresentation('scene', id, undefined, true); },
       reorder: ids => {
@@ -3589,8 +4156,8 @@ export class AuthoringWorkspace {
     requestAnimationFrame(()=>{if(focusRenderSequence===this.focusRenderSequence){markAuthoringFocus(this.root);if(document.activeElement===document.body)restoreAuthoringFocus(this.root,focus);}});
     this.updateStatus();
     this.rememberWorkbench();
-    if (startDesigner && this.designer) { const designer = this.designer; void designer.start().then(async () => { if (this.designer !== designer) return; const active=this.documents.find(d=>d.id===this.activeDocument); if(active?.kind==='page'&&active.objectId)await designer.openPage(active.objectId); this.render(); }).catch(error => { this.message = String(error); this.render(); }); }
-    else if (refreshDesigner && this.designer) void this.designer.refresh().then(() => this.render()).catch(error => { this.message = String(error); this.render(); });
+    if (startDesigner && this.designer) { const designer = this.designer; void designer.start().then(async () => { if (this.designer !== designer) return; const active=this.documents.find(d=>d.id===this.activeDocument); if(active?.kind==='page'&&active.objectId)await designer.openPage(active.objectId); this.render(); }).catch(error => { this.messageTone = 'error'; this.message = String(error); this.render(); }); }
+    else if (refreshDesigner &&this.designer) void this.designer.refresh().then(() => this.render()).catch(error => { this.messageTone = 'error'; this.message = String(error); this.render(); });
     const thumbnailGeneration = ++this.thumbnailGeneration;
     if (this.controller.source) {
       void this.loadThumbnails(thumbnailGeneration);
@@ -3813,7 +4380,7 @@ export class AuthoringWorkspace {
       const locale = this.controller.preferences.locale;
       const message = pending ? tr(locale,'脚本正在编辑，移出编辑区后更新预览。','Editing script; leave the editor to update the preview.','スクリプト編集中。編集欄を離れるとプレビューを更新します。')
         : pinned && (!this.sceneForSource(sourceTarget) || sourceTarget?.statementId && !target) ? tr(locale, '固定舞台来源已失效。', 'The pinned stage source is unavailable.', '固定した舞台の出典を利用できません。')
-        : !animation && !sourceTarget ? tr(locale, '打开场景文档以恢复舞台跟随。', 'Open a scene document to resume stage following.', 'シーン文書を開くと舞台の追従を再開します。') : undefined;
+        : !animation && !sourceTarget ? '' : undefined;
       stage.update(JSON.stringify([source.project.projectId, source.projectRevision, source.scenes.map(scene => [scene.sceneId, scene.revision]), source.characters.map(character=>character.afterstory), target, message, this.fieldPreview, edit && target?.sceneId === edit.sceneId && target.statementId === edit.statementId ? edit.draft : null]), target, message);
     };
     update(this.miniStage, this.fixedStageSource ?? this.followedStageSource(), Boolean(this.fixedStageSource));
@@ -3829,7 +4396,10 @@ export class AuthoringWorkspace {
        ...([['save',this.t('save'),'Ctrl+S'],['saveAll',t('保存全部','Save all','すべて保存'),'Ctrl+Shift+S'],['undo',this.t('undo'),'Ctrl+Z'],['redo',this.t('redo'),'Ctrl+Shift+Z'],['preferences',t('工作台偏好','Workbench preferences','ワークスペース設定'),''],['publish',t('检查与发行','Check and publish','検証と公開'),''],['cards',this.t('cards'),''],['writing',this.t('writing'),''],['script',this.t('script'),'']] as const).map(([id,label,shortcut]) => ({id,label,shortcut,detail: ['save', 'undo', 'redo'].includes(id) ? targetLabel : undefined,group:t('应用命令','Application commands','アプリのコマンド'),disabled:id === 'preferences' ? undefined : projectReason ?? (id === 'undo' || id === 'redo' ? historyUnavailable : undefined),run:()=>this.shellAction(id)})),
       {id:'project-settings',label:t('作品设置','Project settings','作品設定'),group:t('应用命令','Application commands','アプリのコマンド'),disabled:projectReason,run:()=>this.openDocument({kind:'project',title:t('作品设置','Project settings','作品設定')})},
        {id:'startup-home',label:t('启动与主页','Startup & home','起動とホーム'),disabled:projectReason,run:()=>this.openDocument({kind:'startup'}),group:t('工作面','Workspaces','作業スペース')},
-       {id:'project-center',label:t('项目中心','Project center','作品センター'),run:()=>this.navigate('projects'),group:t('工作面','Workspaces','作業スペース')},
+       {id:'page-building',label:t('页面搭建','Page building','ページ制作'),disabled:projectReason,run:()=>this.openPageBuilding(),group:t('工作面','Workspaces','作業スペース')},
+       {id:'production',label:t('制作','Production','制作'),disabled:projectReason,run:()=>this.navigate('production'),group:t('工作面','Workspaces','作業スペース')},
+       {id:'scene-graph',label:t('场景关系图','Scene graph','シーン関係図'),disabled:projectReason,run:()=>this.openDocument({kind:'scene-graph',title:t('场景关系图','Scene graph','シーン関係図')}),group:t('工作面','Workspaces','作業スペース')},
+       {id:'project-center',label:t('作品中心','Project center','作品センター'),run:()=>this.navigate('projects'),group:t('工作面','Workspaces','作業スペース')},
        {id:'project-maintenance',label:t('作品维护','Project maintenance','作品メンテナンス'),disabled:projectReason,run:()=>this.navigate('maintenance'),group:t('工作面','Workspaces','作業スペース')},
        {id:'connections',label:t('连接','Connections','接続'),disabled:projectReason,run:()=>this.navigate('connections'),group:t('工作面','Workspaces','作業スペース')},
        {id:'plugins',label:t('插件','Plugins','プラグイン'),disabled:projectReason,run:()=>this.navigate('plugins'),group:t('工作面','Workspaces','作業スペース')},
@@ -3874,7 +4444,7 @@ export class AuthoringWorkspace {
     if (action === 'save' || action === 'saveAll') return this.save(action === 'saveAll');
     if (action === 'undo' || action === 'redo') {
       const historyUnavailable = this.workbenchHistoryUnavailable();
-      if (historyUnavailable) { studioToasts.add({ title: historyUnavailable }); return; }
+      if (historyUnavailable) { studioToasts.add({ title: historyUnavailable, type: 'info' }); return; }
       const inspectorScene = this.fixedInspectorEditScene();
       if (!await (inspectorScene && inspectorScene.documentId !== this.controller.scene?.documentId
         ? this.flushSceneScriptDraft(inspectorScene.sceneId) : this.flushScript())) return;
@@ -3882,12 +4452,14 @@ export class AuthoringWorkspace {
       if (!inspectorScene && this.page === 'pages' && this.designer && this.activeDocument !== 'startup' && !this.formDocuments.get(this.activeDocument)?.scope) { await this.designer.history(action); return; }
       const scope = inspectorScene ? { documentId: inspectorScene.documentId } : await this.activeHistoryScope();
       if (!scope) return;
+      const projectId = this.controller.source?.project.projectId;
       const result = await this.controller[action](scope);
+      if (projectId !== this.controller.source?.project.projectId || this.disposed) return;
       if (!result.ok && result.error.code === 'HISTORY_CANCELLED') return;
       if (!result.ok && ['NOTHING_TO_UNDO','NOTHING_TO_REDO'].includes(result.error.code)) {
-        studioToasts.add({title: tr(this.controller.preferences.locale,action === 'undo' ? '当前范围没有可撤销的修改' : '当前范围没有可恢复的修改',action === 'undo' ? 'No changes to undo in this scope' : 'No changes to redo in this scope',action === 'undo' ? 'この範囲に元に戻す変更はありません' : 'この範囲にやり直す変更はありません')}); return;
+        studioToasts.add({title: tr(this.controller.preferences.locale,action === 'undo' ? '当前范围没有可撤销的修改' : '当前范围没有可恢复的修改',action === 'undo' ? 'No changes to undo in this scope' : 'No changes to redo in this scope',action === 'undo' ? 'この範囲に元に戻す変更はありません' : 'この範囲にやり直す変更はありません'), type: 'info'}); return;
       }
-      if (this.notice(result)) {
+      if (this.notice(result, undefined, `history:${action}:${scope.documentId}:${JSON.stringify(scope.paths ?? [])}`)) {
         if (!inspectorScene && this.activeDocument.startsWith('character:') && this.characterSelected)
           this.characterHistory.set(this.characterSelected, { canUndo: action === 'redo', canRedo: action === 'undo' });
         if (this.page === 'assets' || this.focusedWorkbenchTool === authoringDockTools.assetInspector || this.assetPage?.indexRevision !== this.controller.source?.assetIndexRevision) await this.showAssets(); else this.render();
@@ -3980,10 +4552,18 @@ export class AuthoringWorkspace {
     const raw=String(value);return this.assetCache.get(raw)?.name ?? this.controller.source?.characters.find(c=>c.id===raw)?.name ?? this.controller.source?.scenes.find(scene=>scene.sceneId===raw)?.name ?? this.controller.source?.variables?.find(variable=>variable.id===raw)?.name ?? this.references().find(reference=>reference.id===raw)?.name ?? raw;
   }
   private updateStatus() {
+    this.syncMessage();
     const bar=this.root.querySelector('#studio-status');if(!bar)return;const locale=this.controller.preferences.locale;
     const status=this.controller.status, dirty=status.dirty || this.writingDrafts.size > 0;
     bar.replaceChildren(el('span',dirty?'authoring-dirty':'',status.save==='failed'?this.t('failed'):dirty?this.t('dirty'):this.t('saved')),
       el('span','authoring-spacer'),el('span','',tr(locale,'预览','Preview','プレビュー')+' · '+({none:tr(locale,'未打开','Not open','未表示'),synced:tr(locale,'已同步','Synced','同期済み'),updateAvailable:tr(locale,'有更新可用','Update available','更新あり'),restartRequired:tr(locale,'需重启','Restart required','再起動が必要'),lastValid:tr(locale,'上次有效版本','Last valid version','前回の有効版')}[status.preview])),el('span','','Web / Windows'));
+    if (this.controller.engineIssue) {
+      const reason = el('span', 'studio-readonly', tr(locale, '作品只读 · 精确引擎不可用', 'Read-only · Exact engine unavailable', '読み取り専用 · エンジンを利用できません'));
+      reason.title = issueText(this.controller.engineIssue, locale);
+      bar.prepend(reason, button(tr(locale, '作品维护', 'Project maintenance', '作品メンテナンス'), () => this.navigate('maintenance'), 'studio-status-action'));
+    }
+    if (this.documents.find(document => document.id === this.activeDocument)?.kind !== 'scene') for (const action of this.contextActions())
+      bar.prepend(button(action.label, action.run, 'studio-status-action'));
   }
   private ensureProductionSession(): ProductionSession | null {
     const source = this.controller.source;
@@ -3991,6 +4571,8 @@ export class AuthoringWorkspace {
     if (!this.production) {
       this.production = new ProductionSession(workbenchBridge(this.services.bridge), source.project.projectId, () => this.controller.preferences.locale);
       this.production.restoreRecord(this.productionDirectoryState.record);
+      this.production.restoreFeedback(this.retainedProductionFeedback);
+      this.productionSubscription = this.production.subscribe(this.productionChanged);
     }
     if (this.productionGuiResume) {
       const resume = this.productionGuiResume;
@@ -4013,6 +4595,14 @@ export class AuthoringWorkspace {
     if (this.activeDocument !== productionDocumentId || session !== this.production) return false;
     if (captureOrigin && !session.draft) session.origin = origin;
     return true;
+  }
+  private async openPageBuilding(): Promise<void> {
+    if (!this.controller.source) return;
+    const current = this.documents.find(document => document.id === this.activeDocument && document.kind === 'page');
+    const key = current?.objectId ?? this.designer?.workbenchPage() ?? this.designerResume?.page ?? 'title';
+    if (!current) await this.openDocument({ kind: 'page', objectId: key });
+    if (this.activeDocument !== `page:${key}`) return;
+    this.dock.current?.openCombination([authoringDockTools.pageDirectory, authoringDockTools.pageOutline]);
   }
   async navigate(page:Page) {
     if (page === 'assets') return this.openAssetWorkspace();
@@ -4145,7 +4735,7 @@ export class AuthoringWorkspace {
     this.thumbnailsActive = true;
     const resolved = await loadVisibleAssetThumbnails(this.services);
     if (generation !== this.thumbnailGeneration) return;
-    if (!resolved.ok) { this.message = resolved.error.message; return; }
+    if (!resolved.ok) { this.messageTone = resolved.error.severity; this.message = resolved.error.message; this.updateStatus(); return; }
   }
   private async moveCards(ids: Id[], beforeId: Id | null, focusId: Id | null = null): Promise<void> {
     const before = new Map([...this.root.querySelectorAll<HTMLElement>('.authoring-card[data-statement-id]')]
@@ -4214,26 +4804,32 @@ export class AuthoringWorkspace {
         }
       },
       create: async draft => {
-        const chosen = await this.services.chooseDirectory(); if (!this.notice(chosen) || !chosen.value || !this.services.createProject) return false;
+        const chosen = await this.services.chooseDirectory();
+        if (!chosen.ok) throw new Error(chosen.error.message);
+        if (!chosen.value || !this.services.createProject) return false;
         const closeChoice = await this.choiceForClose('switchProject', true); if (closeChoice === 'cancel') return false;
         const result = await this.services.createProject({ ...draft, path: chosen.value, closeChoice });
-        if (!this.notice(result)) return false;
+        if (!result.ok) throw new Error(result.error.message);
         return this.openedProject(result.value.sessionId);
       },
     }));
     return this.projectsNode;
   }
-  private async showCharacters(): Promise<void> {
-    await this.openDocument({ kind: 'characters', title: '角色与路线' });
-  }
   private projectDocument(): HTMLElement {
     const source=this.controller.source;if(!source)return this.projectNode;
     const locale=this.controller.preferences.locale;
-    this.projectGeneral.replaceChildren(el('h1','',tr(locale,'作品设置','Project settings','作品設定')),el('h2','',source.project.name));
-    this.projectGeneral.append(button(tr(locale,'作品资料与玩家选项','Project details and player options','作品情報とプレイヤー設定'),()=>this.openProjectSettings()));
-    this.projectGeneral.append(button(tr(locale,'结构与变量','Structure and variables','構成と変数'),()=>this.openStoryStructure()));
+    this.projectNode.classList.add('settings-document');
+    this.projectGeneral.className='project-settings-header';
+    const title=el('div','project-settings-title');
+    title.append(el('h1','',tr(locale,'作品设置','Project settings','作品設定')),el('p','',source.project.name));
+    const actions=el('div','gc-actions');
+    actions.append(
+      button(tr(locale,'作品资料与玩家选项','Project details and player options','作品情報とプレイヤー設定'),()=>this.openProjectSettings()),
+      button(tr(locale,'结构与变量','Structure and variables','構成と変数'),()=>this.openStoryStructure()),
+    );
+    this.projectGeneral.replaceChildren(title,actions);
     const hadEditor=!!this.playerNameEditor;
-    this.playerNameEditor??=createPlayerNameEditor(this.controller,()=>this.render(),dirty=>{this.documents=this.documents.map(document=>document.id==='project'?{...document,dirty:dirty||!!this.controller.source?.projectDirty}:document);this.refreshDocumentTabs();},()=>{void this.openDocument({kind:'characters',title:tr(locale,'角色与路线','Characters & routes','キャラクターとルート')});},this.playerNameGuiDraft);
+    this.playerNameEditor??=createPlayerNameEditor(this.controller,()=>this.render(),dirty=>{this.documents=this.documents.map(document=>document.id==='project'?{...document,dirty:dirty||!!this.controller.source?.projectDirty}:document);this.refreshDocumentTabs();},()=>{this.dock.current?.open(authoringDockTools.characters);},this.playerNameGuiDraft);
     if(hadEditor)this.playerNameEditor?.refresh();
     if(!this.projectNode.contains(this.projectGeneral))this.projectNode.append(this.projectGeneral);
     if(this.playerNameEditor&&!this.projectNode.contains(this.playerNameEditor.root))this.projectNode.append(this.playerNameEditor.root);
@@ -4274,7 +4870,7 @@ export class AuthoringWorkspace {
     for (const [id, document] of Object.entries(source.characterDocuments ?? {})) this.characterDocumentIds.set(id, document.documentId);
     this.characterDirectoryRoot ??= createRoot(this.characterDirectoryNode);
     this.characterDirectoryRoot.render(createElement(CharacterDirectory, {
-      characters: source.characters, locale: this.controller.preferences.locale,
+      characters: [...source.characters, ...Object.values(this.characterGuiDraft?.drafts ?? {}).filter(draft => !source.characters.some(character => character.id === draft.id))], locale: this.controller.preferences.locale,
       selectedId: this.activeDocument.startsWith('character:') ? this.characterSelected : undefined,
       pendingIds: new Set(Object.keys(this.characterGuiDraft?.drafts ?? {})),
       search: this.characterSearch,
@@ -4299,35 +4895,57 @@ export class AuthoringWorkspace {
       region.root.unmount(); this.characterRegions.delete(id);
     }
   }
-  private characterDocument(objectId?: Id): HTMLElement {
-    if (!this.controller.source) return this.characterNode;
+  private async saveCharacterDocument(id: Id): Promise<void> {
+    const documentId = this.controller.source?.characterDocuments?.[id]?.documentId ?? this.characterDocumentIds.get(id)
+      ?? (await this.discardScope({ id: `character:${id}`, kind: 'character', objectId: id, title: id }))?.documentId;
+    if (documentId) await this.save(false, documentId);
+    else if (this.recoveringCharacterDrafts.has(id)) {
+      await this.openDocument({ kind: 'character', objectId: id });
+      if (this.activeDocument === `character:${id}`) await this.save(false);
+    }
+  }
+  private characterDocument(objectId: Id): HTMLElement {
+    if (!this.controller.source) return this.characterRegions.get(objectId)?.node ?? el('div', 'character-document');
     const projectId = this.controller.source.project.projectId;
     if (this.voiceConnectionProject !== projectId) { this.voiceConnectionProject = projectId; void workbenchBridge(this.services.bridge).production.overview().then(result => { if (result.ok && this.controller.source?.project.projectId === projectId) { const purposes = new Set(['speech', ...(result.value.operations ?? []).filter(operation => operation.definition.adoption.kind === 'asset' && operation.definition.adoption.usages.includes('voice')).map(operation => operation.definition.purpose)]); this.voiceConnections = result.value.connections.filter(connection => connection.purposes.some(purpose => purposes.has(purpose))); this.render(); } }); }
-    let region = objectId ? this.characterRegions.get(objectId) : undefined;
-    if (objectId && !region) {
+    let region = this.characterRegions.get(objectId);
+    if (!region) {
       const node = el('div', 'character-document');
       region = { node, root: createRoot(node) };
       this.characterRegions.set(objectId, region);
     }
-    const characterNode = region?.node ?? this.characterNode;
-    const root = region?.root ?? (this.characterRoot ??= createRoot(this.characterNode));
+    const characterNode = region.node;
+    const root = region.root;
     const session = this.characterGuiDraft, objectView = objectId && session?.views?.[objectId];
     const guiDraft = objectId && session ? { ...session, section: undefined, differenceId: undefined, ...objectView, selected: objectId } : session;
-    const tabId = objectId ? 'character:' + objectId : 'characters';
+    const tabId = 'character:' + objectId;
     root.render(createElement(CharacterManager, { key: tabId, objectId, guiDraft, onGuiDraftChange: draft => this.captureCharacterGui(draft, objectId),
+      recoveringDraft: Boolean(objectId && this.recoveringCharacterDrafts.has(objectId)),
+      registerInput: objectId ? input => { if (input) this.characterInputs.set(objectId, input); else this.characterInputs.delete(objectId); } : undefined,
+      saveCurrent: objectId ? () => { void this.saveCharacterDocument(objectId); } : undefined,
       openDirectory: () => this.dock.current?.open(authoringDockTools.characters),
       sectionRequest: this.characterSectionRequest?.characterId === objectId ? this.characterSectionRequest ?? undefined : undefined,
       historyState: objectId ? this.characterHistory.get(objectId) : undefined,
-      embedded: true, explorerContainer: this.characterExplorer, selectedId: this.characterSelected,
+      embedded: true, selectedId: this.characterSelected,
       voiceConnections: this.voiceConnections, discardDraft: this.characterDiscardRequest,
       inspectVoiceConnection: (connectionId, model) => workbenchBridge(this.services.bridge).connections.test({ connectionId, model, purpose: 'speech', imageUsage: null, workflowBindingId: null }),
       runtimeAssets: this.services.runtimeAssets, previewScene: (id,entryId) => { this.debugRouteIntent.previewEntryId=entryId;void this.previewScene(id,entryId); },
       selectCharacter: (id, name) => { this.characterSelected=id;this.characterAsset=null;this.documents=this.documents.map(document=>document.kind==='characters'?{...document,title:name}:document);this.render(); },
       assets: [...this.assetCache.values()], inspectAsset: id => { void this.services.getAsset?.(id).then(result=>{if(this.notice(result)){this.characterAsset=result.value;this.render();this.revealInspector();}}); },
+      chooseAsset: async request => {
+        const locale = this.controller.preferences.locale;
+        const purpose = request.purpose === 'reference' ? tr(locale, '人物参考图', 'Character reference image', 'キャラクターの参考画像')
+          : request.purpose === 'difference-figure' ? tr(locale, '共同差分立绘', 'Shared difference figure', '共通差分の立ち絵')
+          : request.purpose === 'difference-avatar' ? tr(locale, '共同差分头像', 'Shared difference portrait', '共通差分のポートレート')
+          : tr(locale, '角色默认阅读头像', 'Default reading portrait', '標準会話アバター');
+        return openAssetPicker({ services: this.services, projectId, characterId: request.characterId, allowedKinds: request.allowedKinds,
+          currentAssetId: request.currentAssetId, currentVariantId: request.currentVariantId, locale, purpose, mode: 'compact', scope: characterNode,
+          onApply: async selected => { this.assetCache.set(selected.asset.id, selected.asset); flushSync(() => { this.characterDocument(objectId); }); return { ok: true, value: undefined, warnings: [] }; } });
+      },
       chooseAvatar: async (characterId, currentAssetId) => { const choice=await openAssetPicker({services:this.services,projectId:this.controller.source!.project.projectId,
         allowedKinds:['image'],locale:this.controller.preferences.locale,characterId,currentAssetId,currentName:this.assetCache.get(currentAssetId??'')?.name,
         purpose:tr(this.controller.preferences.locale,'角色默认阅读头像','Default reading portrait','標準会話アバター'),mode:'compact',scope:characterNode,
-        onApply:async selected=>{this.assetCache.set(selected.asset.id,selected.asset);return {ok:true,value:undefined,warnings:[]};}});return choice?.assetId;},
+        onApply:async selected=>{this.assetCache.set(selected.asset.id,selected.asset);flushSync(()=>{this.characterDocument(objectId);});return {ok:true,value:undefined,warnings:[]};}});return choice?.assetId;},
       previewAsset: (id, variantId) => { void this.previewAsset(id, variantId); },
       produceDifference: (characterId, differenceId, assetId, variantId) => void this.openFigureProduction({ assetId, variantId }, characterId, differenceId),
       pendingChanged: dirty => {
@@ -4339,6 +4957,7 @@ export class AuthoringWorkspace {
       close: () => { void this.closeDocument(tabId); },
       authorOperation:async operation=>{const result=await this.controller.authorOperation(operation);if(!result.ok)return result;if(objectId)this.characterHistory.set(objectId,{canUndo:true,canRedo:false});this.render();return {ok:true,value:this.controller.source!,warnings:result.warnings};},
       apply: async drafts => { const result = await this.controller.saveCharacters(drafts); if (!result.ok) return result;
+        for (const draft of drafts) this.recoveringCharacterDrafts.delete(draft.id);
         for (const draft of drafts) if (this.characterGuiDraft) {
           delete this.characterGuiDraft.drafts[draft.id];
           delete this.characterGuiDraft.bases?.[draft.id];
@@ -4423,6 +5042,7 @@ export class AuthoringWorkspace {
     };
     toolbar.root.render(createElement(AuthoringToolbar, {
       locale: this.controller.preferences.locale, view, dirty, saveState: status.save,
+      contextActions: scene.sceneId === this.controller.scene?.sceneId ? this.contextActions() : undefined,
       hasSelection: Boolean(this.scenePaneContext(scene.sceneId, view).selection?.primaryId), hasStatements: Boolean(parsed?.parsed.cst.some(node => node.id)),
       readOnly: parsed?.readOnly ?? true, pluginTools: Boolean(this.studioPlugins?.tools('commands.palette').length),
       changeView: view => { void run(() => this.changeSceneView(view)); },
@@ -4512,7 +5132,7 @@ export class AuthoringWorkspace {
       await requestDialog({ title: t('插入句内等待', 'Insert inline wait', '台詞内に待機を追加'), locale, description: caption,
         content: createElement(InlineWaitFields, { initial: wait, locale, change: value => { wait = value; } }),
         confirm: async () => { const result = await add({ id, kind: 'wait', offset, ...waitEventValues(wait) });
-          if (!this.notice(result)) throw new Error(result.error.message); } });
+          if (!result.ok) throw new Error(issueText(result.error, locale)); } });
       return;
     }
     const visible = new Map<Id, { characterId?: Id; assetId?: Id; variantId?: Id }>();
@@ -4558,7 +5178,7 @@ export class AuthoringWorkspace {
           differences.map((item, index) => createElement('option', { key: index, value: index }, item.label)))),
       confirm: async () => {
         const result = await add(differences[selected]!.event);
-        if (!this.notice(result)) throw new Error(result.error.message); } });
+        if (!result.ok) throw new Error(issueText(result.error, locale)); } });
   }
   private scenePane(source: NonNullable<AuthoringController['source']>, scene: NonNullable<AuthoringController['scene']>, view: AuthoringController['view'], split: boolean): HTMLElement {
     const center = el('section', 'authoring-center');
@@ -4687,6 +5307,12 @@ export class AuthoringWorkspace {
               if(voiced)card.append(el('span','authoring-voice-state',tr(this.controller.preferences.locale,'已配音','Voiced','音声あり')));
             }
           }
+          const characterRefs = new Set<Id>();
+          const speaker = args?.speaker as { kind?: string; id?: Id } | undefined;
+          if (speaker?.kind === 'character' && speaker.id) characterRefs.add(speaker.id);
+          if (typeof args?.characterId === 'string') characterRefs.add(args.characterId);
+          for (const id of characterRefs) if (source.characters.some(character => character.id === id))
+            card.append(this.characterReferenceButton(id, scene.sceneId, node.id, view));
           if (node.command === 'say' && Array.isArray(args?.events)) {
             const markers = el('div', 'authoring-dialogue-markers');
             const locale = this.controller.preferences.locale;
@@ -4843,7 +5469,7 @@ export class AuthoringWorkspace {
           if (!candidate.success) throw new Error(t('请输入有效的句内事件参数。', 'Enter valid inline event values.', '有効なイベントの値を入力してください。'));
           const result = await this.controller.editDialogue({ op: 'dialogue.update', sceneId: target.sceneId, statementId: target.statementIds[0]!,
             events: events.flatMap(item => item.success ? [item.data.id === active.id ? candidate.data : item.data] : []) }, target, active.id);
-          if (!this.notice(result)) throw new Error(issueText(result.error, locale));
+          if (!result.ok) throw new Error(issueText(result.error, locale));
           this.render();
         } });
     });
@@ -4908,7 +5534,7 @@ export class AuthoringWorkspace {
     const source = this.controller.source;
     if (!source) return null;
     const inspector = el('aside', 'authoring-inspector');
-    inspector.append(el('h2', '', this.t('inspector')), this.sourceControls('inspector'));
+    inspector.append(this.sourceControls('inspector'));
     const inspectorView = this.fixedInspectorSource ? 'cards' : this.controller.view;
     const inspected = this.resolveSceneSource(this.fixedInspectorSource ?? (this.followedScene() ? this.selectedSceneSource() : null), inspectorView);
     if (inspected?.event) inspector.append(this.eventProperties(inspected));
@@ -4931,9 +5557,11 @@ export class AuthoringWorkspace {
       inspector.append(fields);
       const args = node?.object?.value as Record<string, unknown> | undefined;
       const context = this.fieldContext(args ?? {});
-      const sourceContext = this.fixedInspectorSource ? { ...context, sceneId: scene.sceneId, animationEditor: undefined, audioEditor: undefined, assetEditor: undefined, publicEditor: undefined,
+      const referenceContext = { ...context, editCharacter: (id: Id) => this.characterReferenceButton(id, scene.sceneId, node.id!,
+        this.controller.scene?.sceneId === scene.sceneId ? this.controller.view : this.sceneContexts.get(scene.sceneId)?.view ?? 'cards') };
+      const sourceContext = this.fixedInspectorSource ? { ...referenceContext, sceneId: scene.sceneId, animationEditor: undefined, audioEditor: undefined, assetEditor: undefined, publicEditor: undefined,
         targetAvailability: (id: string) => this.miniStage?.objectAvailability(id, { sceneId: scene.sceneId, statementId: node.id! }) ?? 'unknown',
-      } : context;
+      } : referenceContext;
       if (node?.command === 'pixi') {
         const mount=el('div'), root=createRoot(mount);this.inspectorRoots.push(root);fields.append(mount);
         root.render(createElement(WeatherPresetPicker,{locale:this.controller.preferences.locale,disabled:fields.disabled||!this.services.weatherTexture,
@@ -5068,25 +5696,102 @@ export class AuthoringWorkspace {
     }));
     return this.preferencesNode;
   }
+  private problemEntries(): WorkbenchProblem[] {
+    const locale = this.controller.preferences.locale, source = this.controller.source;
+    if (!source) return [];
+    const problem = (prefix: string, issue: Issue, index: number, group: string, stale = false): WorkbenchProblem => ({
+      id: `${prefix}:${JSON.stringify([issue.code, issue.source, index])}`, issue, group, stale,
+      action: issue.source || issue.owner === 'M11' || issue.owner === 'M09' && issue.details || issue.code.startsWith('ENGINE_') ? {
+        label: tr(locale, '定位问题', 'Locate issue', '問題へ移動'), run: () => { void this.locateProblem(issue); },
+      } : undefined,
+    });
+    const repeatsEngineIssue = (issue: Issue) => Boolean(this.controller.engineIssue
+      && issue.code === this.controller.engineIssue.code && issue.message === this.controller.engineIssue.message
+      && JSON.stringify(issue.source ?? null) === JSON.stringify(this.controller.engineIssue.source ?? null));
+    const content = [...this.controller.status.issues.filter(issue => !repeatsEngineIssue(issue)).map((issue, index) => problem('compile', issue, index,
+      source.scenes.find(scene => scene.documentId === issue.source?.documentId)?.name ?? source.project.name, this.controller.compilationIncomplete)),
+      ...this.controller.compilationFailureIssues.filter(issue => !repeatsEngineIssue(issue)).map((issue, index) => problem('compile-failure', issue, index, source.project.name))];
+    const saving = [...this.controller.saveFailures].flatMap(([key, failure]) => {
+      const issue = failure.issues.find(issue => issue.severity === 'error') ?? failure.issues.find(issue => issue.severity === 'warning');
+      if (!issue) return [];
+      const attemptKey = `save:${key}:${failure.attemptId}`;
+      return [{
+      ...problem(`save:${key}`, { ...issue, details: { originalIssue: issue, issues: failure.issues } as Json }, 0, tr(locale, '保存', 'Save', '保存') + ' · ' + (this.saveProblemSources.get(failure)?.title ?? source.scenes.find(scene => failure.versions.some(item => item.ref.id === scene.documentId))?.name ?? source.project.name)),
+      attemptKeys: [attemptKey], ignored: this.ignoredProblemAttempts.has(attemptKey),
+      action: { label: tr(locale, '查看保存来源', 'Open save source', '保存元を開く'), run: () => {
+        const savedSource = this.saveProblemSources.get(failure);
+        const asset = failure.objects.find(object => object.kind === 'asset' && object.objectId);
+        const scene = source.scenes.find(scene => failure.versions.some(item => item.ref.id === scene.documentId));
+        if (savedSource) void this.openDocument(savedSource).then(() => { this.issueReturn = 'problems'; this.render(); });
+        else if (asset?.objectId) void this.openDocument({ kind: 'asset', objectId: asset.objectId }).then(() => { this.issueReturn = 'problems'; this.render(); });
+        else if (scene) void this.openDocument({ kind: 'scene', objectId: scene.sceneId }).then(() => { this.issueReturn = 'problems'; this.render(); });
+        else void this.openDocument({ kind: 'project' }).then(() => { this.issueReturn = 'problems'; this.render(); });
+      } },
+    }]; });
+    const engine = this.controller.engineIssue ? [problem('engine', this.controller.engineIssue, 0, tr(locale, '引擎与依赖', 'Engine and dependencies', 'エンジンと依存関係'), Boolean(this.engineReadIssue))] : [];
+    const reading = this.controller.readIssue ? [{ ...problem('read', this.controller.readIssue, 0, source.project.name), action: {
+      label: tr(locale, '重新检查作品', 'Recheck project', '作品を再確認'), run: () => { void this.controller.refresh().then(() => this.render()); },
+    } }] : [];
+    const release = [...this.releaseIssues.map((issue, index) => problem('release', issue, index, tr(locale, '发布检查', 'Release check', '配布チェック'), this.releaseCheckStale || this.releaseCheckIncomplete)),
+      ...this.releaseCheckFailures.map((issue, index) => problem('release-failure', issue, index, tr(locale, '发布检查', 'Release check', '配布チェック')))];
+    const operations = [...this.operationProblems.values()].map(entry => {
+      const origin = entry.issue.source;
+      const current = origin && (source.documentVersions?.find(item => item.documentId === origin.documentId)?.revision
+        ?? source.scenes.find(scene => scene.documentId === origin.documentId)?.revision
+        ?? (origin.documentId === source.projectDocumentId ? source.projectRevision : undefined));
+      const attemptKey = `operation:${entry.id}:${entry.attemptId}`;
+      const action: WorkbenchProblem['action'] = entry.source.kind === 'build' ? {
+        label: tr(locale, '查看构建回执', 'Open build receipt', 'ビルド結果を開く'), run: () => this.openBuildProblem(entry),
+      } : entry.action ?? {
+        label: entry.source.kind === 'model' ? tr(locale, '打开本机去背', 'Open local background removal', 'ローカル背景除去を開く')
+          : tr(locale, '打开来源', 'Open source', '参照元を開く'),
+        run: () => {
+          if (entry.source.kind === 'model') { this.assetToolsOpen = true; void this.openAssetWorkspace().then(() => { this.issueReturn = 'problems'; this.render(); }); }
+          else if (entry.issue.source) void this.locateProblem(entry.issue);
+          else if (entry.source.kind === 'document') void this.openDocument(entry.source.document).then(() => { this.issueReturn = 'problems'; this.render(); });
+        },
+      };
+      return { ...entry, action, attemptKeys: [attemptKey], ignored: this.ignoredProblemAttempts.has(attemptKey), stale: Boolean(origin && current !== undefined && origin.revision !== current) };
+    });
+    const monitor = this.problemMonitor;
+    const imports = importBatchProblems(monitor?.imports ?? [], this.ignoredProblemAttempts, locale, id => { void this.openImportProblem(id); })
+      .map(entry => ({ ...entry, stale: Boolean(monitor?.importIssue) }));
+    const tasks = productionTaskProblems(monitor?.production ?? null, this.ignoredProblemAttempts, locale, id => { void this.openProductionProblem({ kind: 'task', id }); })
+      .map(entry => ({ ...entry, stale: Boolean(monitor?.productionIssue) }));
+    const feedback: WorkbenchProblem[] = this.retainedProductionFeedback.map(record => {
+      const key = `production-request:${record.key}:${record.attemptId}`;
+      return { id: `production-feedback:${record.key}`, issue: record.issue, group: tr(locale, '制作', 'Production', '制作'),
+        ...(record.kind === 'request' ? { attemptKeys: [key], ignored: this.ignoredProblemAttempts.has(key) } : {}),
+        action: { label: record.surface === 'connections' ? tr(locale, '查看连接与工作流', 'Open connections and workflows', '接続とワークフローを開く')
+          : tr(locale, '查看制作回执', 'Open production receipt', '制作結果を開く'), run: () => { void this.openProductionProblem(record.target, record.key); } },
+      };
+    });
+    const reads = [monitor?.importIssue, monitor?.productionIssue, this.engineReadIssue, this.problemCheckIssue].flatMap((issue, index) => issue ? [{
+      ...problem(`problem-read:${index}`, issue, 0, tr(locale, '问题来源读取', 'Problem source check', '問題の確認')),
+      action: { label: tr(locale, '重新检查', 'Recheck', '再確認'), run: () => { void this.recheckProblems(); } },
+    }] : []);
+    return [...content, ...saving, ...engine, ...reading, ...release, ...operations, ...imports, ...tasks, ...feedback, ...reads].filter(entry => entry.issue.severity !== 'info');
+  }
   private sceneProblems(): HTMLElement | null {
     if (!this.controller.source) return null;
-    const locale = this.controller.preferences.locale, status = this.controller.status;
-    const issues = [...new Map([...status.issues, ...this.releaseIssues, ...(this.controller.engineIssue ? [this.controller.engineIssue] : [])].map(issue => [JSON.stringify([issue.code, issue.source, issue.message]), issue])).values()];
-    const problemList = el('div', 'authoring-diagnostic-content');
-    const count = el('h2', 'authoring-problem-count', `${this.t('problems')} · ${issues.length}`);
-    count.setAttribute('aria-live', 'polite');
-    problemList.append(count);
-    if (issues.length) for (const issue of issues) {
-      const text = issueText(issue, locale);
-      const row = issue.source || issue.owner === 'M11' || issue.owner === 'M09' && issue.details
-        ? button(text, () => this.locateProblem(issue), 'authoring-diagnostic-link')
-        : el('p', '', text);
-      row.dataset.issueCode = issue.code;
-      row.title = issue.message;
-      problemList.append(row);
-    }
-    else problemList.append(el('p', '', this.t('noProblems')));
-    return problemList;
+    this.problemsRoot ??= createRoot(this.problemsNode);
+    this.problemsRoot.render(createElement(Problems, {
+      problems: this.problemEntries(), locale: this.controller.preferences.locale, state: this.problemsState,
+      pending: this.controller.compilationIncomplete || this.releaseCheckIncomplete || this.releaseCheckStale || this.problemMonitor?.loading
+        || Boolean(this.controller.readIssue || this.problemMonitor?.importIssue || this.problemMonitor?.productionIssue || this.engineReadIssue || this.problemCheckIssue),
+      onStateChange: (state: ProblemsState) => { this.problemsState = state; this.sceneProblems(); this.rememberWorkbench(); },
+      onToggleIgnore: problem => {
+        if (!problem.attemptKeys?.length) return;
+        for (const key of problem.attemptKeys) { if (problem.ignored) this.ignoredProblemAttempts.delete(key); else this.ignoredProblemAttempts.add(key); }
+        this.rememberWorkbench(); this.render();
+        const projectId = this.controller.source?.project.projectId;
+        void this.controller.flushResume().then(result => {
+          if (!result.ok && !this.disposed && projectId === this.controller.source?.project.projectId) { this.notice(result); this.render(); }
+        });
+      },
+      onRecheck: () => { void this.recheckProblems(); }, checking: this.problemsChecking,
+    }));
+    return this.problemsNode;
   }
   private renderOutput(): HTMLElement | null {
     if (!this.controller.source) return null;
@@ -5100,7 +5805,11 @@ export class AuthoringWorkspace {
       });
     }
     this.outputRoot.render(createElement(StudioOutput, {
-      locale: this.controller.preferences.locale, output: { ...this.output }, failure: this.outputFailure, pendingBuild: this.pendingBuild,
+      locale: this.controller.preferences.locale, output: { ...this.output },
+      failure: this.selectedBuildProblem?.source.kind === 'build' ? { kind: 'build', id: this.selectedBuildProblem.source.planId,
+        target: this.selectedBuildProblem.source.target, issue: this.selectedBuildProblem.issue, cancelled: false } : this.outputFailure,
+      pendingBuild: this.selectedBuildProblem ? undefined : this.pendingBuild,
+      restoreLatest: this.selectedBuildProblem ? () => { this.selectedBuildProblem = null; this.renderOutput(); } : undefined,
       openDocument: id => {
         const document = this.documents.find(item => item.id === id);
         if (document) { void this.openDocument(document); return; }
@@ -5117,12 +5826,21 @@ export class AuthoringWorkspace {
     }));
     return this.outputNode;
   }
+  private openBuildProblem(problem: OperationProblem): void {
+    this.selectedBuildProblem = problem;
+    this.renderOutput(); this.dock.current?.open(authoringDockTools.output);
+    requestAnimationFrame(() => {
+      const row = this.outputNode.querySelector<HTMLElement>('[data-output="failure"]');
+      row?.scrollIntoView({ block: 'nearest' }); row?.focus({ preventScroll: true });
+    });
+  }
   private recordBuild(planId: string, receipt: BuildReceipt): void {
     if (receipt.projectId !== this.controller.source?.project.projectId) return;
     this.pendingBuild = undefined;
     this.output = { ...this.output, built: { planId, receipt } };
+    this.operationProblems.delete(`build:${receipt.target}`);
     if (this.outputFailure?.kind === 'build') this.outputFailure = undefined;
-    this.renderOutput();
+    this.render();
     this.rememberWorkbench();
   }
   private effectsDialog(spec: FieldSpec, value: unknown, editTarget: StatementEditTarget) {
@@ -5157,7 +5875,7 @@ export class AuthoringWorkspace {
     const errors=el('p','field-error');dialog.append(errors);
     const actions=el('footer','dialog-actions');actions.append(button(tr(locale,'重置本次调整','Reset these changes','今回の変更をリセット'),()=>{draft={};draw();update();}),button(this.t('cancel'),close),button(this.t('apply'),async()=>{
       const issues=validateFields([spec],{[spec.path]:draft},f=>fieldLabel(f,locale),locale);if(issues.length){errors.textContent=issues.map(i=>i.message).join('；');return;}
-      const result=await this.controller.editFields([{field:spec.path,op:'set',value:draft}], [target.statementId], editTarget);if(this.notice(result)){close();this.render();} else errors.textContent = result.error.message;
+      const result=await this.controller.editFields([{field:spec.path,op:'set',value:draft}], [target.statementId], editTarget);if(result.ok){close();this.render();} else errors.textContent = issueText(result.error, locale);
     }, 'authoring-primary'));dialog.append(actions); this.effectEditor = { ...target, field: spec.path, draft, node: dialog, dispose };
     this.render(); update();
     dialog.addEventListener('keydown', event => { if (event.key === 'Escape' && !event.isComposing) { event.preventDefault(); event.stopPropagation(); close(); } });
@@ -5169,24 +5887,39 @@ export class AuthoringWorkspace {
     const chosen = await this.services.pickAssetFiles();
     if (epoch === this.assetProjectEpoch && this.notice(chosen) && chosen.value.length) await this.importAssetPaths(chosen.value);
   }
-  private async importAssetPaths(paths: string[], retry?: { id: number; result: AssetImportResult }): Promise<void> {
+  private async importAssetPaths(paths: string[], retry?: { id: string | number; result: AssetImportResult }): Promise<void> {
     if (this.importingAssets || !this.services.importAssets) return;
-    const epoch = this.assetProjectEpoch;
+    const epoch = this.assetProjectEpoch, projectId = this.controller.source?.project.projectId;
+    if (!projectId) return;
     this.importingAssets = true; this.message = ''; this.render();
     let receiptRecorded = false;
     const updateResult = (result: AssetImportResult) => {
       receiptRecorded = true;
-      if (retry) retry.result = result;
-      else this.assetImportResults.push({ id: ++this.assetImportSequence, result });
+      const id = result.batch?.id ?? retry?.id ?? ++this.assetImportSequence;
+      const existing = this.assetImportResults.find(report => report.id === id);
+      if (existing) existing.result = result;
+      else this.assetImportResults.push({ id, result });
+      this.syncImportBatchScope(result);
+      if (typeof id === 'string') this.hiddenImportBatches.delete(id);
     };
     try {
-      const imported = await this.services.importAssets(paths);
+      const imported = await this.services.importAssets(paths, { projectId, ...(retry?.result.batch ? { batchId: retry.result.batch.id } : {}) });
       if (epoch !== this.assetProjectEpoch) return;
-      if (!imported.ok) { updateResult({ succeeded: retry?.result.succeeded ?? 0, failed: paths.map(path => ({ path, reason: imported.error.message })) }); return; }
+      if (!imported.ok) {
+        // Fatal imports also have durable batch receipts. Read them before falling back to a legacy provider response.
+        await this.problemMonitor?.refresh();
+        if (epoch !== this.assetProjectEpoch) return;
+        const batchId = imported.batch?.id ?? retry?.result.batch?.id;
+        const batch = batchId ? this.problemMonitor?.imports.find(batch => batch.id === batchId) : undefined;
+        if (batch) updateResult(assetImportBatchResult(batch));
+        else updateResult({ succeeded: retry?.result.succeeded ?? 0, failed: paths.map(path => ({ path, reason: imported.error.message, issue: imported.error })),
+          ...(imported.batch ? { batch: imported.batch } : {}) });
+        return;
+      }
       updateResult(mergeAssetImportResult(imported.value, retry?.result));
       imported.value.succeeded.forEach(asset => this.assetCache.set(asset.id, asset));
       await this.controller.refresh();
-      if (epoch === this.assetProjectEpoch) await this.showAssets();
+      if (epoch === this.assetProjectEpoch) { await this.problemMonitor?.refresh(); await this.showAssets(); }
     } catch (error) {
       if (epoch !== this.assetProjectEpoch) return;
       if (receiptRecorded) { this.messageTone = 'error'; this.message = String(error); }
@@ -5212,18 +5945,32 @@ export class AuthoringWorkspace {
       if (!event.dataTransfer?.types.includes('Files')) return;
       event.preventDefault(); dragDepth = 0; main.classList.remove('asset-drag-over');
       const paths = window.studioBridge?.files.pathsForFiles?.([...event.dataTransfer.files]) ?? [];
-      if (!paths.length) { this.message = tr(locale, '请从本机文件夹拖入素材文件。', 'Drag asset files from a local folder.', 'ローカルの素材ファイルをドロップしてください。'); this.render(); return; }
+      if (!paths.length) { this.messageTone = 'info'; this.message = tr(locale, '请从本机文件夹拖入素材文件。', 'Drag asset files from a local folder.', 'ローカルの素材ファイルをドロップしてください。'); this.render(); return; }
       void this.importAssetPaths(paths);
     });
     const heading = el('header', 'assets-heading');
     const importButton = button(this.importingAssets ? tr(locale, '正在导入…', 'Importing…', '読込中…') : this.t('import'), () => this.chooseAssetImport(), 'authoring-primary');
     importButton.disabled = this.importingAssets;
     heading.append(el('span', 'asset-count', `${this.assetPage?.total ?? 0} ${tr(locale, '项素材', 'assets', '素材')}`), importButton); main.append(heading);
-    for (const report of this.assetImportResults) {
-      const mount = el('div', 'asset-import-result-mount'), root = createRoot(mount); this.inspectorRoots.push(root); main.append(mount);
+    if (this.assetBatchScope) {
+      const scope = el('div', 'asset-batch-scope'); scope.setAttribute('role', 'status');
+      scope.append(el('strong', '', tr(locale, '本批导入素材', 'This import batch', 'この読込分の素材')),
+        button(tr(locale, '返回素材浏览', 'Return to asset browsing', '素材一覧へ戻る'), () => this.returnFromImportBatch()));
+      main.append(scope);
+    }
+    const reports = this.assetImportResults.filter(report => (!this.assetBatchScope || report.id === this.assetBatchScope.id) && (typeof report.id !== 'string' || !this.hiddenImportBatches.has(report.id)));
+    const history = !this.assetBatchScope && reports.length ? el('details', 'asset-import-history') : null;
+    if (history) { history.open = this.assetImportHistoryOpen;
+      history.addEventListener('toggle', () => { if (history.isConnected) this.assetImportHistoryOpen = history.open; });
+      history.append(el('summary', '', tr(locale, `导入回执 · ${reports.length}`, `Import receipts · ${reports.length}`, `読込結果 · ${reports.length}`))); main.append(history); }
+    for (const report of reports) {
+      const mount = el('div', 'asset-import-result-mount'), root = createRoot(mount); this.inspectorRoots.push(root); (history ?? main).append(mount);
+      if (typeof report.id === 'string') mount.dataset.importBatch = report.id;
+      mount.tabIndex = -1;
       root.render(createElement(AssetImportSummary, { result: report.result, locale, busy: this.importingAssets,
         retry: this.services.importAssets ? () => { void this.importAssetPaths(failedAssetPaths(report.result), report); } : undefined,
-        dismiss: () => { this.assetImportResults = this.assetImportResults.filter(item => item.id !== report.id); this.render(); },
+        viewBatch: typeof report.id === 'string' && report.result.batch && report.result.succeededIds && report.id !== this.assetBatchScope?.id ? () => { void this.viewImportBatch(String(report.id)); } : undefined,
+        dismiss: () => { if (typeof report.id === 'string') this.hiddenImportBatches.add(report.id); else this.assetImportResults = this.assetImportResults.filter(item => item.id !== report.id); this.rememberWorkbench(); this.render(); },
       }));
     }
     const controls = el('div', 'authoring-toolbar asset-query-bar'); const search = el('input'); search.placeholder = tr(locale,'按素材名称搜索，例如雨站或立绘','Search asset names, e.g. station or character','素材名で検索（例：駅・立ち絵）'); search.value = this.assetQuery.text;
@@ -5251,23 +5998,38 @@ export class AuthoringWorkspace {
     toolBody.append(el('p','asset-model-status',this.modelPreparationStatus || tr(locale,'准备模型后，可在图片属性中使用本机去背。首次准备需要下载模型。','Prepare the model to remove backgrounds in image properties. The first preparation downloads the model.','モデルを準備すると画像のプロパティで背景を除去できます。初回はダウンロードが必要です。')));
     const prepareModel = button(tr(locale, this.preparingModel ? '正在准备去背模型…' : '准备本机去背模型', this.preparingModel ? 'Preparing model…' : 'Prepare background removal model', this.preparingModel ? 'モデルを準備中…' : '背景除去モデルを準備'), async () => {
       if (this.preparingModel) return;
-      this.preparingModel = true; this.assetToolsOpen = true; this.messageTone = 'info';
-      this.message = tr(locale, '正在检查去背模型；首次使用会下载模型，请保持网络连接。', 'Checking the model. First use downloads it; keep your connection available.', 'モデルを確認中。初回はダウンロードします。'); this.modelPreparationStatus=this.message; this.render();
+      this.preparingModel = true; this.assetToolsOpen = true;
+      this.modelPreparationStatus = tr(locale, '正在检查去背模型；首次使用会下载模型，请保持网络连接。', 'Checking the model. First use downloads it; keep your connection available.', 'モデルを確認中。初回はダウンロードします。'); this.render();
+      studioToasts.add({ id: this.modelToastId, type: 'info', title: this.modelPreparationStatus, timeout: 0, actionProps: undefined });
+      const epoch = this.assetProjectEpoch;
+      const current = () => !this.disposed && epoch === this.assetProjectEpoch;
       const unsubscribe = this.services.bridge.operations?.subscribe(operation => {
-        if (!this.preparingModel || !['downloading', 'verifying', 'ready'].includes(operation.phase)) return;
+        if (!current() || !this.preparingModel || !['downloading', 'verifying', 'ready'].includes(operation.phase)) return;
         const phase = operation.phase === 'downloading' ? tr(locale, '正在下载去背模型', 'Downloading model', 'モデルをダウンロード中') : tr(locale, '正在检查并初始化去背模型', 'Checking and initializing model', 'モデルを初期化中');
         const progress = operation.total && operation.completed !== undefined ? ` ${Math.min(100, Math.round(operation.completed / operation.total * 100))}%` : '';
-        this.message = phase + progress;
-        this.modelPreparationStatus=this.message;
+        this.modelPreparationStatus = phase + progress;
+        studioToasts.update(this.modelToastId, { title: this.modelPreparationStatus });
         const status=this.root.querySelector('.asset-model-status');if(status)status.textContent=this.modelPreparationStatus;
-        const notice = this.root.querySelector('.authoring-notice > span'); if (notice) notice.textContent = this.message;
       });
+      this.modelPreparationSubscription = unsubscribe ?? null;
       try {
         const result = await this.services.prepareMattingModel?.();
-        if (result?.ok) { this.messageTone = 'success'; this.message = tr(locale, '去背模型已准备好。请选择图片，在素材详情中使用「本机去背」。', 'Model ready. Select an image and use local background removal in its details.', '準備できました。画像の詳細から背景除去を実行できます。'); }
-        else { this.messageTone = 'error'; this.message = tr(locale, '去背模型准备失败，请检查网络与磁盘空间后重试。', 'Could not prepare the model. Check network and disk space, then retry.', 'モデルの準備に失敗しました。接続と空き容量を確認してください。') + (result && !result.ok ? ` ${result.error.message}` : ''); }
-      } catch (error) { this.messageTone = 'error'; this.message = String(error); }
-      finally { unsubscribe?.(); this.preparingModel = false; this.modelPreparationStatus=this.message; this.render(); }
+        if (!current()) return;
+        if (result?.ok) {
+          this.operationProblems.delete('model:background-removal');
+          this.rememberWorkbench();
+          this.modelPreparationStatus = tr(locale, '去背模型已准备好。请选择图片，在素材详情中使用「本机去背」。', 'Model ready. Select an image and use local background removal in its details.', '準備できました。画像の詳細から背景除去を実行できます。');
+          studioToasts.update(this.modelToastId, { type: 'success', title: this.modelPreparationStatus, timeout: 4500, actionProps: undefined });
+        } else {
+          this.modelPreparationStatus = tr(locale, '去背模型准备失败，请检查网络与磁盘空间后重试。', 'Could not prepare the model. Check network and disk space, then retry.', 'モデルの準備に失敗しました。接続と空き容量を確認してください。') + (result && !result.ok ? ` ${result.error.message}` : '');
+          this.retainModelProblem(result && !result.ok ? result.error : { code: 'MODEL_UNAVAILABLE', owner: 'M01', severity: 'error', related: [], actions: [], message: this.modelPreparationStatus });
+          studioToasts.update(this.modelToastId, { type: 'error', title: this.modelPreparationStatus, timeout: 0, actionProps: { children: tr(locale, '查看问题', 'View problems', '問題を表示'), onClick: () => this.showProblems() } });
+        }
+      } catch (error) { if (current()) { this.modelPreparationStatus = String(error); this.retainModelProblem({ code: 'MODEL_PREPARE_FAILED', owner: 'M01', severity: 'error', related: [], actions: [], message: String(error) }); studioToasts.update(this.modelToastId, { type: 'error', title: this.modelPreparationStatus, timeout: 0, actionProps: { children: tr(locale, '查看问题', 'View problems', '問題を表示'), onClick: () => this.showProblems() } }); } }
+      finally {
+        if (this.modelPreparationSubscription === unsubscribe) { unsubscribe?.(); this.modelPreparationSubscription = null; }
+        if (current()) { this.preparingModel = false; this.render(); }
+      }
     }); prepareModel.disabled = this.preparingModel; toolBody.append(prepareModel);
     const toolRoot=createRoot(tools);this.inspectorRoots.push(toolRoot);
     toolRoot.render(createElement(Disclosure,{open:this.assetToolsOpen,onOpenChange:open=>{this.assetToolsOpen=open;this.render();},children:[createElement('span',{key:'title'},tr(locale,'本机去背','Local background removal','ローカル背景除去')),createElement(DomRegion,{key:'body',node:toolBody})]}));
@@ -5294,7 +6056,7 @@ export class AuthoringWorkspace {
       row.classList.toggle('inspected', this.focusedAsset?.id === asset.id);
       row.tabIndex = 0; row.setAttribute('aria-label', asset.name);
       row.addEventListener('click', event => { if (!(event.target as HTMLElement).closest('button,input')) this.selectAsset(asset.id, event); });
-      row.addEventListener('dblclick', event => { const target=event.target as HTMLElement;if(target.closest('.asset-row-name'))void this.editAssetName(asset.id);else if(target.closest('.authoring-asset-thumbnail'))void this.previewAsset(asset.id); });
+      row.addEventListener('dblclick', event => { const target=event.target as HTMLElement;if(!target.closest('button,input,select,textarea,a,[contenteditable="true"]')) { event.preventDefault(); void this.previewAsset(asset.id); } });
       const openMenu = (origin: HTMLElement, point?: MouseEvent) => {
         const anchor=this.root.querySelector<HTMLElement>(`[data-plugin-asset-id="${asset.id}"]${origin===row?'':' .authoring-object-more'}`)??row;
         const scope=[...this.selectedAssets], hidden=scope.filter(id=>!this.assetPage?.items.some(item=>item.id===id)).length;
@@ -5304,6 +6066,7 @@ export class AuthoringWorkspace {
       row.addEventListener('keydown', event => { if(event.target!==row||event.isComposing)return;if(event.key==='F2'){event.preventDefault();void this.editAssetName(asset.id);}if(event.key==='Enter'){event.preventDefault();void this.previewAsset(asset.id);}if(isObjectMenuKey(event)){event.preventDefault();event.stopPropagation();void openMenu(row);} });
 
       select.addEventListener('change', () => {
+        this.assetSelectionEpoch++;
         if (select.checked) this.selectedAssets.add(asset.id); else this.selectedAssets.delete(asset.id);
         this.assetRangeAnchor = asset.id; this.selectedDetails = null;
         this.selectedAtIndexRevision = this.assetPage?.indexRevision ?? null;
@@ -5331,10 +6094,12 @@ export class AuthoringWorkspace {
       if (filtered) empty.append(el('h2', '', tr(locale, '没有匹配的素材', 'No matching assets', '一致する素材がありません')),
         el('p', '', tr(locale, '试试其他名称、类型或目录。已选素材仍然保留。', 'Try another name, type or folder. Selected assets are retained.', '名前・種類・フォルダーを変更してください。選択した素材は保持されます。')),
         button(tr(locale, '清除筛选', 'Clear filters', '絞り込みを解除'), clearFilters));
+      else if (this.assetBatchScope) empty.append(el('h2', '', tr(locale, '本批暂无可用素材', 'No available assets in this batch', 'この読込分に利用可能な素材はありません')),
+        el('p', '', tr(locale, '成功素材会在这里显示，未导入项沿上方原批回执处理。', 'Successful assets appear here. Handle failed files using this batch’s receipt above.', '追加した素材をここに表示します。失敗した項目は上の読込結果から対応できます。')));
       else empty.append(el('h2', '', tr(locale, '给故事添一些画面与声音', 'Make room for images and sound', '物語に画像と音声を')),
         el('p', '', tr(locale, '将素材拖到这里，或选择本机文件。支持批量导入。', 'Drop assets here or choose local files. Multiple files are supported.', '素材をドロップするか、ファイルを選択。複数ファイルに対応。')),
         button(tr(locale, '选择文件', 'Choose files', 'ファイルを選択'), () => this.chooseAssetImport(), 'asset-choose'));
-      empty.querySelector('button')!.disabled = this.importingAssets; main.append(empty); }
+      const action = empty.querySelector('button'); if (action) action.disabled = this.importingAssets; main.append(empty); }
     if (this.mattingCandidate) {
       const candidate = el('section', 'authoring-panel'); candidate.append(el('h2', '', tr(locale, '透明版本候选', 'Transparent version candidate', '透過バージョン候補')));
       const preview = el('img'); preview.src = this.mattingCandidate.previewUri; preview.alt = tr(locale, '透明版本预览', 'Transparent version preview', '透過バージョンのプレビュー'); candidate.append(preview);
@@ -5455,74 +6220,114 @@ export class AuthoringWorkspace {
     const modal = el('section', 'authoring-command-draft'); modal.append(el('h2', '', this.t('addCommand')));
     const picker=createCommandPicker(registry,locale,()=>{
       chosen=true;updateFields();popover.close();
-      placeholder.replaceChildren(el('strong','',`${commandName(registry.get(picker.value)!,locale)} · ${tr(locale,'待配置','Pending configuration','設定待ち')}`),el('p','',tr(locale,'在 Inspector 完成必填参数后插入。','Complete the required fields in Inspector to insert.','Inspector の必須項目を入力して挿入してください。')));
+      placeholder.replaceChildren(el('strong','',`${commandName(registry.get(picker.value)!,locale)} · ${tr(locale,'待插入','Ready to set up','挿入前')}`),el('p','',tr(locale,'在属性面板填写必填项，再插入指令。','Fill in the required fields in Properties, then insert the command.','プロパティで必須項目を入力してから挿入してください。')));
       this.insertions.set(scene.sceneId,{beforeId,node:modal,placeholder,dirty:()=>true,capture:()=>asJson({kind:'command',sceneId:scene.sceneId,beforeId,command:picker.value,args})});this.render();this.dock.current?.open(authoringDockTools.inspector, { focus: false });requestAnimationFrame(()=>fields.querySelector<HTMLElement>('input,textarea,select')?.focus());
     });
     const popover=showContentPopover(picker.root,origin,this.t('addCommand'),()=>picker.dispose());
     const fields = el('div', 'authoring-command-fields'); modal.append(fields);
     const error = el('p', 'authoring-form-error'); modal.append(error);
+    error.setAttribute('role', 'status');
     let args: Record<string, Json> = {};
+    let applying = false;
     const updateFields = (reset = true) => {
-      if(reset)args = {}; fields.replaceChildren();
+      if (reset) args = {};
+      const openSections = new Set([...fields.querySelectorAll('details[open]')].map(section => section.className));
+      fields.replaceChildren();
       const spec = registry.get(picker.value)!;
-      if (reset && spec.key === 'changeBg') {
-        const fade = { preset: 'fade', resourceId: null, durationMs: 400, easing: { family: 'linear', direction: 'in' }, direction: 'left' };
-        args.transition = { enter: structuredClone(fade), exit: structuredClone(fade) };
-      }
-      if (reset && ['changeFigure','changeIllustrationDiff','characterDifference'].includes(spec.key)) {
-        const fade = { preset: 'fade', resourceId: null, durationMs: 180, easing: { family: 'linear', direction: 'in' }, direction: 'left' };
-        args.transition = spec.key === 'changeFigure' ? {
-          enter: { ...fade, durationMs: 200, easing: { family: 'cubic', direction: 'out' } },
-          exit: { ...fade, durationMs: 160, easing: { family: 'cubic', direction: 'in' } },
-        } : fade;
-      }
+      const effective = commandCreationDefaults(spec, args, { textLocale: source.project.languages.textDefault });
       const selectedName=commandName(spec,this.controller.preferences.locale);
-      const heading=el('header','command-form-heading');heading.append(commandIcon(spec.key,false,selectedName),el('h3','',selectedName),el('small','',spec.key));fields.append(heading);
+      const heading=el('header','command-form-heading');heading.append(commandIcon(spec.key,false,selectedName),el('h3','',selectedName));fields.append(heading);
       const basic=el('section','command-basic');basic.append(el('h4','',tr(this.controller.preferences.locale,'常用参数','Common parameters','基本パラメーター')));fields.append(basic);
       const performance=el('details','command-performance');performance.append(el('summary','',tr(this.controller.preferences.locale,'演出参数','Direction parameters','演出パラメーター')));
       const more = el('details', 'command-more'); more.append(el('summary', '', tr(this.controller.preferences.locale, '高级数据', 'Advanced data', '詳細データ')));
-      for (const original of commandFields(spec.key, spec.fields, args)) {
-        const field = spec.key === 'changeFigure' && original.path === 'assetId' ? { ...original, assetKinds: [picker.assetKind] } : original;
-        if (field.path === 'ruleImage' && spec.key === 'changeBg' && args.op === 'clear' && args.ruleImage == null) continue;
-        const row = el(field.type === 'object' || field.type === 'ref' || field.path === 'loopStartSec' || spec!.key==='say'&&field.path==='text' ? 'div' : 'label', 'authoring-field'); row.dataset.field = field.path; row.append(el('span', '', fieldLabel(field, this.controller.preferences.locale, spec.key) + (field.required && !ownsIdentity(spec!.key,field.path,args ?? {}) ? tr(this.controller.preferences.locale, ' · 必填', ' · Required', ' · 必須') : '')));
-        const dimensions=field.path==='framing'?this.framingSize(args):null;
-        const value = args[field.path] ?? (dimensions?portraitFraming('upper',dimensions.sourceHeight,dimensions.canvasHeight):field.path === 'speaker' ? { kind: 'narrator' } : ownsIdentity(spec.key,field.path,args) ? createId(this.controller.source) : field.default);
-        if (value !== null && value !== undefined) args[field.path] = value;
+      for (const original of commandFields(spec.key, spec.fields, effective)) {
+        if (!Object.hasOwn(args, original.path) && !isCommandCreationField(spec.key, original.path, effective)) continue;
+        const value = effective[original.path];
+        const field: FieldSpec = { ...original, default: value ?? null,
+          ...(spec.key === 'changeFigure' && original.path === 'assetId' ? { assetKinds: [picker.assetKind] } : {}) };
+        const generated = ownsIdentity(spec.key, field.path, effective);
+        const row = el(field.type === 'object' || field.type === 'ref' || field.path === 'loopStartSec' || spec!.key==='say'&&field.path==='text' ? 'div' : 'label', 'authoring-field');
+        row.dataset.field = field.path;
+        const caption = el('span', '', fieldLabel(field, locale, spec.key) + (field.required && !generated ? tr(locale, ' · 必填', ' · Required', ' · 必須') : ''));
+        row.append(caption);
+        if (!Object.hasOwn(args, field.path) && Object.hasOwn(effective, field.path)) {
+          caption.append(el('small', 'field-help command-initial-value', tr(locale, ' · 新建初值', ' · Starting value', '・新規作成時の値')));
+        } else if (value === undefined && ['framing', 'effects', 'model', 'station'].includes(field.path)) {
+          row.append(el('small', 'field-help', tr(locale, '留空时沿用原设置', 'Leave blank to keep existing settings', '空欄なら元の設定を引き継ぎます')));
+        }
         row.append(inputFor(field, value, next => {
-          if (field.path === 'ruleImage') { if (next === null) delete args.ruleImage; else args.ruleImage = next; updateFields(false); return; }
-          if(spec.key==='setComplexAnimation'&&['animation','segments','resourceId'].includes(field.path)){for(const key of ['animation','segments','resourceId'])if(key!==field.path)delete args[key];}
-          args[field.path] = next; if(field.path==='op'||field.path==='assetId'){updateFields(false);return;} row.querySelectorAll('.field-error').forEach(node => node.remove()); row.querySelectorAll('[aria-invalid]').forEach(node => { node.removeAttribute('aria-invalid'); node.removeAttribute('aria-describedby'); });
-          for (const updated of commandFields(spec.key, spec.fields, args)) { const target = [...fields.querySelectorAll<HTMLElement>('[data-field]')].find(item => item.dataset.field === updated.path);
-            const title = target?.querySelector(':scope > span'); if (title) title.textContent = fieldLabel(updated, this.controller.preferences.locale, spec.key) + (updated.required ? tr(this.controller.preferences.locale,' · 必填',' · Required',' · 必須') : '');
-            target?.querySelector('input,textarea,select')?.setAttribute('aria-required',String(updated.required)); } }, [...this.assetCache.values()], this.references(), this.controller.preferences.locale, ownsIdentity(spec!.key,field.path,args ?? {}),()=>this.framingSize(args),{...this.fieldContext(args,modal,true,picker.assetKind,(command,next)=>{picker.select(command);args=next;updateFields(false);placeholder.querySelector('strong')!.textContent=commandName(registry.get(command)!,locale);this.render();}),command:spec.key}));
+          if (next === null && !field.nullable) delete args[field.path]; else args[field.path] = next;
+          if (spec.key === 'setComplexAnimation' && ['animation', 'segments', 'resourceId'].includes(field.path) && next != null) {
+            for (const key of ['animation', 'segments', 'resourceId']) if (key !== field.path) delete args[key];
+          }
+          error.textContent = '';
+          if (['op','scope','assetId','ruleImage','characterId'].includes(field.path)) { updateFields(false); return; }
+          row.querySelector('.command-initial-value')?.remove();
+          row.querySelectorAll('.command-creation-error').forEach(node => node.remove()); row.querySelectorAll('[aria-invalid]').forEach(node => { node.removeAttribute('aria-invalid'); if (node.getAttribute('aria-describedby')?.startsWith('command-creation-error-')) node.removeAttribute('aria-describedby'); });
+          for (const updated of commandFields(spec.key, spec.fields, { ...effective, ...args })) { const target = [...fields.querySelectorAll<HTMLElement>('[data-field]')].find(item => item.dataset.field === updated.path);
+            const title = target?.querySelector(':scope > span')?.firstChild; if (title) title.textContent = fieldLabel(updated, locale, spec.key) + (updated.required && !ownsIdentity(spec.key, updated.path, { ...effective, ...args }) ? tr(locale,' · 必填',' · Required',' · 必須') : '');
+            target?.querySelector('input,textarea,select')?.setAttribute('aria-required',String(updated.required)); } }, [...this.assetCache.values()], this.references(), locale, generated,()=>this.framingSize(effective),{...this.fieldContext(effective,modal,true,picker.assetKind,(command,next)=>{picker.select(command);args=next;updateFields(false);placeholder.querySelector('strong')!.textContent=commandName(registry.get(command)!,locale);this.render();}),command:spec.key,operation:effective.op}));
         if(spec.key==='return' && field.path==='value')row.append(el('p','field-help',fieldHint(field,fieldLabel(field,this.controller.preferences.locale,spec.key),this.controller.preferences.locale,spec.key)));
         const essential=field.required||['text','speaker','voice','assetId','op','durationMs','framing','station','model','ruleImage'].includes(field.path)||spec.key==='end'&&field.path==='target'||spec.key==='return'&&field.path==='value';
-        (spec.key==='setComplexAnimation'&&['animation','resourceId','target'].includes(field.path)?basic:ownsIdentity(spec.key,field.path,args)?more:field.group==='effect'||field.group==='animation'?performance:essential?basic:more).append(row);
+        (spec.key==='setComplexAnimation'&&['animation','resourceId','target'].includes(field.path)?basic:generated?more:field.group==='effect'||field.group==='animation'?performance:essential?basic:more).append(row);
       }
       if(performance.children.length>1)fields.append(performance);
       if (more.children.length > 1) fields.append(more);
+      performance.open = openSections.has(performance.className);
+      more.open = openSections.has(more.className);
     };
     const actions = el('div', 'authoring-toolbar');
     actions.append(button(this.t('cancel'), async () => { if(await requestDialog({title:tr(locale,'取消这次指令插入？','Cancel this insertion?','今回の挿入をキャンセルしますか？'),locale,destructive:true})!==null)finish(); }));
-    actions.append(button(this.t('apply'), async () => {
-      if(!chosen)return;
+    const apply = button(this.t('apply'), async () => {
+      if (!chosen || applying) return;
       if(this.controller.scene?.sceneId!==scene.sceneId||this.controller.scene.revision!==revision){error.textContent=tr(locale,'来源场景已变化，请重新选择插入位置。当前输入已保留。','The source changed. Select the insertion point again; input is retained.','元のシーンが変更されました。入力を保持しています。挿入位置を選び直してください。');return;}
       const spec = registry.get(picker.value)!;
-      fields.querySelectorAll('.field-error').forEach(node => node.remove());
-      const checkedFields = commandFields(spec.key, spec.fields, args);
-      const errors = validateFields(checkedFields, args, field => fieldLabel(field, this.controller.preferences.locale, spec.key), this.controller.preferences.locale);
-      for (const problem of errors) {
-        const row = [...fields.querySelectorAll<HTMLElement>('[data-field]')].find(row => row.dataset.field === problem.path.split('.')[0]);
-        if (!row) continue;
-        const message = el('small', 'field-error', problem.message); message.id = `field-error-${problem.path}`; row.append(message);
-        const control = row.querySelector<HTMLElement>('input,textarea,select'); control?.setAttribute('aria-invalid', 'true'); control?.setAttribute('aria-describedby', message.id);
-        const details = row.closest('details'); if (details) details.open = true;
+      fields.querySelectorAll('.command-creation-error').forEach(node => node.remove());
+      for (const control of fields.querySelectorAll('[aria-describedby^="command-creation-error-"]')) {
+        control.removeAttribute('aria-invalid');
+        control.removeAttribute('aria-describedby');
       }
-      error.textContent = errors.length ? tr(this.controller.preferences.locale, `请修正 ${errors.length} 处字段后再应用。`, `Correct ${errors.length} fields before applying.`, `${errors.length}項目を修正してください。`) : '';
-      if (errors.length) { fields.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(); return; }
-      const result = await this.controller.insertCommand(spec.key,args,beforeId);
-      if (this.notice(result)) { const ids = commandAssetIds(spec.fields,args); if(ids.length)await recordAssetsPicked(this.services,source.project.projectId,ids);finish(); }
-    }, 'authoring-primary'));
+      applying = true;
+      apply.disabled = true;
+      try {
+        const result = await this.controller.insertCommand(spec.key, args, beforeId);
+        if (result.ok) {
+          this.notice(result);
+          const ids = commandAssetIds(spec.fields, args);
+          if (ids.length) await recordAssetsPicked(this.services, source.project.projectId, ids);
+          finish();
+          return;
+        }
+        let firstControl: HTMLElement | undefined;
+        for (const problem of result.issues) {
+          const path = problem.source?.field;
+          const row = [...fields.querySelectorAll<HTMLElement>('[data-field]')].find(item => item.dataset.field === path?.split('.')[0]);
+          if (!row || !path) continue;
+          const details = row.closest('details'); if (details) details.open = true;
+          const field = spec.fields.find(item => item.path === path);
+          const label = field ? fieldLabel(field, locale, spec.key) : path;
+          const message = problem.code === 'FIELD_REQUIRED'
+            ? tr(locale, `请填写${label}`, `Enter ${label}`, `${label}を入力してください`)
+            : issueText(problem, locale);
+          const feedback = el('small', 'field-error command-creation-error', message);
+          feedback.id = `command-creation-error-${path}`; row.append(feedback);
+          const control = [...row.querySelectorAll<HTMLElement>('input,textarea,select,button')].find(item => item.getClientRects().length > 0);
+          if (control) {
+            control.setAttribute('aria-invalid', 'true');
+            control.setAttribute('aria-describedby', feedback.id);
+            firstControl ??= control;
+          }
+        }
+        error.textContent = firstControl
+          ? tr(locale, '请检查标出的字段。', 'Check the highlighted fields.', 'マークされた項目を確認してください。')
+          : issueText(result.error, locale);
+        firstControl?.focus();
+      } finally {
+        applying = false;
+        apply.disabled = false;
+      }
+    }, 'authoring-primary');
+    actions.append(apply);
     modal.append(actions);
     modal.setAttribute('aria-label', this.t('addCommand'));
     if(resume){chosen=true;picker.select(resume.command);args=resume.args;updateFields(false);popover.close();placeholder.append(el('strong','',commandName(registry.get(picker.value)!,locale)));this.insertions.set(scene.sceneId,{beforeId,node:modal,placeholder,dirty:()=>true,capture:()=>asJson({kind:'command',sceneId:scene.sceneId,beforeId,command:picker.value,args})});this.render();}

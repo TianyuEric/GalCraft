@@ -75,6 +75,8 @@
 .production-document-toolbar > :has(> input) { min-width: 90px; flex: 1 1 140px; }
 .production-document-toolbar > span { white-space: nowrap; color: var(--muted); font-size: 12px; }
 .production-document-content { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px; }
+.production-form-content { width: min(100%, 840px); margin-inline: auto; min-width: 0; }
+.production-frozen-name { font-weight: 600; overflow-wrap: anywhere; }
 .production-document-content h2, .production-inspector h2 { font-size: 16px; margin: 0 0 10px; }
 .production-document-content p { margin: 6px 0 12px; line-height: 1.6; }
 .production-document-actions { justify-content: flex-end; border-top: 1px solid var(--line); border-bottom: 0; }
@@ -87,12 +89,18 @@
 .production-inspector .gc-field, .production-document-content .gc-field { margin-bottom: 12px; }
 .production-inspector h3, .production-explicit-context h3 { font-size: 14px; margin: 14px 0 8px; }
 .production-inspector p { color: var(--muted); line-height: 1.6; font-size: 13px; }
-.production-origin { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.production-origin { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); overflow-wrap: anywhere; }
 .production-explicit-context { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 10px; }
 .production-explicit-context > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .production-request-prose { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; user-select: text; }
+.production-send-review { padding-block: 8px 16px; }
+.production-send-review > h2 { width: fit-content; outline-offset: 3px; }
+.production-send-review > p { max-width: 65ch; }
+.production-request-summary { display: flex; flex-wrap: wrap; gap: 12px 32px; margin: 16px 0 20px; padding: 12px 16px; background: var(--workbench-inspector); border-radius: 6px; }
+.production-request-summary dt { color: var(--foreground-secondary); font-size: 12px; }
+.production-request-summary dd { margin: 4px 0 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 .production-send-step { padding: 12px 0; border-top: 1px solid var(--line); }
-.production-send-step h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.production-send-step h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; overflow-wrap: anywhere; }
 .production-parameter-default { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
 .speech-lines-scroll { overflow: auto; }
 .speech-lines { border-collapse: collapse; width: 100%; font-size: 14px; }
@@ -139,7 +147,21 @@
 .connection-workspace-editor { min-width: 0; min-height: 0; padding: 16px; border-left: 1px solid var(--line); overflow: auto; background: var(--panel); }
 .connection-workspace-editor > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .connection-workspace-editor h2 { font-size: 18px; }
-.connection-workspace-editor .dialog-actions { position: sticky; bottom: -16px; background: var(--panel); padding: 12px 0; }
+.connection-workspace-editor.service-connection-sheet { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.connection-workspace-editor.service-connection-sheet[hidden] { display: none; }
+.service-connection-sheet > header, .service-connection-sheet > .dialog-actions { flex: none; flex-wrap: wrap; gap: 8px 12px; padding: 12px 16px; }
+.service-connection-sheet > header { border-block-end: 1px solid var(--line); }
+.service-connection-sheet > header h2 { min-width: 0; margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.service-connection-sheet > header span { color: var(--foreground-secondary); font-size: 12px; }
+.service-connection-sheet > .dialog-actions { border-block-start: 1px solid var(--line); }
+.connection-editor-content { flex: 1; min-height: 0; overflow: auto; padding: 8px 16px 16px; container-type: inline-size; }
+.connection-editor-content > * { max-width: 760px; margin-inline: auto; }
+.connection-editor-content .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.connection-editor-content .gc-field { min-width: 0; }
+.connection-editor-content > [tabindex="-1"], .connection-editor-content h3[tabindex="-1"] { scroll-margin-block: 8px; }
+@container (max-width: 480px) {
+  .connection-editor-content .form-grid { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 1050px) {
   .production-page .production-layout { grid-template-columns: 190px minmax(0, 1fr); }
   .production-workstation { grid-template-columns: minmax(0, 1fr); }
@@ -705,6 +727,7 @@
 
 .production-page[data-inspector-external="true"] .production-layout { grid-template-columns: 200px minmax(0, 1fr); }
 .production-workstation[data-inspector-external="true"] { grid-template-columns: minmax(0, 1fr); }
+.production-workstation[data-send-review="true"] { grid-template-columns: minmax(0, 1fr); }
 .production-workstation[data-inspector-external="true"] .production-document { display: flex; }
 .gc-workbench .workbench-route-host,
 .gc-workbench .workbench-route-host > .workbench-mount,
@@ -817,21 +840,24 @@
 .preset-action-separator { width: 1px; align-self: stretch; margin: 3px 8px; background: var(--border); }
 .context-preview { white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.production-page[data-review-active="true"] > [role="tabpanel"] { display: none !important; }
+.production-page[data-review-active="true"] > :is([role="tabpanel"], .production-workbench-toolbar) { display: none !important; }
 .production-review-document { padding: 24px; max-width: 1100px; width: 100%; margin-inline: auto; min-width: 0; }
 .production-review-document[hidden] { display: none; }
-.production-review-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 24px; }
+.production-review-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; margin-bottom: 16px; }
 .production-review-heading h2 { margin: 0; font-size: 18px; }
 .persistent-recipe-editor, .gc-dialog-body:has(.preset-document-title) { container-type:inline-size; }
 .preset-basics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 .preset-basics > :is([data-field="recipeName"],[data-field="recipeDescription"],fieldset) { grid-column:1/-1; }
 .preset-basics .gc-field { min-width:0; margin:0; }
 .preset-management .persistent-preset-management { padding:0; margin:0; border:0; }
-.production-review-actions > p { flex-basis:100%; margin:0; color:var(--foreground-secondary); font-size:13px; }
+.production-review-document .production-review-actions { flex-wrap: wrap; justify-content: flex-end; gap: 8px 16px; border-block-start: 1px solid var(--border); }
+.production-review-actions > p { flex: 1 1 230px; margin:0; color:var(--foreground-secondary); font-size:13px; overflow-wrap: anywhere; }
 .ui-plan-editor { container-type:inline-size; }
 .ui-plan-editor .plan-step-editor { min-width:0; margin:0; padding:16px 0; border:0; border-top:1px solid var(--border); border-radius:0; }
 .ui-plan-editor .plan-step-editor > header { display:flex; align-items:center; gap:8px; }
-.ui-plan-editor .plan-step-editor > header strong { flex:1; min-width:0; overflow-wrap:anywhere; }
+.ui-plan-editor .plan-step-editor > header h3 { flex: 1; min-width: 0; margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.ui-plan-editor .plan-step-editor:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.plan-step-dependencies { margin: 4px 0 0; padding-inline-start: 24px; font-size: 12px; color: var(--foreground-secondary); overflow-wrap: anywhere; }
 .ui-plan-editor .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 .ui-plan-editor .reference-assets { grid-column:1/-1; min-width:0; max-height:200px; overflow:auto; border:0; padding:0; margin:0; }
 .ui-plan-editor .reference-assets .check-row { display:flex; align-items:center; gap:8px; min-height:28px; overflow-wrap:anywhere; }
@@ -842,5 +868,6 @@
 .production-plan-outline {display:grid;gap:8px;padding:12px;}
 .production-plan-outline button {justify-content:flex-start;text-align:start;white-space:normal;height:auto;min-height:36px;}
 .production-plan-outline small {display:block;color:var(--text-muted);}
+.production-plan-outline button span { min-width: 0; overflow-wrap: anywhere; }
 
 .preset-readonly-value { display:block; min-height:32px; padding:8px 12px; border:1px solid var(--border); border-radius:4px; background:var(--input); color:var(--foreground); font:inherit; overflow-wrap:anywhere; }

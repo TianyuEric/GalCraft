@@ -23,7 +23,7 @@ try{
     await page.screenshot({path:resolve(evidence,`${story}-${width}.png`)});
     report.checks.push({id:story,target:'Codex workspace selection and installation feedback',data:{width},expected:'Selected parent path, independent project identity, file-only status, cancellation preserves directory; no overflow',actual:'Visible state and assertions passed',result:'passed',evidence:`${story}-${width}.png`});
     if(!story.endsWith('cancelled')){
-      await page.getByRole('button',{name:'本机服务',exact:true}).click();await page.getByRole('button',{name:'Harness 配置',exact:true}).click();
+      await page.getByRole('button',{name:'本机服务',exact:true}).click();await page.getByRole('button',{name:'助手配置',exact:true}).click();
       await page.getByText('配置文件：D:/Stories/.codex/config.toml',{exact:true}).waitFor();
       assert(await page.getByRole('button',{name:'MCP 配置已写入',exact:true}).isDisabled());
       await page.getByRole('button',{name:'使用当前作品目录',exact:true}).click();

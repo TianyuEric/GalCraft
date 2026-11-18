@@ -48,6 +48,7 @@ export interface StudioHandlerContext {
   preferences: RawPreferences;
   entryPreferences?: () => RawPreferences;
   assets?: Omit<StudioIpc['assets'], 'picker' | 'verifyTarget' | 'iconPresets' | 'importIconPreset'> & {
+    importBatch(paths: string[], batchId?: string, projectId?: string): ReturnType<StudioIpc['assets']['import']>;
     verifyTarget(target: Target, operationId?: string, progress?: (value: import('@galcraft/contracts').AssetVerificationProgress) => void): ReturnType<StudioIpc['assets']['verifyTarget']>;
     picker(input: IpcArgs<StudioIpc['assets']['picker']>[0], recent: string[]): IpcReturn<StudioIpc['assets']['picker']>;
     current(): { session: ProjectSession; index: { data: { assets: Asset[] } } } | null;
@@ -66,6 +67,7 @@ export interface StudioHandlerContext {
   plugins?: Omit<StudioIpc['plugins'], 'list' | 'planChange'> & {
     acquireDefinitions?(session: ProjectSession | null, options?: { allowMissing: boolean }): Promise<Result<{
       commands: import('@galcraft/contracts').CommandSpec[];
+      conditions: Pick<import('@galcraft/plugins/contracts').PluginCondition, 'key' | 'fields'>[];
       documents: import('@galcraft/plugins/contracts').DocumentContribution[];
       release(): Promise<void>;
     }>>;

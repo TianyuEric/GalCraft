@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join,isAbsolute,resolve } from 'node:path';
 import {z} from 'zod';
 import { createId, CollaborationScopeSchema,EditInputSchema,EditReceiptSchema,EditPlanSchema,JsonSchema,SceneSchema,VersionRefSchema,readPluginDocumentInstances,LayoutSchema,VisualSchema } from '@galcraft/contracts';
-import {CoreCommandSpecsEnglish as CoreCommandSpecs,parse} from '@galcraft/dsl';
+import {CoreCommandSpecsEnglish as CoreCommandSpecs,conditionSignatures,parse} from '@galcraft/dsl';
 import { CollaborationService, CollaborationError, harnessContent, harnessLaunch, mergeHarness, harnessReadback, writeHarness, currentProjectScope, creativeSkillFiles, previewSkillFiles } from '@galcraft/collaboration';
 import { CollaborationMcp } from './collaboration-mcp.mjs';
 import { endpointPort } from './local-service-ports.mjs';
@@ -263,7 +263,7 @@ export class StudioCollaboration {
     try{
     if(input.operation){
       const lease=this.plugins.acquireDefinitions?unwrap(await this.plugins.acquireDefinitions(project,{allowMissing:true})):null;
-      try{edit=unwrap(prepareAuthoringEdit([...project.documents.values()],input.operation,lease?.commands??[]));}finally{await lease?.release();}
+      try{edit=unwrap(prepareAuthoringEdit([...project.documents.values()],input.operation,lease?.commands??[],conditionSignatures(lease?.conditions??[])));}finally{await lease?.release();}
       for(const version of edit.expected)if(!input.expected?.some(item=>item.ref.kind===version.ref.kind&&item.ref.id===version.ref.id&&item.revision===version.revision))throw new CollaborationError('EDIT_CONFLICT','Supply the current expected version for every operation member; reread the affected objects and prepare again.');
     }
     if(input.operationKey){
