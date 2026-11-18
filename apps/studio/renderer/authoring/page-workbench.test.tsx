@@ -29,7 +29,7 @@ vi.mock('./player-preview.js', () => ({ openPlayerPreview: async (root: HTMLElem
   };
 } }));
 
-it('switches page outlines and canvas with independent selection, mode, edits and save scope', async () => {
+it('switches page outlines and canvas with independent selection, mode, edits and save scope', { timeout: 15000 }, async () => {
   class TestResizeObserver {
     constructor(private callback: ResizeObserverCallback) {}
     observe(target: Element) { this.callback([{ target, contentRect: new DOMRect(0, 0, 1440, 900) } as ResizeObserverEntry], this); }

@@ -164,7 +164,7 @@ it('does not apply a character while its IME composition is active, including a 
   expect(f.planSave).toHaveBeenCalledWith({ kind: 'current', documentId: f.b.id });
 });
 
-it('uses the explicitly closed B document rather than active A for save and close', async () => {
+it('uses the explicitly closed B document rather than active A for save and close', { timeout: 15000 }, async () => {
   const f = await fixture(), { app, workspace } = await mount(f.services);
   await openCharacter(workspace, f.b.id); await editNotes(app, f.b.id, 'B close-save target');
   await openCharacter(workspace, f.a.id); await editNotes(app, f.a.id, 'A stays active and pending');

@@ -122,7 +122,9 @@ test('M02 reload keeps unapplied invalid input, local language and editor histor
   const initial = fixture(4), harness = setup(initial); harness.designer.styleEditor();
   const editor = monacoState.editors[0]!, view = editor.view, invalid = '[data-gc-part="button"] { color:';
   editor.model.setValue(invalid);
-  const language = harness.panel().children.find(child => child.className === 'designer-style-controls')!.children.find(child => child.tagName === 'select')!; language.value = 'css'; language.onchange!();
+  const controls = harness.panel().children.find(child => child.className === 'designer-style-controls')!;
+  const language = controls.children.flatMap(field => field.children).find(child => child.tagName === 'select' && child.ariaLabel === '样式语言')!;
+  language.value = 'css'; language.onchange!();
   const undone = structuredClone(initial); undone.style.sourceRevision = 1; undone.style.compiledSourceRevision = 1;
   undone.files[undone.style.sourcePath] = '[data-gc-part="button"] { color: red; }';
   harness.setUndo(undone); await harness.designer.history('undo'); harness.designer.styleEditor();

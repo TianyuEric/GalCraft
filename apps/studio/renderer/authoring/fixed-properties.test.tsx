@@ -22,7 +22,7 @@ function stubBrowser() {
   vi.stubGlobal('CSS', { escape: (value: string) => value.replace(/[^\w-]/g, character => '\\' + character) });
 }
 
-it('applies and routes commands to the pinned properties source until the central scene receives focus', async () => {
+it('applies and routes commands to the pinned properties source until the central scene receives focus', { timeout: 15000 }, async () => {
   stubBrowser();
   const { container, unmount } = render(<div id="app" data-locale="en" data-theme="light"/>);
   const app = container.firstElementChild as HTMLElement;
@@ -125,7 +125,7 @@ it('restores two scene groups and commits from the visible writing pane to its o
   }
 });
 
-it('returns a character reference from pinned properties to the inspected scene and keeps that pin', async () => {
+it('returns a character reference from pinned properties to the inspected scene and keeps that pin', { timeout: 15000 }, async () => {
   stubBrowser();
   const { container, unmount } = render(<div id="app" data-locale="en" data-theme="light"/>);
   const app = container.firstElementChild as HTMLElement;

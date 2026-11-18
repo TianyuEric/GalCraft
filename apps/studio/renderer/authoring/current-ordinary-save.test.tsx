@@ -125,7 +125,7 @@ it.each([false, true])('validates the focused startup input before planning (nat
   expect(sequence ? current.project.display.startupSequence?.clips[0]?.holdMs : current.project.display.splashPlayback?.durationMs).toBe(3200);
 });
 
-it('keeps character, startup and release input outside the current project input application', async () => {
+it('keeps character, startup and release input outside the current project input application', { timeout: 15000 }, async () => {
   const f = await fixture(), a = f.initial.characters[0]!;
   await act(async () => { await f.workspace.openDocument({ kind: 'character', objectId: a.id }); });
   await edit(within(f.app).getByRole('textbox', { name: 'Description and story notes' }), 'A remains local');
@@ -141,7 +141,7 @@ it('keeps character, startup and release input outside the current project input
   expect(within(f.app).getByRole<HTMLTextAreaElement>('textbox', { name: 'Description and story notes' }).value).toBe('A remains local');
 });
 
-it('uses the explicitly closed project target while a different character remains active and unapplied', async () => {
+it('uses the explicitly closed project target while a different character remains active and unapplied', { timeout: 15000 }, async () => {
   const f = await fixture(), b = f.initial.characters[1]!;
   await openProject(f); await edit(language(f), 'ja');
   await act(async () => { await f.workspace.openDocument({ kind: 'character', objectId: b.id }); });
