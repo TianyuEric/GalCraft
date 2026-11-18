@@ -10,7 +10,7 @@ import type { MediaInput } from '@galcraft/authoring/production';
 import type { Json } from '@galcraft/contracts';
 import { addProductionPortReference, productionPortReferences } from './extension-media-input.js';
 
-export type ProductionEditorHost = Pick<StudioPluginHost, 'mountProductionFieldEditor'>;
+export type ProductionEditorHost = Pick<StudioPluginHost, 'mountProductionFieldEditor'> & Partial<Pick<StudioPluginHost, 'contributionsRevision'>>;
 export function ExtensionOperationForm({ session: s, host, locale, services }: { session: ProductionSession; host?: ProductionEditorHost | null; locale: string; services: AuthoringServices }) {
   const root = useRef<HTMLDivElement>(null), [mounted, setMounted] = useState(false);
   const snapshot = s.variant?.operationSnapshot, available = s.operationDefinition;
@@ -19,7 +19,7 @@ export function ExtensionOperationForm({ session: s, host, locale, services }: {
     if (!root.current || !snapshot?.definition.fieldEditorKey || !host || !available || !s.draft?.revision) return;
     const release = host.mountProductionFieldEditor(snapshot.id, snapshot.definition.fieldEditorKey, root.current, s.productionEditorContext());
     setMounted(!!release); return () => release?.();
-  }, [host, snapshot?.id, snapshot?.version, s.draft?.id, s.draft?.revision, s.variant?.connectionId, s.variant?.model, available?.provider?.version]);
+  }, [host, host?.contributionsRevision, locale, snapshot?.id, snapshot?.version, s.draft?.id, s.draft?.revision, s.variant?.connectionId, s.variant?.model, available?.provider?.version]);
   if (!snapshot || !available) return <p role="alert" className="workbench-error">{locale === 'en' ? 'The exact operation package is unavailable. Drafts, tasks, candidates and files are preserved.' : locale === 'ja' ? '操作の正確なパッケージを利用できません。下書き、タスク、候補、ファイルを保持しています。' : '此操作的精确包不可用。草稿、任务、候选和文件已保留。'}</p>;
   if (!s.draft?.revision) return <p role="status">{locale === 'en' ? 'Saving production draft…' : locale === 'ja' ? '制作下書きを保存しています…' : '正在保存制作草稿…'}</p>;
   const translate = (key: string) => displayMessage(available.messages, locale, key, key);

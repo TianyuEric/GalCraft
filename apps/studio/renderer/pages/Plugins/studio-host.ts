@@ -56,6 +56,7 @@ export class StudioPluginHost {
   private scopeValue: StudioScope | null = null;
   private documentContexts = new Set<AuthorDocument>();
   private publicViews = new Map<string, { root: HTMLElement; dispose(): void }>();
+  private productionViews = new Map<string, { root: HTMLElement; dispose(): void }>();
   private publicRenders = new Map<string, () => void>();
   loadError = '';
   readonly diagnostics: Issue[] = [];
@@ -64,6 +65,7 @@ export class StudioPluginHost {
   private documentReleases = new Map<string, { release(): void; dirty(): boolean }>();
   private dialogs = new Set<{ dispose(): void }>();
   private generation = 0;
+  contributionsRevision = 0;
   constructor(private bridge: Pick<StudioBridge, 'documents' | 'plugins'>, readonly projectId: string, private locale: () => string,
     private navigate: (key: string) => Promise<void>, private changed: (receipt?: EditReceipt, input?: EditInput) => Promise<void>, private options?: StudioHostOptions) {}
   title(item: StudioContribution) { return item.title[this.locale() as keyof typeof item.title] ?? item.title['zh-CN']; }
@@ -204,6 +206,7 @@ export class StudioPluginHost {
       if (previousHandle) await this.bridge.plugins.release(previousHandle);
       if (generation !== this.generation) throw new Error('作品插件加载已取消');
       this.entries = entries; this.authors = authors; this.active = instances; this.handle = resolved.value.handleId; this.snapshot = listed.value;
+      this.contributionsRevision++;
       this.loadError = '';
       return ok(undefined);
     } catch (error) {
@@ -289,15 +292,15 @@ export class StudioPluginHost {
     const editor = entry?.contributions.fieldEditors?.find(item => item.key === editorKey && item.contributionKey === operationId);
     if (!entry || !editor || target.operation.id !== operationId) return null;
     const abort = new AbortController(), key = `production:${operationId}:${target.draftId}`;
-    this.publicViews.get(key)?.dispose();
+    this.productionViews.get(key)?.dispose();
     let cleanup: void | (() => void);
-    const dispose = () => { if (abort.signal.aborted) return; abort.abort(); if (cleanup) cleanup(); if (this.publicViews.get(key)?.root === root) this.publicViews.delete(key); root.replaceChildren(); };
+    const dispose = () => { if (abort.signal.aborted) return; abort.abort(); if (cleanup) cleanup(); if (this.productionViews.get(key)?.root === root) this.productionViews.delete(key); root.replaceChildren(); };
     const commit: typeof target.commit = input => abort.signal.aborted || target.readonly ? Promise.resolve(fail('制作输入上下文已关闭或为只读')) : target.commit(input);
     try { cleanup = editor.mount(root, { value: structuredClone(target.fields), locale: this.locale(), signal: abort.signal, target: { ...target, commit }, studio: entry.context,
       commit: async value => { if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('制作字段必须是对象');
         const result = await commit({ expectedRevision: target.revision, fields: value, references: target.references }); return result.ok ? ok(undefined) : result; } });
     } catch (error) { root.textContent = String(error); root.setAttribute('role', 'alert'); }
-    this.publicViews.set(key, { root, dispose }); return dispose;
+    this.productionViews.set(key, { root, dispose }); return dispose;
   }
   async references(): Promise<PluginReference[]> {
     const listed = await this.bridge.documents.list(); if (!listed.ok) throw new Error(listed.error.message);
@@ -375,8 +378,16 @@ export class StudioPluginHost {
   }
   unmountViews() {
     this.assetUi.dispose();
-    for (const view of [...this.views.values(), ...this.publicViews.values(), ...this.dialogs]) try { view.dispose(); } catch (error) { this.diagnostics.push({ code: 'PLUGIN_VIEW_RELEASE', severity: 'warning', owner: 'M09', message: String(error), related: [], actions: [] }); }
+    for (const view of this.productionViews.values()) this.releaseView(view);
+    this.productionViews.clear();
+    this.unmountRouteViews();
+  }
+  unmountRouteViews() {
+    for (const view of [...this.views.values(), ...this.publicViews.values(), ...this.dialogs]) this.releaseView(view);
     this.views.clear(); this.publicViews.clear(); this.publicRenders.clear();
+  }
+  private releaseView(view: { dispose(): void }) {
+    try { view.dispose(); } catch (error) { this.diagnostics.push({ code: 'PLUGIN_VIEW_RELEASE', severity: 'warning', owner: 'M09', message: String(error), related: [], actions: [] }); }
   }
   async dispose() { ++this.generation; this.unmountViews(); for (const document of this.documentReleases.values()) document.release(); this.documentReleases.clear();
     const active = this.active, handle = this.handle;
